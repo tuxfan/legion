@@ -2583,6 +2583,12 @@ class LogicalRegion(object):
         else:
             return self.index_space.dominates(other.index_partition)
 
+    def is_region(self):
+        return True
+
+    def is_partition(self):
+        return False
+
     def is_complete(self):
         return self.index_space.is_complete()
 
@@ -2925,6 +2931,12 @@ class LogicalPartition(object):
             return self.index_partition.dominates(other.index_space)
         else:
             return self.index_partition.dominates(other.index_partition)
+
+    def is_region(self):
+        return False
+
+    def is_partition(self):
+        return True
 
     def is_complete(self):
         return self.index_partition.is_complete()
@@ -3527,6 +3539,7 @@ class LogicalState(object):
                 # read-only user, then there is nothing we need to do
                 same_func_and_rect = True
                 current_rect = op.get_index_launch_rect()
+
                 for func,rect in self.projection_epoch:
                     # We can stay in shallow disjoint mode if the
                     # next user is going to be reading only
@@ -4889,12 +4902,13 @@ class Operation(object):
                  'temporaries', 'incoming', 'outgoing', 'logical_incoming', 
                  'logical_outgoing', 'physical_incoming', 'physical_outgoing', 
                  'start_event', 'finish_event', 'inter_close_ops', 'open_ops', 
-                 'advance_ops', 'task', 'task_id', 'predicate', 'predicate_result',
-                 'futures', 'index_owner', 'points', 'launch_rect', 'creator', 
-                 'realm_copies', 'realm_fills', 'version_numbers', 
-                 'internal_idx', 'disjoint_close_fields', 'partition_kind', 
-                 'partition_node', 'node_name', 'cluster_name', 'generation', 
-                 'reachable_cache', 'transitive_warning_issued', 'arrival_barriers', 
+                 'advance_ops', 'task', 'task_id', 'predicate', 'predicate_result', 
+                 'futures', 'index_owner', 'points', 'launch_rect',
+                 'ordering_function', 'creator', 'realm_copies', 'realm_fills',
+                 'version_numbers', 'internal_idx', 'disjoint_close_fields',
+                 'partition_kind', 'partition_node', 'node_name',
+                 'cluster_name', 'generation', 'reachable_cache',
+                 'transitive_warning_issued', 'arrival_barriers', 
                  'wait_barriers', 'created_futures', 'used_futures', 'merged']
                   # If you add a field here, you must update the merge method
     def __init__(self, state, uid):
@@ -4930,6 +4944,8 @@ class Operation(object):
         # Only valid for index operations 
         self.points = None
         self.launch_rect = None
+        # TODO: REMOVE THIS - this should come from the log file
+        self.ordering_function = ProjOperation(ProjOperation.ADD, ProjVar(0, self), ProjVar(1, self), self)
         # Only valid for internal operations (e.g. open, close, advance)
         self.creator = None
         self.internal_idx = -1
@@ -5569,6 +5585,75 @@ class Operation(object):
         traverser.visit_event(self.start_event)
         return traverser.cycle
 
+    def perform_structured_projection_analysis(self):
+        # Find all of the projection requirements
+        all_proj_reqs = list()
+        for req in self.reqs.itervalues():
+            if req.is_projection():
+                all_proj_reqs.append(req)
+        if len(all_proj_reqs) == 0:
+            return True
+        # These can be removed except for the check that things are structured,
+        # but stating the simplifying assumptions here as assertions
+        sample_proj_req = all_proj_reqs[0]
+        is_structured = not not sample_proj_req.projection_function.structured_func
+        for req in all_proj_reqs:
+            assert(is_structured == (not not req.projection_function.structured_func))
+        if not is_structured:
+            return True
+        depth = len(sample_proj_req.projection_function.structured_func)
+        start = sample_proj_req.logical_node
+        for req in all_proj_reqs:
+            assert(depth == len(req.projection_function.structured_func))
+            assert(start == req.logical_node)
+        # Compare all pairs of requirements
+        # This includes self comparisons, which must not result in conflicts
+        first_point = self.points.keys()[0]
+        constraints = list()
+        for idx1 in xrange(0, len(all_proj_reqs)):
+            for idx2 in xrange(idx1, len(all_proj_reqs)):
+                req1 = all_proj_reqs[idx1]
+                req2 = all_proj_reqs[idx2]
+                dep_type = compute_dependence_type(req1, req2)
+                if dep_type != TRUE_DEPENDENCE and dep_type != ANTI_DEPENDENCE:
+                    continue
+                representative_path = req1.projection_function.get_evaluated_path(
+                        first_point, req1.logical_node)
+                constraint = req1.projection_function.find_constraints(
+                        representative_path, req2.projection_function)
+                constraints.append((constraint.simplify(), dep_type, req1, req2))
+                # Compute the requirements for the dependence here
+        for point in self.points:
+            print(point)
+            for (constraint, dep_type, req1, req2) in constraints:
+                # TODO: handle the constraints of a point conflicting with itself properly
+                dep_points = constraint.get_deps(point, self.launch_rect)
+                for dep_point in dep_points:
+                    order1 = self.ordering_function.evaluate(point)
+                    order2 = self.ordering_function.evaluate(dep_point)
+                    if order1 == order2:
+                        print('Two index launch points which conflict have the same order')
+                        assert False
+                    if order1 < order2:
+                        first_op = self.points[point].op
+                        second_op = self.points[dep_point].op
+                        first_req_idx = req1.index
+                        second_req_idx = req2.index
+                    else:
+                        first_op = self.points[dep_point].op
+                        second_op = self.points[point].op
+                        first_req_idx = req2.index
+                        second_req_idx = req1.index
+                    dep = MappingDependence(first_op, second_op, first_req_idx,
+                                            second_req_idx, dep_type)
+                    first_op.add_outgoing(dep)
+                    second_op.add_incoming(dep)
+        return True
+# Loop through all points and:
+# 1. Find all constraints implied by the above
+# 2. Find all relevant values from the ordering function
+# 3. Add a mapping dependence between the operations corresponding to the two points
+
     def is_interfering_index_space_launch(self):
         assert self.kind == INDEX_TASK_KIND
         if self.reqs is None or self.points is None:
@@ -5747,6 +5832,27 @@ class Operation(object):
         for idx in range(0,len(self.reqs)):
             if not self.analyze_logical_requirement(idx, perform_checks):
                 return False
+        if not self.perform_structured_projection_analysis():
+            print("Structured projection function is not valid")
+            if self.state.assert_on_error:
+                assert False
+        # If we had any replay regions, analyze them now
+        assert not self.need_logical_replay
+        if self.need_logical_replay:
+            replays = self.need_logical_replay
+            self.need_logical_replay = None
+            for idx,field in replays:
+                if not self.analyze_logical_requirement(idx, perform_checks, field):
+                    return False
+                if self.need_logical_replay:
+                    print("ERROR: Replay failed! This is really bad! "+
+                          "Region requirement "+str(idx)+" of "+str(self)+
+                          "failed to replay successfully. This is most likely "+
+                          "a conceptual bug in the analysis and not an "+
+                          "implementation bug.")
+                    if self.state.assert_on_error:
+                        assert False
+                    return False
         # See if our operation had any bearing on the restricted
         # properties of the enclosing context
         if self.kind == ACQUIRE_OP_KIND:
@@ -6504,17 +6610,290 @@ class Variant(object):
         self.name = name
 
 class ProjectionFunction(object):
-    __slots__ = ['state', 'pid', 'depth']
+    __slots__ = ['state', 'pid', 'depth', 'dim', 'structured_func']
     def __init__(self, state, pid):
         self.state = state
         self.pid = pid
         self.depth = None
+        self.dim = None
+        self.structured_func = list()
 
     def set_depth(self, depth):
         if self.depth:
             assert self.depth == depth
         else:
             self.depth = depth
+
+    def set_dim(self, dim):
+        if self.dim:
+            assert self.dim == dim
+        else:
+            self.dim = dim
+
+    def get_evaluated_path(self, point, root):
+        assert self.structured_func
+        path = [root]
+        cur_node = root
+        for proj_ops in self.structured_func:
+            color = Point(len(proj_ops))
+            for i in range(0, color.dim):
+                color.vals[i] = proj_ops[i].evaluate(point).val
+            cur_node = root.children[color]
+            path.append(cur_node)
+        return path
+
+    def find_constraints(self, representative_path, other):
+        assert self.structured_func
+        assert other.structured_func
+        cur_node = representative_path[0]
+        cur_constraint = ProjConstraint(ProjConstraint.TRUE, None, None)
+        for i in xrange(len(self.structured_func) - 1, -1, -1):
+            cur_node = representative_path[i]
+            if cur_node.is_region():
+                new_constraint = self.add_constraints(ProjConstraint.NEQ,
+                        self.structured_func[i], other.structured_func[i])
+                cur_constraint = ProjConstraint(ProjConstraint.OR, new_constraint, cur_constraint)
+            else:
+                assert(cur_node.is_partition())
+                if cur_node.are_all_children_disjoint():
+                    new_constraint = self.add_constraints(ProjConstraint.EQ,
+                            self.structured_func[i], other.structured_func[i])
+                    cur_constraint = ProjConstraint(ProjConstraint.AND,
+                            new_constraint, cur_constraint)
+                else:
+                    new_constraint = self.add_constraints(ProjConstraint.NEQ,
+                            self.structured_func[i], other.structured_func[i])
+                    cur_constraint = ProjConstraint(ProjConstraint.OR, new_constraint, cur_constraint)
+        return cur_constraint
+
+    def add_constraints(self, comparision_type, val1, val2):
+        if comparision_type == ProjConstraint.EQ:
+            add_op = ProjConstraint.AND
+            base = ProjConstraint.TRUE
+        elif comparision_type == ProjConstraint.NEQ:
+            add_op = ProjConstraint.OR
+            base = ProjConstraint.FALSE
+        cur_constraint = ProjConstraint(base, None, None)
+        for i in xrange(0, len(val1)):
+            cur_constraint = ProjConstraint(add_op, cur_constraint,
+                    ProjConstraint(comparision_type, val1[i], val2[i]))
+        return cur_constraint
+
+class ProjOperation(object):
+    ADD = 0
+    SUB = 1
+    MUL = 2
+    DIV = 3
+    MOD = 4
+    CONST = 5
+    VAR = 6
+    def __init__(self, op_type, in1, in2, proj_func):
+        self.op_type = op_type
+        self.in1 = in1
+        self.in2 = in2
+        self.proj_func = proj_func
+
+    def evaluate(self, point):
+        if self.op_type == ProjOperation.ADD:
+            return self.in1.evaluate(point) + self.in2.evaluate(point)
+        elif self.op_type == ProjOperation.SUB:
+            return self.in1.evaluate(point) - self.in2.evaluate(point)
+        elif self.op_type == ProjOperation.MUL:
+            return self.in1.evaluate(point) * self.in2.evaluate(point)
+        elif self.op_type == ProjOperation.DIV:
+            return self.in1.evaluate(point) / self.in2.evaluate(point)
+        else:
+            raise Exception("unknown operation")
+
+    def __str__(self):
+        if self.op_type == ProjOperation.ADD:
+            return str(self.in1) + ' + ' + str(self.in2)
+        elif self.op_type == ProjOperation.SUB:
+            return str(self.in1) + ' - ' + str(self.in2)
+        elif self.op_type == ProjOperation.MUL:
+            return str(self.in1) + ' * ' + str(self.in2)
+        elif self.op_type == ProjOperation.DIV:
+            return str(self.in1) + ' / ' + str(self.in2)
+        elif self.op_type == ProjOperation.MOD:
+            return str(self.in1) + ' % ' + str(self.in2)
+        else:
+            raise Exception("unsupported")
+
+class ProjVar(object):
+    def __init__(self, var_id, proj_func):
+        # Var id is defined to be the index into the dimension of the index
+        # space over which we are projecting.
+        self.var_id = var_id
+        self.proj_func = proj_func
+
+    def evaluate(self, point):
+        return ProjConst(point.vals[self.var_id])
+
+    def __str__(self):
+        return 'Var(' + str(self.var_id) + ',' + str(self.proj_func.pid) + ')'
+
+class ProjConst(object):
+    def __init__(self, val):
+        self.val = val
+
+    def evaluate(self, concretes):
+        return self
+
+    def __str__(self):
+        return str(self.val)
+
+    def __add__(self, other):
+        return ProjConst(self.val + other.val)
+
+    def __sub__(self, other):
+        return ProjConst(self.val - other.val)
+
+    def __mul__(self, other):
+        return ProjConst(self.val * other.val)
+
+    def __div__(self, other):
+        return ProjConst(self.val / other.val)
+
+    def __mod__(self, other):
+        return ProjConst(self.val % other.val)
+
+class ProjConstraint(object):
+    EQ = 0
+    NEQ = 1
+    NOT = 2
+    AND = 3
+    OR = 4
+    TRUE = 5
+    FALSE = 6
+    def __init__(self, constraint_type, lhs, rhs):
+        self.constraint_type = constraint_type
+        self.lhs = lhs
+        self.rhs = rhs
+
+    def __str__(self):
+        if self.constraint_type == ProjConstraint.EQ:
+            return '(' + str(self.lhs) + ' == ' + str(self.rhs) + ')'
+        elif self.constraint_type == ProjConstraint.NEQ:
+            return '(' + str(self.lhs) + ' != ' + str(self.rhs) + ')'
+        elif self.constraint_type == ProjConstraint.NOT:
+            return '( NOT ' + str(self.lhs) + ')'
+        elif self.constraint_type == ProjConstraint.AND:
+            return '(' + str(self.lhs) + ' AND ' + str(self.rhs) + ')'
+        elif self.constraint_type == ProjConstraint.OR:
+            return '(' + str(self.lhs) + ' OR ' + str(self.rhs) + ')'
+        elif self.constraint_type == ProjConstraint.TRUE:
+            return 'TRUE'
+        elif self.constraint_type == ProjConstraint.FALSE:
+            return 'FALSE'
+        else:
+            raise Exception("Unknown Constraint Type")
+
+    def simplify(self):
+        if (self.constraint_type == ProjConstraint.TRUE or
+                self.constraint_type == ProjConstraint.FALSE):
+            return self
+        if self.constraint_type == ProjConstraint.NOT:
+            newLhs = self.lhs.simplify()
+            if newLhs.constraint_type == ProjConstraint.TRUE:
+                return ProjConstraint(ProjConstraint.FALSE, None, None)
+            elif newLhs.constraint_type == ProjConstraint.FALSE:
+                return ProjConstraint(ProjConstraint.TRUE, None, None)
+            else:
+                self.lhs = newLhs
+                return self
+        if self.constraint_type == ProjConstraint.AND:
+            newLhs = self.lhs.simplify()
+            newRhs = self.rhs.simplify()
+            if newLhs.constraint_type == ProjConstraint.TRUE:
+                return newRhs
+            elif newLhs.constraint_type == ProjConstraint.FALSE:
+                return newLhs
+            elif newRhs.constraint_type == ProjConstraint.TRUE:
+                return newLhs
+            elif newRhs.constraint_type == ProjConstraint.FALSE:
+                return newRhs
+            else:
+                self.lhs = newLhs
+                self.rhs = newRhs
+                return self
+        if self.constraint_type == ProjConstraint.OR:
+            newLhs = self.lhs.simplify()
+            newRhs = self.rhs.simplify()
+            if newLhs.constraint_type == ProjConstraint.TRUE:
+                return newLhs
+            elif newLhs.constraint_type == ProjConstraint.FALSE:
+                return newRhs
+            elif newRhs.constraint_type == ProjConstraint.TRUE:
+                return newRhs
+            elif newRhs.constraint_type == ProjConstraint.FALSE:
+                return newLhs
+            else:
+                self.lhs = newLhs
+                self.rhs = newRhs
+                return self
+        if self.constraint_type == ProjConstraint.EQ:
+            if isinstance(self.lhs, ProjConst) and isinstance(self.rhs, ProjConst):
+                if self.lhs.val == self.rhs.val:
+                    return ProjConstraint(ProjConstraint.TRUE, None, None)
+                else:
+                    return ProjConstraint(ProjConstraint.FALSE, None, None)
+            else:
+                return self
+        if self.constraint_type == ProjConstraint.NEQ:
+            if isinstance(self.lhs, ProjConst) and isinstance(self.rhs, ProjConst):
+                if self.lhs.val != self.rhs.val:
+                    return ProjConstraint(ProjConstraint.TRUE, None, None)
+                else:
+                    return ProjConstraint(ProjConstraint.FALSE, None, None)
+            else:
+                return self
+        return self
+
+    def substitute(self, point_left, point_right):
+        if (self.constraint_type == ProjConstraint.TRUE or
+                self.constraint_type == ProjConstraint.FALSE):
+            return ProjConstraint(self.constraint_type, None, None)
+        elif self.constraint_type == ProjConstraint.NOT:
+            subst_lhs = self.lhs.substitute(point_left, point_right)
+            return ProjCosntraint(self.constraint_type, subst_lhs, None)
+        elif (self.constraint_type == ProjConstraint.AND or
+                self.constraint_type == ProjConstraint.OR):
+            subst_lhs = self.lhs.substitute(point_left, point_right)
+            subst_rhs = self.rhs.substitute(point_left, point_right)
+            return ProjConstraint(self.constraint_type, subst_lhs, subst_rhs)
+        elif self.constraint_type == ProjConstraint.EQ:
+            evaled_lhs = self.lhs.evaluate(point_left)
+            evaled_rhs = self.rhs.evaluate(point_right)
+            if evaled_lhs.val == evaled_rhs.val:
+                return ProjConstraint(ProjConstraint.TRUE, None, None)
+            else:
+                return ProjConstraint(ProjConstraint.FALSE, None, None)
+        elif self.constraint_type == ProjConstraint.NEQ:
+            evaled_lhs = self.lhs.evaluate(point_left)
+            evaled_rhs = self.rhs.evaluate(point_right)
+            if evaled_lhs.val != evaled_rhs.val:
+                return ProjConstraint(ProjConstraint.TRUE, None, None)
+            else:
+                return ProjConstraint(ProjConstraint.FALSE, None, None)
+        else:
+            print("Unknown ProjConstraint type")
+            assert(False)
+
+    def get_deps(self, point, bounding_rect):
+        deps = list()
+        for other_point in bounding_rect.iterator():
+            if point == other_point:
+                continue
+            subst_constraint = self.substitute(point, other_point)
+            subst_constraint = subst_constraint.simplify()
+            if subst_constraint.constraint_type == ProjConstraint.TRUE:
+                deps.append(other_point)
+            elif subst_constraint.constraint_type == ProjConstraint.FALSE:
+                pass
+            else:
+                print("simplifying the constraint didn't end up with concrete value")
+                assert(False)
+        return deps
 
 class Task(object):
     __slots__ = ['state', 'op', 'point', 'operations', 'depth', 
@@ -6944,8 +7323,20 @@ class Task(object):
             return 0
         if len(self.operations) == 1:
             op = self.operations[0]
-            if not op.inter_close_ops and not op.open_ops and not op.advance_ops:
+            if (not op.inter_close_ops and not op.open_ops and not op.advance_ops
+                    and not op.kind == INDEX_TASK_KIND):
                 return 0
+            if op.kind == INDEX_TASK_LAUNCH:
+                # Remove this line!
+                return 0
+                # Check to see if this is a structured projection launch
+                for req in self.reqs:
+                    if (not req.projection_function or not
+                            req.projection_function.structured_func):
+                        return 0
+                # We have a structured index task launch, handle the special
+                # printing of that here and
+                op.print_structured_projection_dataflow_nodes(printer)
         name = str(self)
         filename = 'dataflow_'+name.replace(' ', '_')+'_'+str(self.op.uid)
         printer = GraphPrinter(path,filename)
@@ -8606,7 +8997,9 @@ requirement_pat         = re.compile(
 req_field_pat           = re.compile(
     prefix+"Logical Requirement Field (?P<uid>[0-9]+) (?P<index>[0-9]+) (?P<fid>[0-9]+)")
 projection_func_pat     = re.compile(
-    prefix+"Projection Function (?P<pid>[0-9]+) (?P<depth>[0-9]+)")
+    prefix+"Projection Function (?P<pid>[0-9]+) (?P<depth>[0-9]+) (?P<dim>[0-9]+)")
+projection_func_step_pat     = re.compile(
+    prefix+"Projection Function Step (?P<pid>[0-9]+) (?P<depth>[0-9]+) (?P<func>([0-9]+ ?)*)")
 req_proj_pat            = re.compile(
     prefix+"Logical Requirement Projection (?P<uid>[0-9]+) (?P<index>[0-9]+) "+
            "(?P<pid>[0-9]+)")
@@ -8894,6 +9287,24 @@ def parse_legion_spy_line(line, state):
     if m is not None:
         func = state.get_projection_function(int(m.group('pid')))
         func.set_depth(int(m.group('depth')))
+        func.set_dim(int(m.group('dim')))
+        return True
+    m = projection_func_step_pat.match(line)
+    if m is not None:
+        func = state.get_projection_function(int(m.group('pid')))
+        assert(len(func.structured_func) == int(m.group('depth')))
+        split_func = m.group('func').split(' ')
+        for i in xrange(0, len(split_func)):
+            split_func[i] = int(split_func[i])
+        ops = list()
+        while (len(split_func) > 0):
+            print(split_func)
+            (step, split_func) = parse_structured_proj_function_step(split_func, func)
+            ops.append(step)
+            print(step)
+            print(split_func)
+        assert(len(split_func) == 0)
+        func.structured_func.append(tuple(ops))
         return True
     m = req_proj_pat.match(line)
     if m is not None:
@@ -9534,6 +9945,30 @@ def parse_legion_spy_line(line, state):
         return True
     return False
 
+def parse_structured_proj_function_step(split_op_str, proj_func):
+    if split_op_str[0] == ProjOperation.ADD:
+        (lhs, remainder)  = parse_structured_proj_function_step(
+                split_op_str[1:], proj_func)
+        (rhs, remainder)  = parse_structured_proj_function_step(
+                remainder, proj_func)
+        return (ProjOperation(ProjOperation.ADD, lhs, rhs, proj_func), remainder)
+    elif split_op_str[0] == ProjOperation.SUB:
+        (lhs, remainder)  = parse_structured_proj_function_step(
+                split_op_str[1:], proj_func)
+        (rhs, remainder)  = parse_structured_proj_function_step(
+                remainder, proj_func)
+        return (ProjOperation(ProjOperation.SUB, lhs, rhs, proj_func), remainder)
+    elif split_op_str[0] == ProjOperation.MUL:
+        pass
+    elif split_op_str[0] == ProjOperation.DIV:
+        pass
+    elif split_op_str[0] == ProjOperation.MOD:
+        pass
+    elif split_op_str[0] == ProjOperation.CONST:
+        return (ProjConst(split_op_str[1]), split_op_str[2:])
+    elif split_op_str[0] == ProjOperation.VAR:
+        return (ProjVar(split_op_str[1], proj_func), split_op_str[2:])
+
 class State(object):
     __slots__ = ['verbose', 'top_level_uid', 'traverser_gen', 'processors', 'memories',
                  'processor_kinds', 'memory_kinds', 'index_spaces', 'index_partitions',
@@ -9675,6 +10110,8 @@ class State(object):
             self.slice_index[slice_].add_point_task(point)
         # Check for any interfering index space launches
         for op in self.ops.itervalues():
+            # TODO: Remove this break!!! Just for testing quickly
+            break
             if op.kind == INDEX_TASK_KIND and op.is_interfering_index_space_launch():
                 print("ERROR: Found interfering index space launch: %s!" % str(op))
                 if self.assert_on_error:
@@ -10471,6 +10908,17 @@ def main(temp_dir):
     if total_matches == 0:
         print('No matches found! Exiting...')
         return
+    for proj in state.projection_functions.itervalues():
+        print('printing proj function ' + str(proj.pid))
+        for step in proj.structured_func:
+            printstr = ['(']
+            for op in step:
+                printstr.append(str(op))
+                printstr.append(', ')
+            printstr.pop()
+            printstr.append(')')
+            printstr = ''.join(printstr)
+            print(printstr)
     state.post_parse(simplify_graphs, physical_checks or event_graphs)
     if logical_checks and not state.detailed_logging:
         print("WARNING: Requested logical analysis but logging information is "+
