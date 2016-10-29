@@ -5624,13 +5624,12 @@ class Operation(object):
                 constraints.append((constraint.simplify(), dep_type, req1, req2))
                 # Compute the requirements for the dependence here
         for point in self.points:
-            print(point)
             for (constraint, dep_type, req1, req2) in constraints:
                 # TODO: handle the constraints of a point conflicting with itself properly
                 dep_points = constraint.get_deps(point, self.launch_rect)
                 for dep_point in dep_points:
-                    order1 = self.ordering_function.evaluate(point)
-                    order2 = self.ordering_function.evaluate(dep_point)
+                    order1 = self.ordering_function.evaluate(point).val
+                    order2 = self.ordering_function.evaluate(dep_point).val
                     if order1 == order2:
                         print('Two index launch points which conflict have the same order')
                         assert False
@@ -6397,6 +6396,84 @@ class Operation(object):
                                 'fontcolor=black,shape=record,penwidth=0];')
                         printer.println(self.node_name+' -> '+node_name+
                                 ' [style=solid,color=black,penwidth=2];')
+
+    def print_structured_index_dataflow_graph(self, path, simplify_graphs):
+        assert(self.kind == INDEX_TASK_KIND)
+        # Check to see if this is a structured projection launch
+        for req in self.reqs.itervalues():
+            if (not req.projection_function or not
+                    req.projection_function.structured_func):
+                return 0
+        name = str(self)
+        filename = 'dataflow_'+name.replace(' ', '_')+'_'+str(self.uid)
+        printer = GraphPrinter(path,filename)
+        operations = list()
+        for task in self.points.itervalues():
+            operations.append(task.op)
+        # First emit the nodes
+        for op in operations:
+            op.print_dataflow_node(printer)
+        # Simplify our graph if necessary
+        if simplify_graphs:
+            print("Simplifying dataflow graph for "+str(self)+"...")
+            all_ops = list()
+            for op in operations:
+                # Add any close operations first
+                if op.inter_close_ops:
+                    for close in op.inter_close_ops:
+                        all_ops.append(close)
+                if op.open_ops:
+                    for open_op in op.open_ops:
+                        all_ops.append(open_op)
+                if op.advance_ops:
+                    for advance in op.advance_ops:
+                        all_ops.append(advance)
+                # Then add the operation itself
+                all_ops.append(op)
+                # Print any phase barier edges now, since
+                # we know they will all be printed
+                if self.state.detailed_graphs:
+                    op.print_phase_barrier_edges(printer)
+            # Now traverse the list in reverse order
+            while all_ops:
+                src = all_ops.pop()
+                if src.logical_outgoing is None:
+                    continue
+                actual_out = src.logical_outgoing.copy()
+                diff = False
+                for next_vert in src.logical_outgoing:
+                    if not next_vert in actual_out:
+                        continue
+                    reachable = set()
+                    next_vert.get_logical_reachable(reachable, True)
+                    # See which edges we can remove
+                    to_remove = list()
+                    for other in actual_out:
+                        if other == next_vert:
+                            continue
+                        if other in reachable:
+                            to_remove.append(other)
+                    del reachable
+                    if len(to_remove) > 0:
+                        diff = True
+                        for rem in to_remove:
+                            actual_out.remove(rem)
+                            rem.logical_incoming.remove(src)
+                    del to_remove
+                if diff:
+                    src.logical_outgoing = actual_out
+                for dst in actual_out:
+                    printer.println(src.node_name+' -> '+dst.node_name+
+                                    ' [style=solid,color=black,penwidth=2];')
+            print("Done")
+        else:
+            previous_pairs = set()
+            for op in operations:
+                op.print_incoming_dataflow_edges(printer, previous_pairs)
+        printer.print_pdf_after_close(False)
+        # We printed our dataflow graph
+        return 1
+
 
     def print_event_node(self, printer):
         self.print_base_node(printer, False)
@@ -7323,20 +7400,8 @@ class Task(object):
             return 0
         if len(self.operations) == 1:
             op = self.operations[0]
-            if (not op.inter_close_ops and not op.open_ops and not op.advance_ops
-                    and not op.kind == INDEX_TASK_KIND):
+            if not op.inter_close_ops and not op.open_ops and not op.advance_ops:
                 return 0
-            if op.kind == INDEX_TASK_LAUNCH:
-                # Remove this line!
-                return 0
-                # Check to see if this is a structured projection launch
-                for req in self.reqs:
-                    if (not req.projection_function or not
-                            req.projection_function.structured_func):
-                        return 0
-                # We have a structured index task launch, handle the special
-                # printing of that here and
-                op.print_structured_projection_dataflow_nodes(printer)
         name = str(self)
         filename = 'dataflow_'+name.replace(' ', '_')+'_'+str(self.op.uid)
         printer = GraphPrinter(path,filename)
@@ -10394,6 +10459,10 @@ class State(object):
 
     def make_dataflow_graphs(self, path, simplify_graphs):
         total_dataflow_graphs = 0
+        for op in self.ops.itervalues():
+            if op.kind == INDEX_TASK_KIND:
+                total_dataflow_graphs += op.print_structured_index_dataflow_graph(
+                        path, simplify_graphs)
         for task in self.tasks.itervalues():
             total_dataflow_graphs += task.print_dataflow_graph(path, simplify_graphs)
         if self.verbose:
