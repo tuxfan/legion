@@ -339,11 +339,14 @@ namespace Legion {
       // Index for this must epoch op
       unsigned must_epoch_index;
     public:
+      void log_requirement(UniqueID uid, unsigned idx,
+                           const RegionRequirement &req);
+    public:
       // Static methods
       static void process_unpack_task(Runtime *rt,
                                       Deserializer &derez); 
     public:
-      static void log_requirement(UniqueID uid, unsigned idx,
+      static void log_requirement_static(UniqueID uid, unsigned idx,
                                  const RegionRequirement &req);
     };
 

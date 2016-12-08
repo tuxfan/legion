@@ -2453,6 +2453,73 @@ namespace Legion {
     };
 
     /**
+     * \struct StructuredProjection
+     * A class for describing a structured projection function,
+     * simply contains a list of Structured Projection Steps.
+     */
+    struct StructuredProjectionStep {
+    public:
+      enum { MAX_POINT_DIM = 3 };
+      StructuredProjectionStep(int proj_dim)
+      {
+        dim = proj_dim;
+      }
+      int get_dim(void) const { return dim; }
+
+      static inline StructuredProjectionStep make_step(int mul_const,
+                                                       int var_id,
+                                                       int add_const)
+      {
+        StructuredProjectionStep s(1);
+        s.var_id[0] = var_id;
+        s.mul_const[0] = mul_const;
+        s.add_const[0] = add_const;
+        return s;
+      }
+      static inline StructuredProjectionStep make_step(int mul_const_1,
+                                                       int var_id_1,
+                                                       int add_const_1,
+                                                       int mul_const_2,
+                                                       int var_id_2,
+                                                       int add_const_2)
+      {
+        StructuredProjectionStep s(2);
+        s.var_id[0] = var_id_1;
+        s.mul_const[0] = mul_const_1;
+        s.add_const[0] = add_const_1;
+        s.var_id[1] = var_id_2;
+        s.mul_const[1] = mul_const_2;
+        s.add_const[1] = add_const_2;
+        return s;
+      }
+    public:
+      int dim;
+      int var_id[MAX_POINT_DIM];
+      int mul_const[MAX_POINT_DIM];
+      int add_const[MAX_POINT_DIM];
+    };
+
+    /**
+     * \struct StructuredProjection
+     * A class for describing a structured projection function,
+     * simply contains a list of Structured Projection Steps.
+     */
+    struct StructuredProjection {
+    public:
+      StructuredProjection(int proj_dim, int proj_depth)
+      {
+        dim = proj_dim;
+        depth = proj_depth;
+        steps = (StructuredProjectionStep*) malloc(proj_depth * sizeof(StructuredProjectionStep));
+      }
+      int get_dim(void) const { return dim; }
+    public:
+      int dim;
+      int depth;
+      StructuredProjectionStep* steps;
+    };
+
+    /**
      * \interface ProjectionFunctor
      * This defines an interface for objects that need to be
      * able to handle projection requests for an application.
@@ -2537,6 +2604,11 @@ namespace Legion {
                                     LogicalPartition upper_bound,
                                     const DomainPoint &point);
       
+      /**
+       * Structured projection function
+       */
+      virtual StructuredProjection project_structured(Context ctx, Task *task) = 0;
+
       /**
        * Indicate whether calls to this projection functor
        * must be serialized or can be performed in parallel.

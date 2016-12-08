@@ -25,7 +25,7 @@
 /**
  * This file contains calls for logging that are consumed by 
  * the legion_spy tool in the tools directory.
- * To see where these statements get consumed, look in spy_parser.py
+ * To see where these statements get consumed, look in legion_spy.py
  */
 
 namespace Legion {
@@ -483,6 +483,29 @@ namespace Legion {
       {
         log_spy.print("Logical Requirement Projection %llu %u %u", 
                       unique_id, index, pid);
+      }
+
+      static inline void log_requirement_structured_projection(
+          UniqueID unique_id, unsigned index, ProjectionID pid,
+          StructuredProjection proj)
+      {
+        // Here need to print the steps
+        // Should print the dimension, then go on specify a_i x_i + b_i
+        log_spy.print("Logical Requirement Structured Projection "
+                      "%llu %u %u %u %u",
+                      unique_id, index, pid, proj.depth, proj.dim);
+        for (int i = 0; i < proj.depth; i++) {
+          StructuredProjectionStep step = proj.steps[i];
+          log_spy.print("Projection Step %llu %u %u "
+                        "%d %d %d %d %d %d %d %d %d", unique_id, index, pid,
+                        step.mul_const[0], step.var_id[0], step.add_const[0],
+                        proj.dim < 2 ? 0 : step.mul_const[1],
+                        proj.dim < 2 ? 0 : step.var_id[1],
+                        proj.dim < 2 ? 0 : step.add_const[1],
+                        proj.dim < 3 ? 0 : step.mul_const[2],
+                        proj.dim < 3 ? 0 : step.var_id[2],
+                        proj.dim < 3 ? 0 : step.add_const[2]);
+        }
       }
 
       template<int DIM>

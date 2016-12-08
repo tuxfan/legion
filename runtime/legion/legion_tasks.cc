@@ -2283,7 +2283,7 @@ namespace Legion {
     } 
 
     //--------------------------------------------------------------------------
-    /*static*/ void TaskOp::log_requirement(UniqueID uid, unsigned idx,
+    void TaskOp::log_requirement(UniqueID uid, unsigned idx,
                                             const RegionRequirement &req)
     //--------------------------------------------------------------------------
     {
@@ -2301,8 +2301,39 @@ namespace Legion {
                 req.partition.tree_id,
           req.privilege, req.prop, req.redop, req.parent.index_space.id);
       LegionSpy::log_requirement_fields(uid, idx, req.privilege_fields);
-      if (proj)
+      if (proj) {
+        ProjectionFunction *function = 
+          runtime->find_projection_function(req.projection);
+        StructuredProjection structured_proj =
+          function->functor->project_structured(DUMMY_CONTEXT, this);
         LegionSpy::log_requirement_projection(uid, idx, req.projection);
+        LegionSpy::log_requirement_structured_projection(uid, idx,
+            req.projection, structured_proj);
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    void TaskOp::log_requirement_static(UniqueID uid, unsigned idx,
+                                            const RegionRequirement &req)
+    //--------------------------------------------------------------------------
+    {
+      const bool reg = (req.handle_type == SINGULAR) ||
+                       (req.handle_type == REG_PROJECTION);
+      const bool proj = (req.handle_type == REG_PROJECTION) ||
+                        (req.handle_type == PART_PROJECTION); 
+
+      LegionSpy::log_logical_requirement(uid, idx, reg,
+          reg ? req.region.index_space.id :
+                req.partition.index_partition.id,
+          reg ? req.region.field_space.id :
+                req.partition.field_space.id,
+          reg ? req.region.tree_id : 
+                req.partition.tree_id,
+          req.privilege, req.prop, req.redop, req.parent.index_space.id);
+      LegionSpy::log_requirement_fields(uid, idx, req.privilege_fields);
+      if (proj) {
+        LegionSpy::log_requirement_projection(uid, idx, req.projection);
+      }
     }
 
     /////////////////////////////////////////////////////////////

@@ -1282,6 +1282,12 @@ namespace Legion {
       virtual LogicalRegion project(const Mappable *mappable, unsigned index,
                                     LogicalPartition upper_bound,
                                     const DomainPoint &point);
+      virtual LogicalRegion project(LogicalRegion upper_bound,
+                                    const DomainPoint &point);
+      virtual LogicalRegion project(LogicalPartition upper_bound,
+                                    const DomainPoint &point);
+      virtual StructuredProjection project_structured(Context ctx,
+                                    Task *task);
       virtual unsigned get_depth(void) const;
     };
 
