@@ -5648,10 +5648,6 @@ class Operation(object):
                     first_op.add_outgoing(dep)
                     second_op.add_incoming(dep)
         return True
-# Loop through all points and:
-# 1. Find all constraints implied by the above
-# 2. Find all relevant values from the ordering function
-# 3. Add a mapping dependence between the operations corresponding to the two points
 
     def is_interfering_index_space_launch(self):
         assert self.kind == INDEX_TASK_KIND
