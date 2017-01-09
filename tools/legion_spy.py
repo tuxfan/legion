@@ -6928,7 +6928,7 @@ class ProjConstraint(object):
             return ProjConstraint(self.constraint_type, None, None)
         elif self.constraint_type == ProjConstraint.NOT:
             subst_lhs = self.lhs.substitute(point_left, point_right)
-            return ProjCosntraint(self.constraint_type, subst_lhs, None)
+            return ProjConstraint(self.constraint_type, subst_lhs, None)
         elif (self.constraint_type == ProjConstraint.AND or
                 self.constraint_type == ProjConstraint.OR):
             subst_lhs = self.lhs.substitute(point_left, point_right)
