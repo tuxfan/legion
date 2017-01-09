@@ -436,6 +436,27 @@ namespace Legion {
     };
 
     /**
+     * \class ProjectionAnalysisConstraint
+     * Constraints on regions discovered during structured projection
+     * analysis.
+     */
+    class ProjectionAnalysisConstraint {
+      public:
+        ProjectionAnalysisConstraint(ConstraintType type,
+            ProjectionAnalysisConstraint *lhs,
+            ProjectionAnalysisConstraint *rhs);
+      public:
+        ProjectionAnalysisConstraint simplify(void);
+        //ProjectionAnalysisConstraint substitute(void);
+        // stringify
+        // find_dependent_points
+      public:
+        const ConstraintType constraint_type;
+        const ProjectionAnalysisConstraint *lhs;
+        const ProjectionAnalysisConstraint *rhs;
+    };
+
+    /**
      * \struct PhysicalUser
      * A class for representing physical users of a logical
      * region including necessary information to 

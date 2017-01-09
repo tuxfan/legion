@@ -2453,7 +2453,7 @@ namespace Legion {
     };
 
     /**
-     * \struct StructuredProjection
+     * \struct StructuredProjectionStep
      * A class for describing a structured projection function,
      * simply contains a list of Structured Projection Steps.
      */
@@ -2500,19 +2500,46 @@ namespace Legion {
     };
 
     /**
-     * \struct StructuredProjection
+     * \class StructuredProjection
      * A class for describing a structured projection function,
      * simply contains a list of Structured Projection Steps.
      */
-    struct StructuredProjection {
+    class StructuredProjectionFunctor : public ProjectionFunctor {
     public:
       StructuredProjection(int proj_dim, int proj_depth)
       {
         dim = proj_dim;
         depth = proj_depth;
-        steps = (StructuredProjectionStep*) malloc(proj_depth * sizeof(StructuredProjectionStep));
+        steps = (StructuredProjectionStep*) malloc(
+            proj_depth * sizeof(StructuredProjectionStep));
       }
       int get_dim(void) const { return dim; }
+    public:
+      /**
+       * The two general methods of projecting should never be called
+       * structured projections.
+       */
+      virtual LogicalRegion project(Context ctx, Task *task,
+                                    unsigned index,
+                                    LogicalRegion upper_bound,
+                                    const DomainPoint &point) { assert(0); }
+      virtual LogicalRegion project(Context ctx, Task *task,
+                                    unsigned index,
+                                    LogicalPartition upper_bound,
+                                    const DomainPoint &point) { assert(0); }
+
+      virtual LogicalRegion project(Context ctx, Task *task,
+                                    unsigned index,
+                                    LogicalPartition upper_bound,
+                                    const DomainPoint &point) { assert(0); }
+      /**
+       * Structured projection function
+       */
+      virtual StructuredProjection project_structured(Context ctx,
+          Task *task) = 0;
+
+      bool is_structured() { return true; }
+
     public:
       int dim;
       int depth;
@@ -2603,7 +2630,26 @@ namespace Legion {
                                     unsigned index,
                                     LogicalPartition upper_bound,
                                     const DomainPoint &point);
-      
+
+      /**
+       * Same as the above projection, but annonymous with
+       * respect to the operation. This one will be invoked
+       * by any operation which is not a task. At some point
+       * in the near future this may become the default 
+       * projection functor interface.
+       */
+      virtual LogicalRegion project(LogicalRegion upper_bound,
+                                    const DomainPoint &point) = 0;
+      /**
+       * Same as the projection function above for partitions,
+       * but annonymous with respect to the operation. This one
+       * will be invoked by any operation which is not a task.
+       * At some point in the near future this may become
+       * the default projection functor interface.
+       */
+      virtual LogicalRegion project(LogicalPartition upper_bound,
+                                    const DomainPoint &point) = 0;
+
       /**
        * Structured projection function
        */
@@ -2629,6 +2675,8 @@ namespace Legion {
        * for the identity projection function.
        */
       virtual unsigned get_depth(void) const = 0;
+
+      bool is_structured() { return false; }
     private:
       friend class Internal::Runtime;
       // For pre-registered projection functors the runtime will

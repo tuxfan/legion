@@ -2032,6 +2032,123 @@ namespace Legion {
       }
       derez.deserialize<bool>(dirty_reduction);
     }
+    //
+    /////////////////////////////////////////////////////////////
+    // ProjectionAnalysisConstraint
+    /////////////////////////////////////////////////////////////
+
+    //--------------------------------------------------------------------------
+    ProjectionAnalysisConstraint::ProjectionAnalysisConstraint(
+                      const ConstraintType type,
+                      const ProjectionAnalysisConstraint *lhs,
+                      const ProjectionAnalysisConstraint *rhs)
+      : constraint_type(type), lhs(lhs), rhs(rhs)
+    //--------------------------------------------------------------------------
+    {
+    }
+
+    //--------------------------------------------------------------------------
+    ProjectionAnalysisConstraint ProjectionAnalysisConstraint::simplify()
+    //--------------------------------------------------------------------------
+    {
+      switch(constraint_type) {
+        // first two cases can probably be combined.  They should first simplify the
+        // equation, and then if both sides are constants they should make the
+        // equations either true or false (might be able to do the constant check
+        // first if the variables on each side of the equations cannot be the same
+        // because they come from different projection functions).
+        case EQ:
+          break;
+        case NEQ:
+          break;
+        case NOT:
+          ProjectionAnalysisConstraint newLhs = lhs->simplify();
+          if (newLhs.constraint_type == TRUE)
+            return ProjectionAnalysisConstraint(FALSE, NULL, NULL);
+          if (newLhs.constraint_type == FALSE)
+            return ProjectionAnalysisConstraint(TRUE, NULL, NULL);
+          return ProjectionAnalysisCosntraint(NOT, &newLhs, NULL);
+        case AND:
+          ProjectionAnalysisConstraint newLhs = lhs->simplify();
+          ProjectionAnalysisConstraint newRhs = rhs->simplify();
+          if (newLhs.constraint_type == TRUE ||
+              newRhs.constraint_type == FALSE)
+            return newRhs;
+          if (newLhs.constraint_type == FALSE ||
+              newRhs.constraint_type == TRUE)
+            return newLhs;
+          return ProjectionAnalysisCosntraint(AND, &newLhs, &newRhs);
+        case OR:
+          ProjectionAnalysisConstraint newLhs = lhs->simplify();
+          ProjectionAnalysisConstraint newRhs = rhs->simplify();
+          if (newLhs.constraint_type == TRUE ||
+              newRhs.constraint_type == FALSE)
+            return newLhs;
+          if (newLhs.constraint_type == FALSE ||
+              newRhs.constraint_type == TRUE)
+            return newRhs;
+          return ProjectionAnalysisCosntraint(OR, &newLhs, &newRhs);
+        case TRUE:
+          return ProjectionAnalysisConstraint(TRUE, NULL, NULL);
+        case FALSE:
+          return ProjectionAnalysisConstraint(FALSE, NULL, NULL);
+        default:
+          assert(0);
+      }
+      LegionMap<ProjectionEpochID,FieldMask>::aligned::iterator finder = 
+        projection_epochs.find(epoch);
+      if (finder == projection_epochs.end())
+        projection_epochs[epoch] = epoch_mask;
+      else
+        finder->second |= epoch_mask;
+    }
+
+    //--------------------------------------------------------------------------
+    void ProjectionInfo::clear(void)
+    //--------------------------------------------------------------------------
+    {
+      projection = NULL;
+      projection_type = SINGULAR;
+      projection_domain = Domain::NO_DOMAIN;
+      projection_epochs.clear();
+      dirty_reduction = false;
+    }
+
+    //--------------------------------------------------------------------------
+    void ProjectionInfo::pack_info(Serializer &rez) const
+    //--------------------------------------------------------------------------
+    {
+      rez.serialize<size_t>(projection_epochs.size());
+      for (LegionMap<ProjectionEpochID,FieldMask>::aligned::const_iterator 
+            it = projection_epochs.begin(); it != projection_epochs.end(); it++)
+      {
+        rez.serialize(it->first);
+        rez.serialize(it->second);
+      }
+      rez.serialize<bool>(dirty_reduction);
+    }
+
+    //--------------------------------------------------------------------------
+    void ProjectionInfo::unpack_info(Deserializer &derez, Runtime *runtime,
+                      const RegionRequirement &req, const Domain &launch_domain)
+    //--------------------------------------------------------------------------
+    {
+      projection_type = req.handle_type;
+      if (req.handle_type != SINGULAR)
+      {
+        projection = runtime->find_projection_function(req.projection);
+        projection_domain = launch_domain; 
+      }
+      size_t num_epochs;
+      derez.deserialize(num_epochs);
+      for (unsigned idx = 0; idx < num_epochs; idx++)
+      {
+        ProjectionEpochID epoch_id;
+        derez.deserialize(epoch_id);
+        derez.deserialize(projection_epochs[epoch_id]);
+      }
+      derez.deserialize<bool>(dirty_reduction);
+    }
 
     /////////////////////////////////////////////////////////////
     // PathTraverser 

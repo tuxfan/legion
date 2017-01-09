@@ -411,6 +411,21 @@ typedef enum legion_index_space_kind_t {
   DENSE_ARRAY_KIND,
 } legion_index_space_kind_t;
 
+typedef enum legion_constraint_type_t {
+  EQ, // two equations are equal
+  NEQ, // two equations are not equal
+  NOT, // negation of a constraint
+  AND, // logical and of two constraints
+  OR, // logical or of two constraints
+  TRUE, // true constant
+  FALSE, // false constant
+} legion_projection_structure_t;
+
+typedef enum legion_projection_structure_t {
+  STRUCTURED, // a structured projection
+  UNSTRUCTURED, // an unstructured projection
+} legion_projection_structure_t;
+
 typedef enum legion_projection_type_t {
   SINGULAR, // a single logical region
   PART_PROJECTION, // projection from a partition

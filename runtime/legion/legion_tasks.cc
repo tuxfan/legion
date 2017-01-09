@@ -6642,15 +6642,87 @@ namespace Legion {
       version_infos.resize(regions.size());
       restrict_infos.resize(regions.size());
       projection_infos.resize(regions.size());
+      IndexTask::perform_structured_dependence_analysis();
       for (unsigned idx = 0; idx < regions.size(); idx++)
       {
         projection_infos[idx] = 
           ProjectionInfo(runtime, regions[idx], index_domain);
+        //twarsz1414 I THINK THE STUFF GOES HERE
+        perform_sturctured_dependence_analysis();
         runtime->forest->perform_dependence_analysis(this, idx, regions[idx], 
                                                      restrict_infos[idx],
                                                      version_infos[idx],
                                                      projection_infos[idx],
                                                      privilege_paths[idx]);
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    void IndexTask::perform_structured_dependence_analysis()
+    //--------------------------------------------------------------------------
+    {
+      std::vector<RegionRequirement> proj_reqs;
+      std::vector<ProjectionFunction> proj_funcs;
+      proj_reqs.reserve(regions.size());
+      proj_funcs.reserve(regions.size());
+      for (unsigned idx = 0; idx < regions.size(); idx++)
+      {
+        if (regions[idx].handle_type != SINGULAR) {
+          proj_reqs.push_bask(regions[idx])
+          proj_funcs.push_back(
+              runtime->find_projection_function(regions[idx].projection));
+        }
+      }
+      if (proj_reqs.size() == 0) {
+        return;
+      }
+
+      sample_proj = proj_reqs[0];
+      bool structured = proj_funcs[0].functor.is_structured();
+      for (unsigned idx = 1; idx < proj_funcs.size(); idx++)
+      {
+        assert(proj_funcs[i].functor.is_structured() == structured);
+      }
+      if (!structured)
+        return;
+
+      std::vector<StructuredProjection> stuctured_funcs;
+      structured_funcs.reserve(proj_funcs.size());
+      for (unsigned idx = 0; idx < proj_funcs.size(); idx++)
+      {
+        structured_funcs.push_back(
+            proj_func.functor.project_structured(DUMMY_CONTEXT, this));
+      }
+
+      int structured_depth = structured_funcs[0].depth;
+      ProjectionType handle_type = proj_reqs[0].handle_type;
+      for (unsigned idx = 1; idx < proj_reqs.size(); idx++) {
+        assert(structured_depth == structured_funcs[idx].depth);
+        assert(handle_type == proj_reqs[idx].handle_type);
+        if (handle_type == REG_PROJECTION)
+          assert(proj_reqs[0].region == proj_reqs[idx].region);
+        if (handle_type == PART_PROJECTION)
+          assert(proj_reqs[0].partition == proj_reqs[idx].partition);
+      }
+      Domain::DomainPointIterator itr(index_domain);
+      DomainPoint first_point = itr.p;
+      std::vector<ProjectionAnalysisConstraint> constraints;
+      for (unsigned idx1 = 0; idx1 < proj_reqs.size(); idx1++) {
+        RegionUsage usage1(proj_reqs[idx1]);
+        StructuredProjection proj1 = structured_funcs[idx1];
+        for (unsigned idx2 = 0; idx2 < proj_reqs.size(); idx2++) {
+          RegionUsage usage2(proj_reqs[idx2]);
+          StructuredProjection proj2 = structured_funcs[idx1];
+          DependenceType dtype = check_dependence_type(usage1, usage2);
+          if (dtype != TRUE_DEPENDENCE && dtype != ANTI_DEPENDENCE)
+          {
+            continue
+          }
+          std::vector<RegionTreeNode> representative_path;
+          ProjectionAnalysisConstraint constraint = proj1.find_constraints(
+              representative_path, proj2);
+          constraints.push_back(constraint);
+        }
       }
     }
 
