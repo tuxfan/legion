@@ -273,6 +273,20 @@ namespace Legion {
                                    UniqueID context_uid,
                                    const RegionRequirement &req,
                                    AddressSpaceID target);
+      LogicalRegion evaluate_projection(StructuredProjection proj,
+          DomainPoint &point,
+          RegionTreeNode *upper_bound);
+      ProjectionAnalysisConstraint compute_proj_constraint(
+          StructuredProjection proj1,
+          StructuredProjection proj2,
+          LogicalRegion sample_bottom_region);
+    protected:
+      // Helper for the above method
+      ProjectionAnalysisConstraint add_constraints(
+          ConstraintType comparison_type,
+          StructuredProjectionStep step1,
+          StructuredProjectionStep step2);
+          
     public:
       void perform_versioning_analysis(Operation *op, unsigned idx,
                                        const RegionRequirement &req,

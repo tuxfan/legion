@@ -5612,10 +5612,6 @@ public:
     // TODO: add support for these
     assert(false);
     return LogicalRegion::NO_REGION;
-
-  virtual StructuredProjection project_structured(Context ctx, Task *task)
-  {
-    assert(0);
   }
 
   unsigned get_depth(void) const { return depth; }

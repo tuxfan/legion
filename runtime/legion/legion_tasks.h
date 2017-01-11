@@ -828,6 +828,7 @@ namespace Legion {
     protected:
       virtual void trigger_task_complete(void);
       virtual void trigger_task_commit(void);
+      virtual void perform_structured_dependence_analysis(void);
     public:
       virtual bool pack_task(Serializer &rez, Processor target);
       virtual bool unpack_task(Deserializer &derez, Processor current,

@@ -436,24 +436,56 @@ namespace Legion {
     };
 
     /**
+     * \class ProjectionExpression
+     * Expression for which region should be projected from
+     * a given domain point.
+     */
+    class ProjectionExpression {
+      public:
+        ProjectionExpression(ExpressionType type,
+            ProjectionExpression *lhs,
+            ProjectionExpression *rhs);
+        ProjectionExpression(ExpressionType type,
+            int value);
+      public:
+        static ProjectionExpression from_linear(int mul_const, int var_id,
+            int add_const);
+        int evaluate(DomainPoint &point) const;
+        // stringify
+      public:
+        const ExpressionType expression_type;
+        const ProjectionExpression *lhs;
+        const ProjectionExpression *rhs;
+        int value;
+    };
+
+    /**
      * \class ProjectionAnalysisConstraint
      * Constraints on regions discovered during structured projection
      * analysis.
      */
     class ProjectionAnalysisConstraint {
       public:
+        ProjectionAnalysisConstraint(ConstraintType type);
         ProjectionAnalysisConstraint(ConstraintType type,
             ProjectionAnalysisConstraint *lhs,
             ProjectionAnalysisConstraint *rhs);
+        ProjectionAnalysisConstraint(ConstraintType type,
+            ProjectionExpression *lhs_exp,
+            ProjectionExpression *rhs_exp);
       public:
         ProjectionAnalysisConstraint simplify(void);
-        //ProjectionAnalysisConstraint substitute(void);
+        ProjectionAnalysisConstraint substitute(DomainPoint &left_point,
+                                                DomainPoint &right_point);
+        std::vector<DomainPoint> get_dependent_points(DomainPoint &point,
+            Domain &bounding_domain);
         // stringify
-        // find_dependent_points
       public:
-        const ConstraintType constraint_type;
-        const ProjectionAnalysisConstraint *lhs;
-        const ProjectionAnalysisConstraint *rhs;
+        ConstraintType constraint_type;
+        ProjectionAnalysisConstraint *lhs;
+        ProjectionAnalysisConstraint *rhs;
+        ProjectionExpression *lhs_exp;
+        ProjectionExpression *rhs_exp;
     };
 
     /**

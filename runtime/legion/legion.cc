@@ -2273,6 +2273,32 @@ namespace Legion {
     }
     
     /////////////////////////////////////////////////////////////
+    // StructuredProjectionStep
+    /////////////////////////////////////////////////////////////
+
+    //--------------------------------------------------------------------------
+    DomainPoint StructuredProjectionStep::evaluate(DomainPoint &p)
+    //--------------------------------------------------------------------------
+    {
+      if (dim == 1) {
+        int val = mul_const[0] * p[var_id[0]] + add_const[0];
+        return DomainPoint::from_point<1>(make_point(val)); 
+      }
+      if (dim == 2) {
+        int val0 = mul_const[0] * p[var_id[0]] + add_const[0];
+        int val1 = mul_const[1] * p[var_id[1]] + add_const[1];
+        return DomainPoint::from_point<2>(make_point(val0, val1)); 
+      }
+      if (dim == 3) {
+        int val0 = mul_const[0] * p[var_id[0]] + add_const[0];
+        int val1 = mul_const[1] * p[var_id[1]] + add_const[1];
+        int val2 = mul_const[2] * p[var_id[2]] + add_const[2];
+        return DomainPoint::from_point<3>(make_point(val0, val1, val2)); 
+      }
+      assert(0); // Unexpected Dimension
+    }
+
+    /////////////////////////////////////////////////////////////
     // Coloring Serializer 
     /////////////////////////////////////////////////////////////
 

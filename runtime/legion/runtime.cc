@@ -8023,15 +8023,6 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    StructuredProjection IdentityProjectionFunctor::project_structured(
-        Context ctx, Task *task)
-    //--------------------------------------------------------------------------
-    {
-      StructuredProjection proj(0, 0);
-      return proj;
-    }
-
-    //--------------------------------------------------------------------------
     unsigned IdentityProjectionFunctor::get_depth(void) const
     //--------------------------------------------------------------------------
     {

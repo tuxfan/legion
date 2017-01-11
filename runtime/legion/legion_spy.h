@@ -485,6 +485,7 @@ namespace Legion {
                       unique_id, index, pid);
       }
 
+      /**
       static inline void log_requirement_structured_projection(
           UniqueID unique_id, unsigned index, ProjectionID pid,
           StructuredProjection proj)
@@ -507,6 +508,7 @@ namespace Legion {
                         proj.dim < 3 ? 0 : step.add_const[2]);
         }
       }
+      */
 
       template<int DIM>
       static inline void log_launch_index_space_rect(UniqueID unique_id,

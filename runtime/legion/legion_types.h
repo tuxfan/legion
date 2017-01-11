@@ -51,6 +51,7 @@ namespace Legion {
   typedef ::legion_coherence_property_t CoherenceProperty;
   typedef ::legion_region_flags_t RegionFlags;
   typedef ::legion_constraint_type_t ConstraintType;
+  typedef ::legion_expression_type_t ExpressionType;
   typedef ::legion_projection_type_t ProjectionType;
   typedef ::legion_projection_structure_t ProjectionStructure;
   typedef ::legion_partition_kind_t PartitionKind;

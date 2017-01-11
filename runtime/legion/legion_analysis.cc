@@ -1379,7 +1379,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       rez.serialize<size_t>(restrictions.size());
-      for (LegionMap<PhysicalManager*,FieldMask>::aligned::const_iterator it = 
+      for (LegionMap<PhysicalManager*,FieldMask>::aligned::const_iterator it =
             restrictions.begin(); it != restrictions.end(); it++)
       {
         rez.serialize(it->first->did);
@@ -1399,7 +1399,7 @@ namespace Legion {
         DistributedID did;
         derez.deserialize(did);
         RtEvent ready;
-        PhysicalManager *manager =  
+        PhysicalManager *manager =
           runtime->find_or_request_physical_manager(did, ready);
         derez.deserialize(restrictions[manager]);
         if (ready.exists() && !ready.has_triggered())
@@ -2002,7 +2002,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       rez.serialize<size_t>(projection_epochs.size());
-      for (LegionMap<ProjectionEpochID,FieldMask>::aligned::const_iterator 
+      for (LegionMap<ProjectionEpochID,FieldMask>::aligned::const_iterator
             it = projection_epochs.begin(); it != projection_epochs.end(); it++)
       {
         rez.serialize(it->first);
@@ -2020,7 +2020,7 @@ namespace Legion {
       if (req.handle_type != SINGULAR)
       {
         projection = runtime->find_projection_function(req.projection);
-        projection_domain = launch_domain; 
+        projection_domain = launch_domain;
       }
       size_t num_epochs;
       derez.deserialize(num_epochs);
@@ -2032,17 +2032,96 @@ namespace Legion {
       }
       derez.deserialize<bool>(dirty_reduction);
     }
-    //
+
+    /////////////////////////////////////////////////////////////
+    // ProjectionExpression
+    /////////////////////////////////////////////////////////////
+
+    //--------------------------------------------------------------------------
+    ProjectionExpression::ProjectionExpression(
+                      ExpressionType type,
+                      ProjectionExpression *lhs,
+                      ProjectionExpression *rhs)
+      : expression_type(type), lhs(lhs), rhs(rhs), value(0)
+    //--------------------------------------------------------------------------
+    {
+    }
+
+    //--------------------------------------------------------------------------
+    ProjectionExpression::ProjectionExpression(
+                      ExpressionType type,
+                      int value)
+      : expression_type(type), lhs(NULL), rhs(NULL), value(value)
+    //--------------------------------------------------------------------------
+    {
+    }
+
+
+    //--------------------------------------------------------------------------
+    ProjectionExpression ProjectionExpression::from_linear(
+        int mul_const, int var_id, int add_const)
+    {
+      ProjectionExpression mul_const_exp(CONST, mul_const);
+      ProjectionExpression var_id_exp(VAR, var_id);
+      ProjectionExpression add_const_exp(CONST, add_const);
+      ProjectionExpression mul_exp(MUL, &mul_const_exp, &var_id_exp);
+      ProjectionExpression add_exp(ADD, &mul_exp, &add_const_exp);
+      return add_exp;
+    }
+    //--------------------------------------------------------------------------
+
+    //--------------------------------------------------------------------------
+    int ProjectionExpression::evaluate(DomainPoint &point) const
+    //--------------------------------------------------------------------------
+    {
+      switch(expression_type) {
+        case CONST:
+          return value;
+        case VAR:
+          return point[value];
+        case ADD:
+          return lhs->evaluate(point) + rhs->evaluate(point);
+        case SUB:
+          return lhs->evaluate(point) - rhs->evaluate(point);
+        case MUL:
+          return lhs->evaluate(point) * rhs->evaluate(point);
+        case DIV:
+          return lhs->evaluate(point) / rhs->evaluate(point);
+        case MOD:
+        default:
+          assert(0);
+      }
+    }
+
     /////////////////////////////////////////////////////////////
     // ProjectionAnalysisConstraint
     /////////////////////////////////////////////////////////////
 
+    ProjectionAnalysisConstraint::ProjectionAnalysisConstraint(
+                      ConstraintType type)
+      : constraint_type(type), lhs(NULL), rhs(NULL),
+      lhs_exp(NULL), rhs_exp(NULL)
+    //--------------------------------------------------------------------------
+    {
+    }
+
     //--------------------------------------------------------------------------
     ProjectionAnalysisConstraint::ProjectionAnalysisConstraint(
-                      const ConstraintType type,
-                      const ProjectionAnalysisConstraint *lhs,
-                      const ProjectionAnalysisConstraint *rhs)
-      : constraint_type(type), lhs(lhs), rhs(rhs)
+                      ConstraintType type,
+                      ProjectionAnalysisConstraint *lhs,
+                      ProjectionAnalysisConstraint *rhs)
+      : constraint_type(type), lhs(lhs), rhs(rhs), lhs_exp(NULL), rhs_exp(NULL)
+    //--------------------------------------------------------------------------
+    {
+    }
+
+    //--------------------------------------------------------------------------
+    ProjectionAnalysisConstraint::ProjectionAnalysisConstraint(
+                      ConstraintType type,
+                      ProjectionExpression *lhs_exp,
+                      ProjectionExpression *rhs_exp)
+      : constraint_type(type), lhs(NULL), rhs(NULL),
+        lhs_exp(lhs_exp), rhs_exp(rhs_exp)
     //--------------------------------------------------------------------------
     {
     }
@@ -2051,103 +2130,130 @@ namespace Legion {
     ProjectionAnalysisConstraint ProjectionAnalysisConstraint::simplify()
     //--------------------------------------------------------------------------
     {
+      ProjectionAnalysisConstraint newLhs(TRUE);
+      ProjectionAnalysisConstraint newRhs(TRUE);
       switch(constraint_type) {
-        // first two cases can probably be combined.  They should first simplify the
-        // equation, and then if both sides are constants they should make the
-        // equations either true or false (might be able to do the constant check
-        // first if the variables on each side of the equations cannot be the same
-        // because they come from different projection functions).
         case EQ:
-          break;
+          if (lhs_exp->expression_type == CONST &&
+            rhs_exp->expression_type == CONST)
+          {
+            if (lhs_exp->value == rhs_exp->value)
+              return ProjectionAnalysisConstraint(TRUE);
+            else
+              return ProjectionAnalysisConstraint(FALSE);
+          }
+          else
+            return ProjectionAnalysisConstraint(EQ, lhs_exp, rhs_exp);
         case NEQ:
-          break;
+          if (lhs_exp->expression_type == CONST &&
+            rhs_exp->expression_type == CONST)
+          {
+            if (lhs_exp->value != rhs_exp->value)
+              return ProjectionAnalysisConstraint(TRUE);
+            else
+              return ProjectionAnalysisConstraint(FALSE);
+          }
+          else
+            return ProjectionAnalysisConstraint(NEQ, lhs_exp, rhs_exp);
         case NOT:
-          ProjectionAnalysisConstraint newLhs = lhs->simplify();
+          newLhs = lhs->simplify();
           if (newLhs.constraint_type == TRUE)
-            return ProjectionAnalysisConstraint(FALSE, NULL, NULL);
+            return ProjectionAnalysisConstraint(FALSE);
           if (newLhs.constraint_type == FALSE)
-            return ProjectionAnalysisConstraint(TRUE, NULL, NULL);
-          return ProjectionAnalysisCosntraint(NOT, &newLhs, NULL);
+            return ProjectionAnalysisConstraint(TRUE);
+          return ProjectionAnalysisConstraint(NOT, &newLhs, NULL);
         case AND:
-          ProjectionAnalysisConstraint newLhs = lhs->simplify();
-          ProjectionAnalysisConstraint newRhs = rhs->simplify();
+          newLhs = lhs->simplify();
+          newRhs = rhs->simplify();
           if (newLhs.constraint_type == TRUE ||
               newRhs.constraint_type == FALSE)
             return newRhs;
           if (newLhs.constraint_type == FALSE ||
               newRhs.constraint_type == TRUE)
             return newLhs;
-          return ProjectionAnalysisCosntraint(AND, &newLhs, &newRhs);
+          return ProjectionAnalysisConstraint(AND, &newLhs, &newRhs);
         case OR:
-          ProjectionAnalysisConstraint newLhs = lhs->simplify();
-          ProjectionAnalysisConstraint newRhs = rhs->simplify();
+          newLhs = lhs->simplify();
+          newRhs = rhs->simplify();
           if (newLhs.constraint_type == TRUE ||
               newRhs.constraint_type == FALSE)
             return newLhs;
           if (newLhs.constraint_type == FALSE ||
               newRhs.constraint_type == TRUE)
             return newRhs;
-          return ProjectionAnalysisCosntraint(OR, &newLhs, &newRhs);
+          return ProjectionAnalysisConstraint(OR, &newLhs, &newRhs);
         case TRUE:
-          return ProjectionAnalysisConstraint(TRUE, NULL, NULL);
         case FALSE:
-          return ProjectionAnalysisConstraint(FALSE, NULL, NULL);
+          return ProjectionAnalysisConstraint(constraint_type);
         default:
           assert(0);
       }
-      LegionMap<ProjectionEpochID,FieldMask>::aligned::iterator finder = 
-        projection_epochs.find(epoch);
-      if (finder == projection_epochs.end())
-        projection_epochs[epoch] = epoch_mask;
-      else
-        finder->second |= epoch_mask;
     }
 
     //--------------------------------------------------------------------------
-    void ProjectionInfo::clear(void)
+    ProjectionAnalysisConstraint ProjectionAnalysisConstraint::substitute(
+        DomainPoint &left_point, DomainPoint &right_point)
     //--------------------------------------------------------------------------
     {
-      projection = NULL;
-      projection_type = SINGULAR;
-      projection_domain = Domain::NO_DOMAIN;
-      projection_epochs.clear();
-      dirty_reduction = false;
+      int left_evaled = 0;
+      int right_evaled = 0;
+      ProjectionAnalysisConstraint newLhs(TRUE);
+      ProjectionAnalysisConstraint newRhs(TRUE);
+      switch(constraint_type) {
+        case EQ:
+          left_evaled = lhs_exp->evaluate(left_point);
+          right_evaled = rhs_exp->evaluate(right_point);
+          if (left_evaled == right_evaled)
+            return ProjectionAnalysisConstraint(TRUE);
+          else
+            return ProjectionAnalysisConstraint(FALSE);
+        case NEQ:
+          left_evaled = lhs_exp->evaluate(left_point);
+          right_evaled = rhs_exp->evaluate(right_point);
+          if (left_evaled != right_evaled)
+            return ProjectionAnalysisConstraint(TRUE);
+          else
+            return ProjectionAnalysisConstraint(FALSE);
+        case NOT:
+          newLhs = lhs->substitute(left_point, right_point);
+          return ProjectionAnalysisConstraint(NOT, &newLhs, NULL);
+        case AND:
+        case OR:
+          newLhs = lhs->substitute(left_point, right_point);
+          newRhs = rhs->substitute(left_point, right_point);
+          return ProjectionAnalysisConstraint(constraint_type, &newLhs, &newRhs);
+        case TRUE:
+        case FALSE:
+          return ProjectionAnalysisConstraint(constraint_type);
+        default:
+          assert(0);
+      }
     }
 
     //--------------------------------------------------------------------------
-    void ProjectionInfo::pack_info(Serializer &rez) const
+    std::vector<DomainPoint> ProjectionAnalysisConstraint::get_dependent_points(
+        DomainPoint &point, Domain &bounding_domain)
     //--------------------------------------------------------------------------
     {
-      rez.serialize<size_t>(projection_epochs.size());
-      for (LegionMap<ProjectionEpochID,FieldMask>::aligned::const_iterator 
-            it = projection_epochs.begin(); it != projection_epochs.end(); it++)
+      std::vector<DomainPoint> dependent_points;
+      for (Domain::DomainPointIterator itr(bounding_domain); itr; itr++)
       {
-        rez.serialize(it->first);
-        rez.serialize(it->second);
+        if (point == itr.p)
+          continue;
+        ProjectionAnalysisConstraint subst_constraint =
+          substitute(point, itr.p).simplify();
+        switch(subst_constraint.constraint_type)
+        {
+          case TRUE:
+            dependent_points.push_back(itr.p);
+            break;
+          case FALSE:
+            break;
+          default:
+            assert(0); // Should always know for sure about a dependence here
+        }
       }
-      rez.serialize<bool>(dirty_reduction);
-    }
-
-    //--------------------------------------------------------------------------
-    void ProjectionInfo::unpack_info(Deserializer &derez, Runtime *runtime,
-                      const RegionRequirement &req, const Domain &launch_domain)
-    //--------------------------------------------------------------------------
-    {
-      projection_type = req.handle_type;
-      if (req.handle_type != SINGULAR)
-      {
-        projection = runtime->find_projection_function(req.projection);
-        projection_domain = launch_domain; 
-      }
-      size_t num_epochs;
-      derez.deserialize(num_epochs);
-      for (unsigned idx = 0; idx < num_epochs; idx++)
-      {
-        ProjectionEpochID epoch_id;
-        derez.deserialize(epoch_id);
-        derez.deserialize(projection_epochs[epoch_id]);
-      }
-      derez.deserialize<bool>(dirty_reduction);
+      return dependent_points;
     }
 
     /////////////////////////////////////////////////////////////

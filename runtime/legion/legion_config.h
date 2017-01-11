@@ -419,7 +419,17 @@ typedef enum legion_constraint_type_t {
   OR, // logical or of two constraints
   TRUE, // true constant
   FALSE, // false constant
-} legion_projection_structure_t;
+} legion_constraint_type_t;
+
+typedef enum legion_expression_type_t {
+  ADD, // an addition expression
+  SUB, // a subtraction expression
+  MUL, // a multiplication expression
+  DIV, // a division expression
+  MOD, // a mod expression
+  CONST, // a constant expression
+  VAR, // a variable expression
+} legion_expression_type_t;
 
 typedef enum legion_projection_structure_t {
   STRUCTURED, // a structured projection
