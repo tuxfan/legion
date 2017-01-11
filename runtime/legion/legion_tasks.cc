@@ -6730,6 +6730,7 @@ namespace Legion {
             runtime->forest->compute_proj_constraint(proj1, proj2,
                 sample_region);
           constraints.push_back(constraint);
+          printf("###### %s\n", constraint.stringify().c_str());
         }
       }
       for (Domain::DomainPointIterator itr(internal_domain); 

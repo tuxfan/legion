@@ -25,6 +25,7 @@
 #include "legion_views.h"
 #include "legion_analysis.h"
 #include "legion_context.h"
+#include <sstream>
 
 namespace Legion {
   namespace Internal {
@@ -2060,6 +2061,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     ProjectionExpression ProjectionExpression::from_linear(
         int mul_const, int var_id, int add_const)
+    //--------------------------------------------------------------------------
     {
       ProjectionExpression mul_const_exp(CONST, mul_const);
       ProjectionExpression var_id_exp(VAR, var_id);
@@ -2068,7 +2070,6 @@ namespace Legion {
       ProjectionExpression add_exp(ADD, &mul_exp, &add_const_exp);
       return add_exp;
     }
-    //--------------------------------------------------------------------------
 
     //--------------------------------------------------------------------------
     int ProjectionExpression::evaluate(DomainPoint &point) const
@@ -2087,6 +2088,48 @@ namespace Legion {
           return lhs->evaluate(point) * rhs->evaluate(point);
         case DIV:
           return lhs->evaluate(point) / rhs->evaluate(point);
+        case MOD:
+        default:
+          assert(0);
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    std::string ProjectionExpression::stringify() const
+    //--------------------------------------------------------------------------
+    {
+      std::string ret_string;
+      std::ostringstream stringStream;
+      switch(expression_type) {
+        case CONST:
+          stringStream << value;
+          ret_string = stringStream.str();
+          return ret_string;
+        case VAR:
+          stringStream << "v";
+          stringStream << value;
+          ret_string = stringStream.str();
+          return ret_string;
+        case ADD:
+          ret_string = lhs->stringify();
+          ret_string += " + ";
+          ret_string += rhs->stringify();
+          return ret_string;
+        case SUB:
+          ret_string = lhs->stringify();
+          ret_string += " - ";
+          ret_string += rhs->stringify();
+          return ret_string;
+        case MUL:
+          ret_string = lhs->stringify();
+          ret_string += " * ";
+          ret_string += rhs->stringify();
+          return ret_string;
+        case DIV:
+          ret_string = lhs->stringify();
+          ret_string += " / ";
+          ret_string += rhs->stringify();
+          return ret_string;
         case MOD:
         default:
           assert(0);
@@ -2254,6 +2297,56 @@ namespace Legion {
         }
       }
       return dependent_points;
+    }
+
+    //--------------------------------------------------------------------------
+    std::string ProjectionAnalysisConstraint::stringify() const
+    //--------------------------------------------------------------------------
+    {
+      std::string ret_string;
+      switch(constraint_type) {
+        case EQ:
+          ret_string = "(";
+          ret_string += lhs_exp->stringify();
+          ret_string += " == ";
+          ret_string += rhs_exp->stringify();
+          ret_string += ")";
+          return ret_string;
+        case NEQ:
+          ret_string = "(";
+          ret_string += lhs_exp->stringify();
+          ret_string += " != ";
+          ret_string += rhs_exp->stringify();
+          ret_string += ")";
+          return ret_string;
+        case NOT:
+          ret_string = "( NOT ";
+          ret_string += lhs->stringify();
+          ret_string += ")";
+          return ret_string;
+        case AND:
+          ret_string = "(";
+          ret_string += lhs->stringify();
+          ret_string += " && ";
+          ret_string += rhs_exp->stringify();
+          ret_string += ")";
+          return ret_string;
+        case OR:
+          ret_string = "(";
+          ret_string += lhs->stringify();
+          ret_string += " || ";
+          ret_string += rhs_exp->stringify();
+          ret_string += ")";
+          return ret_string;
+        case TRUE:
+          ret_string = "TRUE";
+          return ret_string;
+        case FALSE:
+          ret_string = "FALSE";
+          return ret_string;
+        default:
+          assert(0);
+      }
     }
 
     /////////////////////////////////////////////////////////////

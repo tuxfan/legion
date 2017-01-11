@@ -451,7 +451,7 @@ namespace Legion {
         static ProjectionExpression from_linear(int mul_const, int var_id,
             int add_const);
         int evaluate(DomainPoint &point) const;
-        // stringify
+        std::string stringify(void) const;
       public:
         const ExpressionType expression_type;
         const ProjectionExpression *lhs;
@@ -479,7 +479,7 @@ namespace Legion {
                                                 DomainPoint &right_point);
         std::vector<DomainPoint> get_dependent_points(DomainPoint &point,
             Domain &bounding_domain);
-        // stringify
+        std::string stringify(void) const;
       public:
         ConstraintType constraint_type;
         ProjectionAnalysisConstraint *lhs;
