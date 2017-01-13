@@ -1681,36 +1681,37 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    ProjectionAnalysisConstraint RegionTreeForest::compute_proj_constraint(
+    ProjectionAnalysisConstraint* RegionTreeForest::compute_proj_constraint(
         StructuredProjection proj1, StructuredProjection proj2,
         LogicalRegion sample_bottom_region)
     //--------------------------------------------------------------------------
     {
       RegionTreeNode *cur_node = get_node(sample_bottom_region);
-      ProjectionAnalysisConstraint cur_constraint(TRUE);
-      ProjectionAnalysisConstraint new_constraint(TRUE);
+      ProjectionAnalysisConstraint *cur_constraint =
+        new ProjectionAnalysisConstraint(TRUE);
+      ProjectionAnalysisConstraint *new_constraint;
       for (int idx = (int) proj1.steps.size() - 1; idx >= 0; idx--)
       {
         if (cur_node->is_region()) {
           new_constraint = add_constraints(NEQ, proj1.steps[idx],
               proj2.steps[idx]);
-          cur_constraint =
-            ProjectionAnalysisConstraint(OR, &new_constraint, &cur_constraint);
+          cur_constraint = new
+            ProjectionAnalysisConstraint(OR, new_constraint, cur_constraint);
         }
         else {
           if (cur_node->are_all_children_disjoint())
           {
             new_constraint = add_constraints(EQ, proj1.steps[idx],
                 proj2.steps[idx]);
-            cur_constraint =
-              ProjectionAnalysisConstraint(AND, &new_constraint, &cur_constraint);
+            cur_constraint = new
+              ProjectionAnalysisConstraint(AND, new_constraint, cur_constraint);
           }
           else
           {
             new_constraint = add_constraints(NEQ, proj1.steps[idx],
                 proj2.steps[idx]);
-            cur_constraint =
-              ProjectionAnalysisConstraint(OR, &new_constraint, &cur_constraint);
+            cur_constraint = new
+              ProjectionAnalysisConstraint(OR, new_constraint, cur_constraint);
           }
         }
         cur_node = cur_node->get_parent();
@@ -1719,7 +1720,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    ProjectionAnalysisConstraint RegionTreeForest::add_constraints(
+    ProjectionAnalysisConstraint* RegionTreeForest::add_constraints(
         ConstraintType comparison_type, StructuredProjectionStep step1,
         StructuredProjectionStep step2)
     //--------------------------------------------------------------------------
@@ -1739,17 +1740,18 @@ namespace Legion {
         conjunction_type = OR;
         base = FALSE;
       }
-      ProjectionAnalysisConstraint cur_constraint(base);
+      ProjectionAnalysisConstraint *cur_constraint = new
+        ProjectionAnalysisConstraint(base);
       for (int idx = 0; idx < step1.dim; idx++)
       {
-        ProjectionExpression exp1 = ProjectionExpression::from_linear(
+        ProjectionExpression *exp1 = ProjectionExpression::from_linear(
             step1.mul_const[idx], step1.var_id[idx], step1.add_const[idx]);
-        ProjectionExpression exp2 = ProjectionExpression::from_linear(
+        ProjectionExpression *exp2 = ProjectionExpression::from_linear(
             step2.mul_const[idx], step2.var_id[idx], step2.add_const[idx]);
-        ProjectionAnalysisConstraint comparison_constraint(
-            comparison_type, &exp1, &exp2);
-        cur_constraint = ProjectionAnalysisConstraint(conjunction_type,
-            &cur_constraint, &comparison_constraint);
+        ProjectionAnalysisConstraint *comparison_constraint = new
+          ProjectionAnalysisConstraint(comparison_type, exp1, exp2);
+        cur_constraint = new ProjectionAnalysisConstraint(conjunction_type,
+            cur_constraint, comparison_constraint);
       }
       return cur_constraint;
     }

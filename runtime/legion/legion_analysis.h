@@ -448,7 +448,7 @@ namespace Legion {
         ProjectionExpression(ExpressionType type,
             int value);
       public:
-        static ProjectionExpression from_linear(int mul_const, int var_id,
+        static ProjectionExpression* from_linear(int mul_const, int var_id,
             int add_const);
         int evaluate(DomainPoint &point) const;
         std::string stringify(void) const;

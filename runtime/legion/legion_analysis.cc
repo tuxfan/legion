@@ -2059,15 +2059,20 @@ namespace Legion {
 
 
     //--------------------------------------------------------------------------
-    ProjectionExpression ProjectionExpression::from_linear(
+    ProjectionExpression* ProjectionExpression::from_linear(
         int mul_const, int var_id, int add_const)
     //--------------------------------------------------------------------------
     {
-      ProjectionExpression mul_const_exp(CONST, mul_const);
-      ProjectionExpression var_id_exp(VAR, var_id);
-      ProjectionExpression add_const_exp(CONST, add_const);
-      ProjectionExpression mul_exp(MUL, &mul_const_exp, &var_id_exp);
-      ProjectionExpression add_exp(ADD, &mul_exp, &add_const_exp);
+      ProjectionExpression *mul_const_exp =
+        new ProjectionExpression(CONST, mul_const);
+      ProjectionExpression *var_id_exp =
+        new ProjectionExpression(VAR, var_id);
+      ProjectionExpression *add_const_exp =
+        new ProjectionExpression(CONST, add_const);
+      ProjectionExpression *mul_exp =
+        new ProjectionExpression(MUL, mul_const_exp, var_id_exp);
+      ProjectionExpression *add_exp =
+        new ProjectionExpression(ADD, mul_exp, add_const_exp);
       return add_exp;
     }
 
@@ -2328,14 +2333,14 @@ namespace Legion {
           ret_string = "(";
           ret_string += lhs->stringify();
           ret_string += " && ";
-          ret_string += rhs_exp->stringify();
+          ret_string += rhs->stringify();
           ret_string += ")";
           return ret_string;
         case OR:
           ret_string = "(";
           ret_string += lhs->stringify();
           ret_string += " || ";
-          ret_string += rhs_exp->stringify();
+          ret_string += rhs->stringify();
           ret_string += ")";
           return ret_string;
         case TRUE:
