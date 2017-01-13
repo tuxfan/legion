@@ -2577,7 +2577,7 @@ namespace Legion {
        */
       virtual unsigned get_depth(void) const = 0;
 
-      bool is_structured() { return false; }
+      virtual bool is_structured() { return false; }
     private:
       friend class Internal::Runtime;
       // For pre-registered projection functors the runtime will
@@ -2663,6 +2663,8 @@ namespace Legion {
     class StructuredProjectionFunctor : public ProjectionFunctor {
     public:
       StructuredProjectionFunctor(void);
+      StructuredProjectionFunctor(Runtime *rt);
+      virtual ~StructuredProjectionFunctor(void);
     public:
       /**
        * The two general methods of projecting should never be called
@@ -2687,7 +2689,7 @@ namespace Legion {
       virtual StructuredProjection project_structured(
           Context ctx, Task *task) = 0;
 
-      bool is_structured() { return true; }
+      virtual bool is_structured() { return true; }
 
     public:
     };
