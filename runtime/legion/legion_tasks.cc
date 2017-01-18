@@ -6713,26 +6713,23 @@ namespace Legion {
         upper_bound = runtime->forest->get_node(proj_reqs[0].region);
       else
         upper_bound = runtime->forest->get_node(proj_reqs[0].partition);
-      printf("reached 1\n");
       for (unsigned idx1 = 0; idx1 < proj_reqs.size(); idx1++) {
         RegionUsage usage1(proj_reqs[idx1]);
         StructuredProjection proj1 = structured_funcs[idx1];
-        for (unsigned idx2 = 0; idx2 < proj_reqs.size(); idx2++) {
+        for (unsigned idx2 = idx1; idx2 < proj_reqs.size(); idx2++) {
           RegionUsage usage2(proj_reqs[idx2]);
-      printf("reached 2\n");
-          StructuredProjection proj2 = structured_funcs[idx1];
+          StructuredProjection proj2 = structured_funcs[idx2];
           DependenceType dtype = check_dependence_type(usage1, usage2);
           if (dtype != TRUE_DEPENDENCE && dtype != ANTI_DEPENDENCE)
           {
             continue;
           }
+          printf("dependencies for indices %d and %d\n", idx1, idx2);
           LogicalRegion sample_region = runtime->forest->evaluate_projection(
               proj1, first_point, upper_bound);
-      printf("reached 3\n");
           ProjectionAnalysisConstraint *constraint =
             runtime->forest->compute_proj_constraint(proj1, proj2,
                 sample_region);
-      printf("reached 4\n");
           constraints.push_back(constraint);
           printf("###### %s\n", constraint->stringify().c_str());
         }
