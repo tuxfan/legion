@@ -7845,6 +7845,7 @@ namespace Legion {
       std::set<RtEvent> mapped_events;
       for (unsigned idx = 0; idx < points.size(); idx++)
       {
+        // twarsz this is your place!!
         RtEvent map_event = points[idx]->perform_mapping(epoch_owner);
         if (map_event.exists())
           mapped_events.insert(map_event);

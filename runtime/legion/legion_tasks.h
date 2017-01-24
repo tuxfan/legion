@@ -888,6 +888,9 @@ namespace Legion {
       std::set<ApEvent> restrict_postconditions;
       std::map<PhysicalManager*,std::pair<unsigned,bool> > acquired_instances;
     protected:
+      // Map from point tasks to their runtime events used in structured launches
+      std::map<DomainPoint, RtEvent> point_task_events;
+    protected:
       // Whether we have to do intra-task alias analysis
       bool need_intra_task_alias_analysis;
 #ifdef DEBUG_LEGION
