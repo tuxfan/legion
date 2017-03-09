@@ -307,6 +307,7 @@ namespace Legion {
       LG_DEFER_PERFORM_MAPPING_TASK_ID,
       LG_DEFER_LAUNCH_TASK_ID,
       LG_DEFER_MAP_AND_LAUNCH_TASK_ID,
+      LG_DEFER_POINT_MAP_AND_LAUNCH_TASK_ID,
       LG_ADD_VERSIONING_SET_REF_TASK_ID,
       LG_VERSION_STATE_CAPTURE_DIRTY_TASK_ID,
       LG_DISJOINT_CLOSE_TASK_ID,
@@ -402,6 +403,7 @@ namespace Legion {
         "Defer Task Perform Mapping",                             \
         "Defer Task Launch",                                      \
         "Defer Task Map and Launch",                              \
+        "Defer Point Task Map and Launch",                        \
         "Defer Versioning Set Reference",                         \
         "Version State Capture Dirty",                            \
         "Disjoint Close",                                         \

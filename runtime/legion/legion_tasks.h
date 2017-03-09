@@ -564,8 +564,9 @@ namespace Legion {
       std::vector<RestrictInfo> restrict_infos;
       std::vector<ProjectionInfo> projection_infos;
       bool sliced;
+    public:
+      Domain internal_domain; // twarsz change this back to protected
     protected:
-      Domain internal_domain;
       ReductionOpID redop;
       const ReductionOp *reduction_op;
       FutureMap point_arguments;
@@ -709,6 +710,13 @@ namespace Legion {
     public:
       static const AllocationType alloc_type = POINT_TASK_ALLOC;
     public:
+      struct DeferPointMapAndLaunchArgs : public LgTaskArgs<DeferPointMapAndLaunchArgs> {
+      public:
+        static const LgTaskID TASK_ID = LG_DEFER_POINT_MAP_AND_LAUNCH_TASK_ID;
+      public:
+        PointTask *proxy_this;
+      };
+    public:
       PointTask(Runtime *rt);
       PointTask(const PointTask &rhs);
       virtual ~PointTask(void);
@@ -728,7 +736,9 @@ namespace Legion {
       virtual bool distribute_task(void);
       virtual RtEvent perform_mapping(MustEpochOp *owner = NULL);
       virtual bool is_stealable(void) const;
+      virtual RtEvent find_interlaunch_dependencies(void);
       virtual bool has_restrictions(unsigned idx, LogicalRegion handle);
+      virtual void map_and_launch(void);
       virtual bool can_early_complete(ApUserEvent &chain_event);
       virtual VersionInfo& get_version_info(unsigned idx);
       virtual RestrictInfo& get_restrict_info(unsigned idx);
@@ -743,6 +753,8 @@ namespace Legion {
     public:
       virtual void trigger_task_complete(void);
       virtual void trigger_task_commit(void);
+    public:
+      RtEvent defer_map_and_launch(RtEvent precondition);
     public:
       virtual void perform_physical_traversal(unsigned idx,
                                 RegionTreeContext ctx, InstanceSet &valid);
@@ -829,6 +841,7 @@ namespace Legion {
       virtual void trigger_task_complete(void);
       virtual void trigger_task_commit(void);
       virtual void perform_structured_dependence_analysis(void);
+      //virtual void find_dependent_points(void);
     public:
       virtual bool pack_task(Serializer &rez, Processor target);
       virtual bool unpack_task(Deserializer &derez, Processor current,
@@ -883,11 +896,13 @@ namespace Legion {
     protected:
       std::vector<RegionTreePath> privilege_paths;
       std::deque<SliceTask*> locally_mapped_slices;
+    public:
+      std::vector<ProjectionAnalysisConstraint*> constraint_equations;
     protected:
       std::set<RtEvent> map_applied_conditions;
       std::set<ApEvent> restrict_postconditions;
       std::map<PhysicalManager*,std::pair<unsigned,bool> > acquired_instances;
-    protected:
+    public: //twarsz Change this back to protected.
       // Map from point tasks to their runtime events used in structured launches
       std::map<DomainPoint, RtEvent> point_task_events;
     protected:

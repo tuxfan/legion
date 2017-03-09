@@ -20090,6 +20090,13 @@ namespace Legion {
             margs->proxy_this->map_and_launch();
             break;
           }
+        case LG_DEFER_POINT_MAP_AND_LAUNCH_TASK_ID:
+          {
+            const PointTask::DeferPointMapAndLaunchArgs *margs = 
+              (const PointTask::DeferPointMapAndLaunchArgs*)args;
+            margs->proxy_this->map_and_launch();
+            break;
+          }
         case LG_ADD_VERSIONING_SET_REF_TASK_ID:
           {
             const VersioningSetRefArgs *ref_args = 

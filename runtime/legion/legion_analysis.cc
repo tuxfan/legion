@@ -2175,111 +2175,159 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    ProjectionAnalysisConstraint ProjectionAnalysisConstraint::simplify()
+    ProjectionAnalysisConstraint* ProjectionAnalysisConstraint::simplify()
     //--------------------------------------------------------------------------
     {
-      ProjectionAnalysisConstraint newLhs(TRUE);
-      ProjectionAnalysisConstraint newRhs(TRUE);
+      ProjectionAnalysisConstraint *newLhs =
+        new ProjectionAnalysisConstraint(TRUE);
+      ProjectionAnalysisConstraint *newRhs =
+        new ProjectionAnalysisConstraint(TRUE);
       switch(constraint_type) {
         case EQ:
           if (lhs_exp->expression_type == CONST &&
             rhs_exp->expression_type == CONST)
           {
             if (lhs_exp->value == rhs_exp->value)
-              return ProjectionAnalysisConstraint(TRUE);
+              return new ProjectionAnalysisConstraint(TRUE);
             else
-              return ProjectionAnalysisConstraint(FALSE);
+              return new ProjectionAnalysisConstraint(FALSE);
           }
           else
-            return ProjectionAnalysisConstraint(EQ, lhs_exp, rhs_exp);
+            return new ProjectionAnalysisConstraint(EQ, lhs_exp, rhs_exp);
         case NEQ:
           if (lhs_exp->expression_type == CONST &&
             rhs_exp->expression_type == CONST)
           {
             if (lhs_exp->value != rhs_exp->value)
-              return ProjectionAnalysisConstraint(TRUE);
+              return new ProjectionAnalysisConstraint(TRUE);
             else
-              return ProjectionAnalysisConstraint(FALSE);
+              return new ProjectionAnalysisConstraint(FALSE);
           }
           else
-            return ProjectionAnalysisConstraint(NEQ, lhs_exp, rhs_exp);
+            return new ProjectionAnalysisConstraint(NEQ, lhs_exp, rhs_exp);
         case NOT:
           newLhs = lhs->simplify();
-          if (newLhs.constraint_type == TRUE)
-            return ProjectionAnalysisConstraint(FALSE);
-          if (newLhs.constraint_type == FALSE)
-            return ProjectionAnalysisConstraint(TRUE);
-          return ProjectionAnalysisConstraint(NOT, &newLhs, NULL);
+          if (newLhs->constraint_type == TRUE)
+            return new ProjectionAnalysisConstraint(FALSE);
+          if (newLhs->constraint_type == FALSE)
+            return new ProjectionAnalysisConstraint(TRUE);
+          return new ProjectionAnalysisConstraint(NOT, newLhs, NULL);
         case AND:
           newLhs = lhs->simplify();
           newRhs = rhs->simplify();
-          if (newLhs.constraint_type == TRUE ||
-              newRhs.constraint_type == FALSE)
+          if (newLhs->constraint_type == TRUE ||
+              newRhs->constraint_type == FALSE)
             return newRhs;
-          if (newLhs.constraint_type == FALSE ||
-              newRhs.constraint_type == TRUE)
+          if (newLhs->constraint_type == FALSE ||
+              newRhs->constraint_type == TRUE)
             return newLhs;
-          return ProjectionAnalysisConstraint(AND, &newLhs, &newRhs);
+          return new ProjectionAnalysisConstraint(AND, newLhs, newRhs);
         case OR:
           newLhs = lhs->simplify();
           newRhs = rhs->simplify();
-          if (newLhs.constraint_type == TRUE ||
-              newRhs.constraint_type == FALSE)
+          if (newLhs->constraint_type == TRUE ||
+              newRhs->constraint_type == FALSE)
             return newLhs;
-          if (newLhs.constraint_type == FALSE ||
-              newRhs.constraint_type == TRUE)
+          if (newLhs->constraint_type == FALSE ||
+              newRhs->constraint_type == TRUE)
             return newRhs;
-          return ProjectionAnalysisConstraint(OR, &newLhs, &newRhs);
+          return new ProjectionAnalysisConstraint(OR, newLhs, newRhs);
         case TRUE:
         case FALSE:
-          return ProjectionAnalysisConstraint(constraint_type);
+          return new ProjectionAnalysisConstraint(constraint_type);
         default:
           assert(0);
       }
     }
 
     //--------------------------------------------------------------------------
-    ProjectionAnalysisConstraint ProjectionAnalysisConstraint::substitute(
+    ProjectionAnalysisConstraint *ProjectionAnalysisConstraint::substitute(
         DomainPoint &left_point, DomainPoint &right_point)
     //--------------------------------------------------------------------------
     {
       int left_evaled = 0;
       int right_evaled = 0;
-      ProjectionAnalysisConstraint newLhs(TRUE);
-      ProjectionAnalysisConstraint newRhs(TRUE);
+      ProjectionAnalysisConstraint *newLhs =
+        new ProjectionAnalysisConstraint(TRUE);
+      ProjectionAnalysisConstraint *newRhs =
+        new ProjectionAnalysisConstraint(TRUE);
       switch(constraint_type) {
         case EQ:
           left_evaled = lhs_exp->evaluate(left_point);
           right_evaled = rhs_exp->evaluate(right_point);
           if (left_evaled == right_evaled)
-            return ProjectionAnalysisConstraint(TRUE);
+            return new ProjectionAnalysisConstraint(TRUE);
           else
-            return ProjectionAnalysisConstraint(FALSE);
+            return new ProjectionAnalysisConstraint(FALSE);
         case NEQ:
           left_evaled = lhs_exp->evaluate(left_point);
           right_evaled = rhs_exp->evaluate(right_point);
           if (left_evaled != right_evaled)
-            return ProjectionAnalysisConstraint(TRUE);
+            return new ProjectionAnalysisConstraint(TRUE);
           else
-            return ProjectionAnalysisConstraint(FALSE);
+            return new ProjectionAnalysisConstraint(FALSE);
         case NOT:
           newLhs = lhs->substitute(left_point, right_point);
-          return ProjectionAnalysisConstraint(NOT, &newLhs, NULL);
+          return new ProjectionAnalysisConstraint(NOT, newLhs, NULL);
         case AND:
         case OR:
           newLhs = lhs->substitute(left_point, right_point);
           newRhs = rhs->substitute(left_point, right_point);
-          return ProjectionAnalysisConstraint(constraint_type, &newLhs, &newRhs);
+          return new ProjectionAnalysisConstraint(constraint_type, newLhs, newRhs);
         case TRUE:
         case FALSE:
-          return ProjectionAnalysisConstraint(constraint_type);
+          return new ProjectionAnalysisConstraint(constraint_type);
         default:
           assert(0);
       }
     }
 
     //--------------------------------------------------------------------------
-    std::vector<DomainPoint> ProjectionAnalysisConstraint::get_dependent_points(
+    std::pair<std::vector<DomainPoint>, std::vector<DomainPoint> >
+      ProjectionAnalysisConstraint::get_dependent_points(DomainPoint &point)
+    //--------------------------------------------------------------------------
+    {
+      std::pair<std::vector<DomainPoint>, std::vector<DomainPoint> > left_pair;
+      std::pair<std::vector<DomainPoint>, std::vector<DomainPoint> > right_pair;
+      std::vector<DomainPoint> empty1;
+      std::vector<DomainPoint> empty2;
+      return left_pair;/*
+      switch(constraint_type)
+      {
+        case TRUE:
+          // Constraints that are all true should not appear (expects
+          // constraint to be simplified)
+          assert(0); // Constraints that are all true are meaningless
+        case FALSE:
+          return std::make_pair(empty1, empty2);
+        case OR:
+          // union two sub expressions
+          break;
+        case AND:
+          // intersect sub expressions
+          break;
+        case NOT:
+          left_pair = lhs->get_dependent_points(point);
+          return std::make_pair(left_pair.second, left_pair.first);
+          break;
+        case EQ:
+          //evaluate the point.
+          //solve for the relevant domain points
+          //add all the domain points to a vector
+          //return that as the "yes" vector
+          //int evaluated = lhs_exp->evaluate(point);
+          break;
+        case NEQ:
+          //evaluate the point.
+          //solve for the relevant domain points
+          //add all the domain points to a vector
+          //return that as the "no" vector
+          break;
+      }*/
+    }
+
+    //--------------------------------------------------------------------------
+    std::vector<DomainPoint> ProjectionAnalysisConstraint::get_dependent_points2(
         DomainPoint &point, Domain &bounding_domain)
     //--------------------------------------------------------------------------
     {
@@ -2288,9 +2336,9 @@ namespace Legion {
       {
         if (point == itr.p)
           continue;
-        ProjectionAnalysisConstraint subst_constraint =
-          substitute(point, itr.p).simplify();
-        switch(subst_constraint.constraint_type)
+        ProjectionAnalysisConstraint *subst_constraint =
+          substitute(point, itr.p)->simplify();
+        switch(subst_constraint->constraint_type)
         {
           case TRUE:
             dependent_points.push_back(itr.p);

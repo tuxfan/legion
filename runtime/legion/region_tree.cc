@@ -1687,6 +1687,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       RegionTreeNode *cur_node = get_node(sample_bottom_region);
+      cur_node = cur_node->get_parent();
       ProjectionAnalysisConstraint *cur_constraint =
         new ProjectionAnalysisConstraint(TRUE);
       ProjectionAnalysisConstraint *new_constraint;

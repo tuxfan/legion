@@ -474,10 +474,12 @@ namespace Legion {
             ProjectionExpression *lhs_exp,
             ProjectionExpression *rhs_exp);
       public:
-        ProjectionAnalysisConstraint simplify(void);
-        ProjectionAnalysisConstraint substitute(DomainPoint &left_point,
-                                                DomainPoint &right_point);
-        std::vector<DomainPoint> get_dependent_points(DomainPoint &point,
+        ProjectionAnalysisConstraint *simplify(void);
+        ProjectionAnalysisConstraint *substitute(DomainPoint &left_point,
+                                                 DomainPoint &right_point);
+        std::pair<std::vector<DomainPoint>, std::vector<DomainPoint> >
+            get_dependent_points(DomainPoint &point);
+        std::vector<DomainPoint> get_dependent_points2(DomainPoint &point,
             Domain &bounding_domain);
         std::string stringify(void) const;
       public:
