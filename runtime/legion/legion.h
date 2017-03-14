@@ -2538,25 +2538,6 @@ namespace Legion {
                                     const DomainPoint &point);
 
       /**
-       * Same as the above projection, but annonymous with
-       * respect to the operation. This one will be invoked
-       * by any operation which is not a task. At some point
-       * in the near future this may become the default 
-       * projection functor interface.
-       */
-      virtual LogicalRegion project(LogicalRegion upper_bound,
-                                    const DomainPoint &point) = 0;
-      /**
-       * Same as the projection function above for partitions,
-       * but annonymous with respect to the operation. This one
-       * will be invoked by any operation which is not a task.
-       * At some point in the near future this may become
-       * the default projection functor interface.
-       */
-      virtual LogicalRegion project(LogicalPartition upper_bound,
-                                    const DomainPoint &point) = 0;
-
-      /**
        * Indicate whether calls to this projection functor
        * must be serialized or can be performed in parallel.
        * Usually they must be exclusive if this functor contains
@@ -2677,10 +2658,6 @@ namespace Legion {
       virtual LogicalRegion project(Context ctx, Task *task,
                                     unsigned index,
                                     LogicalPartition upper_bound,
-                                    const DomainPoint &point) { assert(0); }
-      virtual LogicalRegion project(LogicalRegion upper_bound,
-                                    const DomainPoint &point) { assert(0); }
-      virtual LogicalRegion project(LogicalPartition upper_bound,
                                     const DomainPoint &point) { assert(0); }
 
       /**
