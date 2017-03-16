@@ -1667,7 +1667,7 @@ namespace Legion {
     //
     //--------------------------------------------------------------------------
     LogicalRegion RegionTreeForest::evaluate_projection(
-        StructuredProjection proj, DomainPoint &point,
+        StructuredProjection proj, const DomainPoint &point,
         RegionTreeNode *upper_bound)
     //--------------------------------------------------------------------------
     {

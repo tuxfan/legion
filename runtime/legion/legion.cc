@@ -2277,7 +2277,7 @@ namespace Legion {
     /////////////////////////////////////////////////////////////
 
     //--------------------------------------------------------------------------
-    DomainPoint StructuredProjectionStep::evaluate(DomainPoint &p)
+    DomainPoint StructuredProjectionStep::evaluate(const DomainPoint &p)
     //--------------------------------------------------------------------------
     {
       if (dim == 1) {

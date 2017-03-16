@@ -1332,6 +1332,12 @@ namespace Legion {
       void check_projection_partition_result(const RegionRequirement &req,
                                           Operation *op, unsigned idx,
                                           LogicalRegion result, Runtime *rt);
+      LogicalRegion evaluate_structured_projection(StructuredProjection proj,
+          const DomainPoint &point, LogicalRegion upper_bound,
+          Runtime *runtime);
+      LogicalRegion evaluate_structured_projection(StructuredProjection proj,
+          const DomainPoint &point, LogicalPartition upper_bound,
+          Runtime *runtime);
     public:
       const int depth; 
       const bool is_exclusive;

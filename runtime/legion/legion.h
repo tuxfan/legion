@@ -2609,7 +2609,7 @@ namespace Legion {
         return s;
       }
     public:
-      DomainPoint evaluate(DomainPoint &p);
+      DomainPoint evaluate(const DomainPoint &p);
     public:
       int dim;
       int var_id[MAX_POINT_DIM];
@@ -2624,6 +2624,7 @@ namespace Legion {
      */
     class StructuredProjection {
     public:
+      StructuredProjection(void) {}
       StructuredProjection(int proj_dim, int proj_depth)
       {
         dim = proj_dim;
@@ -2667,8 +2668,6 @@ namespace Legion {
           Context ctx, Task *task) = 0;
 
       virtual bool is_structured() { return true; }
-
-    public:
     };
 
     /**

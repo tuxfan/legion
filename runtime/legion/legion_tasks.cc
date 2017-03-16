@@ -6770,7 +6770,7 @@ namespace Legion {
           assert(proj_reqs[0].partition == proj_reqs[idx].partition);
       }
       Domain::DomainPointIterator itr(internal_domain);
-      DomainPoint first_point = itr.p;
+      const DomainPoint first_point = itr.p;
       std::vector<ProjectionAnalysisConstraint*> constraints;
       RegionTreeNode *upper_bound;
       if (handle_type == REG_PROJECTION)

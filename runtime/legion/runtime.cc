@@ -8120,14 +8120,29 @@ namespace Legion {
 #endif
       if (projection_reservation.exists())
       {
+        StructuredProjection structured_proj;
+        if (functor->is_structured())
+        {
+          structured_proj = ((StructuredProjectionFunctor*) functor)->
+            project_structured(DUMMY_CONTEXT, task);
+        }
         AutoLock p_lock(projection_reservation);
         if (req.handle_type == PART_PROJECTION)
         {
           for (std::vector<MinimalPoint>::iterator it = 
                 minimal_points.begin(); it != minimal_points.end(); it++)
           {
-            LogicalRegion result = functor->project(task, idx, req.partition, 
-                                                    it->get_domain_point());
+            LogicalRegion result;
+            if (functor->is_structured())
+            {
+              result = evaluate_structured_projection(structured_proj,
+                  it->get_domain_point(), req.partition, runtime);
+            }
+            else
+            {
+              result = functor->project(task, idx, req.partition,
+                               it->get_domain_point());
+            }
             check_projection_partition_result(req, task, idx, result, runtime);
             it->add_projection_region(idx, result);
           }
@@ -8137,8 +8152,17 @@ namespace Legion {
           for (std::vector<MinimalPoint>::iterator it = 
                 minimal_points.begin(); it != minimal_points.end(); it++)
           {
-            LogicalRegion result = functor->project(task, idx, req.region, 
-                                                    it->get_domain_point());
+            LogicalRegion result;
+            if (functor->is_structured())
+            {
+              result = evaluate_structured_projection(structured_proj,
+                  it->get_domain_point(), req.region, runtime);
+            }
+            else
+            {
+              result = functor->project(task, idx, req.region,
+                               it->get_domain_point());
+            }
             check_projection_region_result(req, task, idx, result, runtime);
             it->add_projection_region(idx, result);
           }
@@ -8146,13 +8170,28 @@ namespace Legion {
       }
       else
       {
+        StructuredProjection structured_proj;
+        if (functor->is_structured())
+        {
+          structured_proj = ((StructuredProjectionFunctor*) functor)->
+            project_structured(DUMMY_CONTEXT, task);
+        }
         if (req.handle_type == PART_PROJECTION)
         {
           for (std::vector<MinimalPoint>::iterator it = 
                 minimal_points.begin(); it != minimal_points.end(); it++)
           {
-            LogicalRegion result = functor->project(task, idx, req.partition, 
-                                                    it->get_domain_point());
+            LogicalRegion result;
+            if (functor->is_structured())
+            {
+              result = evaluate_structured_projection(structured_proj,
+                  it->get_domain_point(), req.partition, runtime);
+            }
+            else
+            {
+              result = functor->project(task, idx, req.partition,
+                               it->get_domain_point());
+            }
             check_projection_partition_result(req, task, idx, result, runtime);
             it->add_projection_region(idx, result);
           }
@@ -8162,8 +8201,17 @@ namespace Legion {
           for (std::vector<MinimalPoint>::iterator it = 
                 minimal_points.begin(); it != minimal_points.end(); it++)
           {
-            LogicalRegion result = functor->project(task, idx, req.region, 
-                                                    it->get_domain_point());
+            LogicalRegion result;
+            if (functor->is_structured())
+            {
+              result = evaluate_structured_projection(structured_proj,
+                  it->get_domain_point(), req.region, runtime);
+            }
+            else
+            {
+              result = functor->project(task, idx, req.region,
+                               it->get_domain_point());
+            }
             check_projection_region_result(req, task, idx, result, runtime);
             it->add_projection_region(idx, result);
           }
@@ -8421,6 +8469,48 @@ namespace Legion {
         assert(false);
       }
 #endif
+    }
+
+    //--------------------------------------------------------------------------
+    LogicalRegion ProjectionFunction::evaluate_structured_projection(
+        StructuredProjection proj, const DomainPoint &point,
+        LogicalRegion upper_bound, Runtime *runtime)
+    //--------------------------------------------------------------------------
+    {
+      LogicalRegion cur_region = upper_bound;
+      LogicalPartition cur_partition;
+      for (unsigned i = 0; i < proj.steps.size(); i++)
+      {
+        DomainPoint color_point = proj.steps[i].evaluate(point);
+        if (i % 2 == 0)
+          cur_partition = runtime->get_logical_partition_by_color(DUMMY_CONTEXT,
+              cur_region, color_point);
+        else
+          cur_region = runtime->get_logical_subregion_by_color(DUMMY_CONTEXT,
+              cur_partition, color_point);
+      } 
+      return cur_region;
+    }
+
+    //--------------------------------------------------------------------------
+    LogicalRegion ProjectionFunction::evaluate_structured_projection(
+        StructuredProjection proj, const DomainPoint &point,
+        LogicalPartition upper_bound, Runtime *runtime)
+    //--------------------------------------------------------------------------
+    {
+      LogicalRegion cur_region;
+      LogicalPartition cur_partition = upper_bound;
+      for (unsigned i = 0; i < proj.steps.size(); i++)
+      {
+        DomainPoint color_point = proj.steps[i].evaluate(point);
+        if (i % 2 == 0)
+          cur_region = runtime->get_logical_subregion_by_color(DUMMY_CONTEXT,
+              cur_partition, color_point);
+        else
+          cur_partition = runtime->get_logical_partition_by_color(DUMMY_CONTEXT,
+              cur_region, color_point);
+      } 
+      return cur_region;
     }
 
     /////////////////////////////////////////////////////////////

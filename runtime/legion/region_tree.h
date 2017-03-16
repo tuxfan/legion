@@ -274,7 +274,7 @@ namespace Legion {
                                    const RegionRequirement &req,
                                    AddressSpaceID target);
       LogicalRegion evaluate_projection(StructuredProjection proj,
-          DomainPoint &point,
+          const DomainPoint &point,
           RegionTreeNode *upper_bound);
       ProjectionAnalysisConstraint* compute_proj_constraint(
           StructuredProjection proj1,
