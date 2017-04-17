@@ -176,6 +176,7 @@ void top_level_task(const Task *task,
                     Context ctx, Runtime *runtime)
 {
   int side_length = 4;
+  int num_iterations = 1;
   int num_subregions_side = 4; // Assumed to divide side_length
   // Check for any command line arguments
   {
@@ -183,11 +184,19 @@ void top_level_task(const Task *task,
     for (int i = 1; i < command_args.argc; i++)
     {
       if (!strcmp(command_args.argv[i],"-n"))
-        side_length = atoi(command_args.argv[++i]);
+        side_length = 1 << atoi(command_args.argv[++i]);
       if (!strcmp(command_args.argv[i],"-b"))
-        num_subregions_side = atoi(command_args.argv[++i]);
+        num_subregions_side = 1 << atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-i"))
+        num_iterations = 1 << atoi(command_args.argv[++i]);
     }
   }
+
+  if (side_length % num_subregions_side != 0) {
+    printf("subregions per side must evenly divide side length!\n");
+    assert(0);
+  }
+
   printf("Running pascal triangle computation for %d side length...\n", side_length);
   printf("Partitioning data into %d sub-regions per side...\n", num_subregions_side);
 
@@ -209,8 +218,9 @@ void top_level_task(const Task *task,
   LogicalRegion pascal_lr = runtime->create_logical_region(ctx, is, fs);
   
   // Make our color_domain based on the number of subregions
-  // that we want to create.
-  Rect<2> color_bounds(make_point(0,0),make_point(num_subregions_side-1,num_subregions_side-1));
+  // that we want to create.  We creatre extra empty subregions around the outside of the grid
+  // so that the compute tasks can all work the same.
+  Rect<2> color_bounds(make_point(0,0),make_point(num_subregions_side, num_subregions_side));
   Domain color_domain = Domain::from_rect<2>(color_bounds);
 
   // Create (possibly coarser) grid partition of the grid of points
@@ -219,6 +229,12 @@ void top_level_task(const Task *task,
     const int points_per_partition = side_length/num_subregions_side;
     DomainPointColoring d_coloring;
     for (Domain::DomainPointIterator itr(color_domain); itr; itr++) {
+      // Make the empty bounding subregions.
+      if (itr.p[0] == num_subregions_side || itr.p[1] == num_subregions_side) {
+          Rect<2> subrect(make_point(0,0),make_point(-1,-1));
+          d_coloring[itr.p] = Domain::from_rect<2>(subrect);
+          continue;
+      }
       int x_start = itr.p[0] * points_per_partition;
       int y_start = itr.p[1] * points_per_partition;
       int x_end = (itr.p[0] + 1) * points_per_partition - 1;
@@ -240,13 +256,10 @@ void top_level_task(const Task *task,
   LogicalPartition grid_lp = 
     runtime->get_logical_partition(ctx, pascal_lr, grid_ip);
 
-  // Our launch domain will again be isomorphic to our coloring domain.
-  Domain launch_domain = color_domain;
+  // Our launch domain will again be only include the data subregions and not the dummy ones
+  Rect<2> launch_bounds(make_point(0,0),make_point(num_subregions_side-1,num_subregions_side-1));
+  Domain launch_domain = Domain::from_rect<2>(launch_bounds);
   ArgumentMap arg_map;
-
-  // We compute over a slightly smaller grid to handle the case of null regions
-  Rect<2> compute_bounds(make_point(0,0),make_point(num_subregions_side-2,num_subregions_side-2));
-  Domain compute_launch_domain = Domain::from_rect<2>(compute_bounds);
 
   // First initialize the 'FID_X' and 'FID_Y' fields with some data
   IndexLauncher init_launcher(INIT_FIELD_TASK_ID, launch_domain,
@@ -261,22 +274,24 @@ void top_level_task(const Task *task,
   runtime->execute_index_space(ctx, init_launcher);
 
   // Now we launch the computation to calculate Pascal's triangle
-  IndexLauncher compute_launcher(COMPUTE_TASK_ID, compute_launch_domain,
-       TaskArgument(NULL, 0), arg_map);
-  compute_launcher.add_region_requirement(
-      RegionRequirement(grid_lp, X_PROJ,
-                        READ_ONLY, EXCLUSIVE, pascal_lr));
-  compute_launcher.add_region_requirement(
-      RegionRequirement(grid_lp, Y_PROJ,
-                        READ_ONLY, EXCLUSIVE, pascal_lr));
-  compute_launcher.add_region_requirement(
-      RegionRequirement(grid_lp, ID_PROJ,
-                        READ_WRITE, EXCLUSIVE, pascal_lr));
-  compute_launcher.add_field(0, FID_PASCAL_VAL);
-  compute_launcher.add_field(1, FID_PASCAL_VAL);
-  compute_launcher.add_field(2, FID_PASCAL_VAL);
+  for (int j = 0; j < num_iterations; j++) {
+    IndexLauncher compute_launcher(COMPUTE_TASK_ID, launch_domain,
+         TaskArgument(NULL, 0), arg_map);
+    compute_launcher.add_region_requirement(
+        RegionRequirement(grid_lp, X_PROJ,
+                          READ_ONLY, EXCLUSIVE, pascal_lr));
+    compute_launcher.add_region_requirement(
+        RegionRequirement(grid_lp, Y_PROJ,
+                          READ_ONLY, EXCLUSIVE, pascal_lr));
+    compute_launcher.add_region_requirement(
+        RegionRequirement(grid_lp, ID_PROJ,
+                          READ_WRITE, EXCLUSIVE, pascal_lr));
+    compute_launcher.add_field(0, FID_PASCAL_VAL);
+    compute_launcher.add_field(1, FID_PASCAL_VAL);
+    compute_launcher.add_field(2, FID_PASCAL_VAL);
 
-  runtime->execute_index_space(ctx, compute_launcher);
+    runtime->execute_index_space(ctx, compute_launcher);
+  }
 
   // Finally, we launch a single task to check the results.
   TaskLauncher check_launcher(CHECK_TASK_ID, 
@@ -327,6 +342,7 @@ void init_field_task(const Task *task,
   Rect<2> rect = dom.get_rect<2>();
   for (GenericPointInRectIterator<2> pir(rect); pir; pir++)
   {
+    fprintf(stderr, "Actually initializing the fields\n");
     accx.write(DomainPoint::from_point<2>(pir.p), pir.p[0]);
     accy.write(DomainPoint::from_point<2>(pir.p), pir.p[1]);
     acc_pascal_write.write(DomainPoint::from_point<2>(pir.p), 1);
@@ -364,6 +380,8 @@ void compute_task(const Task *task,
                   const std::vector<PhysicalRegion> &regions,
                   Context ctx, Runtime *runtime)
 {
+  /* UNCOMMENT BELOW FOR DEBUG PRINT STATEMENTS
+
   fprintf(stderr, "Starting the compute task.\n");
   const int pointx = task->index_point.point_data[0];
   const int pointy = task->index_point.point_data[1];
@@ -371,7 +389,7 @@ void compute_task(const Task *task,
      pointx, pointy,
      task->regions[2].region.get_index_space().get_id(),
      task->regions[0].region.get_index_space().get_id(),
-     task->regions[1].region.get_index_space().get_id());
+     task->regions[1].region.get_index_space().get_id());*/
   assert(regions.size() == 3);
   assert(task->regions.size() == 3);
   assert(task->regions[0].privilege_fields.size() == 1);
@@ -393,7 +411,58 @@ void compute_task(const Task *task,
       task->regions[2].region.get_index_space());
   Rect<2> rect = dom.get_rect<2>();
 
+  Domain x_dom = runtime->get_index_space_domain(ctx,
+      task->regions[0].region.get_index_space());
+  Domain y_dom = runtime->get_index_space_domain(ctx,
+      task->regions[1].region.get_index_space());
+  size_t x_volume = x_dom.get_volume();
+  size_t y_volume = y_dom.get_volume();
+
+  Point<2> lo = rect.lo;
   Point<2> hi = rect.hi;
+  Point<2> cur_point;
+  int x_diff_val, y_diff_val;
+  const Point<2> onex = make_point(1,0);
+  const Point<2> oney = make_point(0,1);
+
+  for (long int x = hi[0]; x >= lo[0]; x--) {
+    for (long int y = hi[1]; y >= lo[1]; y--) {
+      cur_point = make_point(x, y);
+      if (x == hi[0]) {
+        if (x_volume > 0) {
+          x_diff_val = x_diff_acc.read(DomainPoint::from_point<2>(cur_point + onex));
+        }
+        else {
+          x_diff_val = 0;
+        }
+      }
+      else {
+        x_diff_val = curr_acc.read(DomainPoint::from_point<2>(cur_point + onex));
+      }
+      if (y == hi[1]) {
+        if (y_volume > 0) {
+          y_diff_val = y_diff_acc.read(DomainPoint::from_point<2>(cur_point + oney));
+        }
+        else {
+          y_diff_val = 0;
+        }
+      }
+      else {
+        y_diff_val = curr_acc.read(DomainPoint::from_point<2>(cur_point + oney));
+      }
+      int computed_val = 0;
+      if (x_diff_val > y_diff_val) {
+        computed_val = x_diff_val + 1;
+      }
+      else {
+        computed_val = y_diff_val + 1;
+      }
+      curr_acc.write(DomainPoint::from_point<2>(cur_point), computed_val);
+    }
+  }
+}
+
+  /*Point<2> hi = rect.hi;
   int x_diff_val, y_diff_val;
   const Point<2> onex = make_point(1,0);
   const Point<2> oney = make_point(0,1);
@@ -417,7 +486,7 @@ void compute_task(const Task *task,
     fprintf(stderr, "writing the value %d.\n", x_diff_val + y_diff_val);
   }
   fprintf(stderr, "Finishing the compute task.\n");
-}
+}*/
 
 void check_task(const Task *task,
                 const std::vector<PhysicalRegion> &regions,
@@ -427,6 +496,7 @@ void check_task(const Task *task,
   assert(task->regions.size() == 1);
   assert(task->regions[0].privilege_fields.size() == 3);
   assert(task->arglen == sizeof(int));
+  const int side_length = *((const int*)task->args);  
 
   std::set<unsigned int>::iterator fields = task->regions[0].privilege_fields.begin();
   FieldID fidx = *fields;
@@ -448,37 +518,19 @@ void check_task(const Task *task,
   bool all_passed = true;
   for (GenericPointInRectIterator<2> pir(rect); pir; pir++)
   {
-    int x = 3 - accx.read(DomainPoint::from_point<2>(pir.p));
-    int y = 3 - accy.read(DomainPoint::from_point<2>(pir.p));
+    int x = side_length - 1 - accx.read(DomainPoint::from_point<2>(pir.p));
+    int y = side_length - 1 - accy.read(DomainPoint::from_point<2>(pir.p));
     int pascal = acc_pascal.read(DomainPoint::from_point<2>(pir.p));
     int expected = 1;
-    int small, big;
+    expected = x + y + 1;
 
-    if (x == 0 || y == 0) {
-      expected = 1;
-    }
-    else {
-      // compute the expected value
-      if (x >= y) {
-        big = x;
-        small = y;
-      } else {
-        big = y;
-        small = x;
-      }
-
-      for (int i = big + small; i > big; i--) {
-        expected = expected * i;
-      }
-      for (int i = small; i > 1; i--) {
-        expected = expected / i;
-      }
-    }
     printf("At point (%lld, %lld)\n", pir.p[0], pir.p[1]);
-    printf("Checking for values %d and %d... (expected: %d, found: %d)\n", x, y, expected, pascal);
+    printf("Checking for values %d and %d... expected %d, found %d\n", x, y, expected, pascal);
     
-    if (expected != pascal)
+    if (expected != pascal) {
       all_passed = false;
+      //break;
+    }
   }
   if (all_passed)
     printf("SUCCESS!\n");
