@@ -2077,7 +2077,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    int ProjectionExpression::evaluate(DomainPoint &point) const
+    long int ProjectionExpression::evaluate(DomainPoint &point) const
     //--------------------------------------------------------------------------
     {
       switch(expression_type) {
@@ -2289,9 +2289,11 @@ namespace Legion {
     {
       std::pair<std::vector<DomainPoint>, std::vector<DomainPoint> > left_pair;
       std::pair<std::vector<DomainPoint>, std::vector<DomainPoint> > right_pair;
+      std::vector<DomainPoint> set_intersection;
+      std::vector<DomainPoint> set_union;
+      std::vector<DomainPoint> set_difference;
       std::vector<DomainPoint> empty1;
       std::vector<DomainPoint> empty2;
-      return left_pair;/*
       switch(constraint_type)
       {
         case TRUE:
@@ -2301,15 +2303,56 @@ namespace Legion {
         case FALSE:
           return std::make_pair(empty1, empty2);
         case OR:
-          // union two sub expressions
-          break;
+          left_pair = lhs->get_dependent_points(point);
+          right_pair = rhs->get_dependent_points(point);
+          std::set_intersection(left_pair.second.begin(),
+                                left_pair.second.end(),
+                                right_pair.second.begin(),
+                                right_pair.second.end(),
+                                back_inserter(set_intersection));
+          std::set_union(left_pair.first.begin(),
+                         left_pair.first.end(),
+                         right_pair.first.begin(),
+                         right_pair.first.end(),
+                         back_inserter(set_union));
+          if (set_intersection.size() > 0) {
+            std::set_difference(set_intersection.begin(),
+                                set_intersection.end(),
+                                set_union.begin(),
+                                set_union.end(),
+                                back_inserter(set_difference));
+            return std::make_pair(empty1, set_difference);
+          }
+          else {
+            return std::make_pair(set_union, empty1);
+          }
         case AND:
-          // intersect sub expressions
-          break;
+          left_pair = lhs->get_dependent_points(point);
+          right_pair = rhs->get_dependent_points(point);
+          std::set_intersection(left_pair.first.begin(),
+                                left_pair.first.end(),
+                                right_pair.first.begin(),
+                                right_pair.first.end(),
+                                back_inserter(set_intersection));
+          std::set_union(left_pair.second.begin(),
+                         left_pair.second.end(),
+                         right_pair.second.begin(),
+                         right_pair.second.end(),
+                         back_inserter(set_union));
+          if (set_intersection.size() > 0) {
+            std::set_difference(set_intersection.begin(),
+                                set_intersection.end(),
+                                set_union.begin(),
+                                set_union.end(),
+                                back_inserter(set_difference));
+            return std::make_pair(set_difference, empty1);
+          }
+          else {
+            return std::make_pair(empty1, set_union);
+          }
         case NOT:
           left_pair = lhs->get_dependent_points(point);
           return std::make_pair(left_pair.second, left_pair.first);
-          break;
         case EQ:
           //evaluate the point.
           //solve for the relevant domain points
@@ -2323,7 +2366,32 @@ namespace Legion {
           //add all the domain points to a vector
           //return that as the "no" vector
           break;
-      }*/
+        default:
+          // Should never be reached
+          assert(0);
+      }
+    }
+
+    //
+    //--------------------------------------------------------------------------
+    int ProjectionAnalysisConstraint::solve_linear(
+        DomainPoint &point)
+    //--------------------------------------------------------------------------
+    {
+      assert(lhs_exp->expression_type == ADD);
+      assert(lhs_exp->lhs->expression_type == MUL);
+      assert(lhs_exp->rhs->expression_type == CONST);
+      assert(lhs_exp->lhs->lhs->expression_type == CONST);
+      assert(lhs_exp->lhs->lhs->expression_type == VAR);
+      assert(rhs_exp->expression_type == ADD);
+      assert(rhs_exp->lhs->expression_type == MUL);
+      assert(rhs_exp->rhs->expression_type == CONST);
+      assert(rhs_exp->lhs->lhs->expression_type == CONST);
+      assert(rhs_exp->lhs->lhs->expression_type == VAR);
+      long int value = rhs_exp->evaluate(point);
+      value = value - lhs_exp->rhs->value;
+      value = value / lhs_exp->lhs->lhs->value;
+      return value;
     }
 
     //--------------------------------------------------------------------------
