@@ -342,7 +342,6 @@ void init_field_task(const Task *task,
   Rect<2> rect = dom.get_rect<2>();
   for (GenericPointInRectIterator<2> pir(rect); pir; pir++)
   {
-    fprintf(stderr, "Actually initializing the fields\n");
     accx.write(DomainPoint::from_point<2>(pir.p), pir.p[0]);
     accy.write(DomainPoint::from_point<2>(pir.p), pir.p[1]);
     acc_pascal_write.write(DomainPoint::from_point<2>(pir.p), 1);
@@ -462,32 +461,6 @@ void compute_task(const Task *task,
   }
 }
 
-  /*Point<2> hi = rect.hi;
-  int x_diff_val, y_diff_val;
-  const Point<2> onex = make_point(1,0);
-  const Point<2> oney = make_point(0,1);
-
-  for (GenericPointInRectIterator<2> pir(rect); pir; pir++)
-  {
-    if (pir.p[0] == hi[0]) {
-      x_diff_val = x_diff_acc.read(DomainPoint::from_point<2>(pir.p + onex));
-    }
-    else {
-      x_diff_val = curr_acc.read(DomainPoint::from_point<2>(pir.p + onex));
-    }
-    if (pir.p[0] == hi[0]) {
-      y_diff_val = y_diff_acc.read(DomainPoint::from_point<2>(pir.p + oney));
-    }
-    else {
-      y_diff_val = curr_acc.read(DomainPoint::from_point<2>(pir.p + oney));
-    }
-    fprintf(stderr, "read the value %d for x and %d for y.\n", x_diff_val, y_diff_val);
-    curr_acc.write(DomainPoint::from_point<2>(pir.p), x_diff_val + y_diff_val);
-    fprintf(stderr, "writing the value %d.\n", x_diff_val + y_diff_val);
-  }
-  fprintf(stderr, "Finishing the compute task.\n");
-}*/
-
 void check_task(const Task *task,
                 const std::vector<PhysicalRegion> &regions,
                 Context ctx, Runtime *runtime)
@@ -524,8 +497,8 @@ void check_task(const Task *task,
     int expected = 1;
     expected = x + y + 1;
 
-    printf("At point (%lld, %lld)\n", pir.p[0], pir.p[1]);
-    printf("Checking for values %d and %d... expected %d, found %d\n", x, y, expected, pascal);
+    //printf("At point (%lld, %lld)\n", pir.p[0], pir.p[1]);
+    //printf("Checking for values %d and %d... expected %d, found %d\n", x, y, expected, pascal);
     
     if (expected != pascal) {
       all_passed = false;
