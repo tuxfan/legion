@@ -6792,27 +6792,12 @@ namespace Legion {
               proj1, first_point, upper_bound);
           ProjectionAnalysisConstraint *constraint =
             runtime->forest->compute_proj_constraint(proj1, proj2,
-                sample_region);
+                sample_region)->simplify();
           constraints.push_back(constraint);
+          //fprintf(stderr, "Constraint is %s\n", constraint->stringify().c_str());
         }
       }
       constraint_equations = constraints;
-      /*
-      for (Domain::DomainPointIterator itr(internal_domain); 
-            itr; itr++)
-      {
-        for(unsigned idx1 = 0; idx1 < constraints.size(); idx1++)
-        {
-          ProjectionAnalysisConstraint constraint = constraints[idx1];
-          std::vector<DomainPoint> dep_points =
-            constraint.get_dependent_points(itr.p, internal_domain);
-          for(unsigned idx2 = 0; idx2 < dep_points.size(); idx2++)
-          {
-            // use the ordering function here to determine the order
-            // between the points
-          }
-        }
-      }*/
     }
 
     //--------------------------------------------------------------------------
