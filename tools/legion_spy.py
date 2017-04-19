@@ -5831,23 +5831,6 @@ class Operation(object):
             print("Structured projection function is not valid")
             if self.state.assert_on_error:
                 assert False
-        # If we had any replay regions, analyze them now
-        assert not self.need_logical_replay
-        if self.need_logical_replay:
-            replays = self.need_logical_replay
-            self.need_logical_replay = None
-            for idx,field in replays:
-                if not self.analyze_logical_requirement(idx, perform_checks, field):
-                    return False
-                if self.need_logical_replay:
-                    print("ERROR: Replay failed! This is really bad! "+
-                          "Region requirement "+str(idx)+" of "+str(self)+
-                          "failed to replay successfully. This is most likely "+
-                          "a conceptual bug in the analysis and not an "+
-                          "implementation bug.")
-                    if self.state.assert_on_error:
-                        assert False
-                    return False
         # See if our operation had any bearing on the restricted
         # properties of the enclosing context
         if self.kind == ACQUIRE_OP_KIND:
