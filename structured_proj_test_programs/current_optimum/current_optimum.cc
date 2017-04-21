@@ -43,6 +43,7 @@ enum TaskIDs {
   CHECK_TASK_ID,
   DUMMY_LAUNCHER_HELPER_TASK_ID,
   DUMMY_COMPUTE_TASK_ID,
+  PAUSE_TASK_ID,
 };
 
 enum FieldIDs {
@@ -206,6 +207,10 @@ void top_level_task(const Task *task,
   int side_length = 4;
   int num_iterations = 1;
   int num_subregions_side = 4; // Assumed to divide side_length
+  // say it's disjoint by default,
+  // give flag for toggling to force it to compute disjointedness
+  PartitionKind partition_kind = DISJOINT_KIND;
+
   // Check for any command line arguments
   {
       const InputArgs &command_args = Runtime::get_input_args();
@@ -216,7 +221,9 @@ void top_level_task(const Task *task,
       if (!strcmp(command_args.argv[i],"-b"))
         num_subregions_side = 1 << atoi(command_args.argv[++i]);
       if (!strcmp(command_args.argv[i],"-i"))
-        num_iterations = 1 << atoi(command_args.argv[++i]);
+        num_iterations = atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-c"))
+        partition_kind = COMPUTE_KIND;
     }
   }
 
@@ -270,7 +277,7 @@ void top_level_task(const Task *task,
       }
     }
 
-    first_ip = runtime->create_index_partition(ctx, is, color_domain, d_coloring);
+    first_ip = runtime->create_index_partition(ctx, is, color_domain, d_coloring, partition_kind);
     first_lp = runtime->get_logical_partition(ctx, pascal_lr, first_ip);
 
     for (Domain::DomainPointIterator itr(color_domain); itr; itr++) {
@@ -311,7 +318,7 @@ void top_level_task(const Task *task,
       }
 
       sub_ip = runtime->create_index_partition(ctx,
-          to_partition.get_index_space(), sub_color_domain, sub_d_coloring);
+          to_partition.get_index_space(), sub_color_domain, sub_d_coloring, partition_kind);
     }
   }
 
@@ -331,7 +338,7 @@ void top_level_task(const Task *task,
           //subrect.lo[0], subrect.lo[1], subrect.hi[0], subrect.hi[1]);
       d_coloring[itr.p] = Domain::from_rect<2>(subrect);
     }
-    full_ip = runtime->create_index_partition(ctx, is, full_color_domain, d_coloring);
+    full_ip = runtime->create_index_partition(ctx, is, full_color_domain, d_coloring, partition_kind);
   }
   LogicalPartition full_lp = runtime->get_logical_partition(ctx, pascal_lr, full_ip);
 
@@ -386,7 +393,6 @@ void top_level_task(const Task *task,
   // Now we launch the computation to calculate Pascal's triangle
   for (int j = 0; j < num_iterations; j++) {
     for (int i = 2 * (num_subregions_side - 1) - 1; i >= 0; i--) {
-        printf("launching for i is %d\n", i);
       DomainPoint compute_point = DomainPoint::from_point<1>(make_point(i));
       DomainPoint data_point = DomainPoint::from_point<1>(make_point(i+1));
       LogicalRegion compute_region =
@@ -406,6 +412,38 @@ void top_level_task(const Task *task,
       helper_launcher.add_field(0, FID_PASCAL_VAL);
       helper_launcher.add_field(1, FID_PASCAL_VAL);
       runtime->execute_task(ctx, helper_launcher);
+    }
+    if (j == 0) {
+      LogicalRegion corner_intermediate_region =
+        runtime->get_logical_subregion_by_color(first_lp,
+            DomainPoint::from_point<1>(make_point(2 * (num_subregions_side - 1))));
+      LogicalPartition corner_intermediate_partition =
+        runtime->get_logical_partition_by_color(corner_intermediate_region,
+            DomainPoint::from_point<1>(make_point(0)));
+      LogicalRegion corner_region =
+        runtime->get_logical_subregion_by_color(corner_intermediate_partition,
+            DomainPoint::from_point<1>(make_point(0)));
+      LogicalRegion corner_intermediate_region2 =
+        runtime->get_logical_subregion_by_color(first_lp,
+            DomainPoint::from_point<1>(make_point(0)));
+      LogicalPartition corner_intermediate_partition2 =
+        runtime->get_logical_partition_by_color(corner_intermediate_region2,
+            DomainPoint::from_point<1>(make_point(0)));
+      LogicalRegion corner_region2 =
+        runtime->get_logical_subregion_by_color(corner_intermediate_partition2,
+            DomainPoint::from_point<1>(make_point(0)));
+
+      TaskLauncher pause_launcher(PAUSE_TASK_ID,
+           TaskArgument(NULL, 0));
+      pause_launcher.add_region_requirement(
+          RegionRequirement(corner_region,
+                            READ_WRITE, EXCLUSIVE, pascal_lr));
+      pause_launcher.add_region_requirement(
+          RegionRequirement(corner_region2,
+                            READ_WRITE, EXCLUSIVE, pascal_lr));
+      pause_launcher.add_field(0, FID_PASCAL_VAL);
+      pause_launcher.add_field(1, FID_PASCAL_VAL);
+      runtime->execute_task(ctx, pause_launcher);
     }
   }
 
@@ -653,7 +691,7 @@ void dummy_compute_task(const Task *task,
   assert(regions.size() == 1);
   assert(task->regions.size() == 1);
   assert(task->regions[0].privilege_fields.size() == 1);
-  
+
   FieldID pascal_fid_curr = *(task->regions[0].privilege_fields.begin());
 
   RegionAccessor<AccessorType::Generic, int> curr_acc = 
@@ -675,6 +713,20 @@ void dummy_compute_task(const Task *task,
       curr_acc.write(DomainPoint::from_point<2>(cur_point), write_val);
     }
   }
+}
+
+void pause_task(const Task *task,
+                        const std::vector<PhysicalRegion> &regions,
+                        Context ctx, Runtime *runtime)
+{
+  unsigned int guess = 0;
+  for (int i = 0; i < 10000; i++) {
+    guess = guess + 1;
+  }
+  assert(regions.size() == 2);
+  assert(task->regions.size() == 2);
+  assert(task->regions[0].privilege_fields.size() == 1);
+  assert(task->regions[1].privilege_fields.size() == 10000/guess);
 }
 
 void check_task(const Task *task,
@@ -894,6 +946,8 @@ int main(int argc, char **argv)
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(true, false, false), "compute task");
   Runtime::register_legion_task<dummy_compute_task>(DUMMY_COMPUTE_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(true, false, false), "compute task");
+  Runtime::register_legion_task<pause_task>(PAUSE_TASK_ID,
+      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(true, false, false), "pause task");
   Runtime::register_legion_task<check_task>(CHECK_TASK_ID,
       Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "check task");
   Runtime::register_legion_task<compute_task_pascal>(COMPUTE_TASK_PASCAL_ID,
