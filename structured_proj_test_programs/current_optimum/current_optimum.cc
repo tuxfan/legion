@@ -37,12 +37,8 @@ enum TaskIDs {
   TOP_LEVEL_TASK_ID,
   INIT_FIELD_TASK_ID,
   LAUNCHER_HELPER_TASK_ID,
-  COMPUTE_TASK_PASCAL_ID,
-  CHECK_TASK_PASCAL_ID,
   COMPUTE_TASK_ID,
   CHECK_TASK_ID,
-  DUMMY_LAUNCHER_HELPER_TASK_ID,
-  DUMMY_COMPUTE_TASK_ID,
   PAUSE_TASK_ID,
 };
 
@@ -601,60 +597,6 @@ void launcher_helper_task(const Task *task,
   runtime->execute_index_space(ctx, compute_launcher);
 }
 
-void dummy_launcher_helper_task(const Task *task,
-                          const std::vector<PhysicalRegion> &regions,
-                          Context ctx, Runtime *runtime)
-{
-  assert(regions.size() == 1);
-  assert(task->regions.size() == 1);
-  assert(task->regions[0].privilege_fields.size() == 1);
-  //assert(task->regions[1].privilege_fields.size() == 1);
-  assert(task->arglen == sizeof(bool));
-  const bool past_half = *((const bool*)task->args);  
-
-  LogicalRegion lr_0 = regions[0].get_logical_region(); // The region to compute
-  //LogicalRegion lr_1 = regions[1].get_logical_region(); // The data region
-
-  LogicalPartition compute_partition =
-      runtime->get_logical_partition_by_color(ctx, lr_0,
-                  DomainPoint::from_point<1>(make_point(0)));
-  //LogicalPartition data_partition = 
-      //runtime->get_logical_partition_by_color(ctx, lr_1,
-                  //DomainPoint::from_point<1>(make_point(0)));
-
-  Domain extended_compute_domain =
-      runtime->get_index_partition_color_space(compute_partition.get_index_partition());
-  Rect<1> extended_rect = extended_compute_domain.get_rect<1>();
-  Rect<1> rect(make_point(extended_rect.lo[0] + 1), make_point(extended_rect.hi[0] - 1));
-  Domain compute_launch_domain = Domain::from_rect<1>(rect);
-  
-
-  ProjIDs x_proj = X_PROJ_FIRST;
-  ProjIDs y_proj = Y_PROJ_FIRST;
-  if (past_half) {
-    x_proj = X_PROJ_SECOND;
-    y_proj = Y_PROJ_SECOND;
-  }
-  
-  ArgumentMap arg_map;
-  IndexLauncher compute_launcher(DUMMY_COMPUTE_TASK_ID, compute_launch_domain,
-       TaskArgument(NULL, 0), arg_map);
-  //compute_launcher.add_region_requirement(
-      //RegionRequirement(data_partition, x_proj,
-                        //READ_ONLY, EXCLUSIVE, lr_1));
-  //compute_launcher.add_region_requirement(
-      //RegionRequirement(data_partition, y_proj,
-                        //READ_ONLY, EXCLUSIVE, lr_1));
-  compute_launcher.add_region_requirement(
-      RegionRequirement(compute_partition, 0,
-                        READ_WRITE, EXCLUSIVE, lr_0));
-  compute_launcher.add_field(0, FID_PASCAL_VAL);
-  //compute_launcher.add_field(1, FID_PASCAL_VAL);
-  //compute_launcher.add_field(2, FID_PASCAL_VAL);
-
-  runtime->execute_index_space(ctx, compute_launcher);
-}
-
 // Compute the value triangle value for each point in the rectangle
 void compute_task(const Task *task,
                   const std::vector<PhysicalRegion> &regions,
@@ -732,38 +674,6 @@ void compute_task(const Task *task,
   }
 }
 
-// Compute the value triangle value for each point in the rectangle
-void dummy_compute_task(const Task *task,
-                        const std::vector<PhysicalRegion> &regions,
-                        Context ctx, Runtime *runtime)
-{
-  assert(regions.size() == 1);
-  assert(task->regions.size() == 1);
-  assert(task->regions[0].privilege_fields.size() == 1);
-
-  FieldID pascal_fid_curr = *(task->regions[0].privilege_fields.begin());
-
-  RegionAccessor<AccessorType::Generic, int> curr_acc = 
-    regions[0].get_field_accessor(pascal_fid_curr).typeify<int>();
-
-  Domain dom = runtime->get_index_space_domain(ctx,
-      task->regions[0].region.get_index_space());
-  Rect<2> rect = dom.get_rect<2>();
-
-  Point<2> lo = rect.lo;
-  Point<2> hi = rect.hi;
-  Point<2> cur_point;
-  int write_val;
-
-  for (long int x = hi[0]; x >= lo[0]; x--) {
-    for (long int y = hi[1]; y >= lo[1]; y--) {
-      cur_point = make_point(x, y);
-      write_val = curr_acc.read(DomainPoint::from_point<2>(cur_point));
-      curr_acc.write(DomainPoint::from_point<2>(cur_point), write_val);
-    }
-  }
-}
-
 void pause_task(const Task *task,
                         const std::vector<PhysicalRegion> &regions,
                         Context ctx, Runtime *runtime)
@@ -829,148 +739,6 @@ void check_task(const Task *task,
     printf("FAILURE!\n");
 }
 
-// Compute the pascal's triangle value for each point in the rectangle
-void compute_task_pascal(const Task *task,
-                  const std::vector<PhysicalRegion> &regions,
-                  Context ctx, Runtime *runtime)
-{
-  assert(regions.size() == 3);
-  assert(task->regions.size() == 3);
-  assert(task->regions[0].privilege_fields.size() == 1);
-  assert(task->regions[1].privilege_fields.size() == 1);
-  assert(task->regions[2].privilege_fields.size() == 1);
-  
-  FieldID pascal_fid_x_diff = *(task->regions[0].privilege_fields.begin());
-  FieldID pascal_fid_y_diff = *(task->regions[1].privilege_fields.begin());
-  FieldID pascal_fid_curr = *(task->regions[2].privilege_fields.begin());
-
-  RegionAccessor<AccessorType::Generic, int> x_diff_acc = 
-    regions[0].get_field_accessor(pascal_fid_x_diff).typeify<int>();
-  RegionAccessor<AccessorType::Generic, int> y_diff_acc = 
-    regions[1].get_field_accessor(pascal_fid_y_diff).typeify<int>();
-  RegionAccessor<AccessorType::Generic, int> curr_acc = 
-    regions[2].get_field_accessor(pascal_fid_curr).typeify<int>();
-
-  Domain dom = runtime->get_index_space_domain(ctx,
-      task->regions[2].region.get_index_space());
-  Rect<2> rect = dom.get_rect<2>();
-
-  Domain x_dom = runtime->get_index_space_domain(ctx,
-      task->regions[0].region.get_index_space());
-  Domain y_dom = runtime->get_index_space_domain(ctx,
-      task->regions[1].region.get_index_space());
-  size_t x_volume = x_dom.get_volume();
-  size_t y_volume = y_dom.get_volume();
-
-  Point<2> lo = rect.lo;
-  Point<2> hi = rect.hi;
-  Point<2> cur_point;
-  int x_diff_val, y_diff_val;
-  const Point<2> onex = make_point(1,0);
-  const Point<2> oney = make_point(0,1);
-
-  for (long int x = hi[0]; x >= lo[0]; x--) {
-    for (long int y = hi[1]; y >= lo[1]; y--) {
-      cur_point = make_point(x, y);
-      if (x == hi[0]) {
-        if (x_volume > 0) {
-          x_diff_val = x_diff_acc.read(DomainPoint::from_point<2>(cur_point + onex));
-        }
-        else {
-          x_diff_val = 0;
-        }
-      }
-      else {
-        x_diff_val = curr_acc.read(DomainPoint::from_point<2>(cur_point + onex));
-      }
-      if (y == hi[1]) {
-        if (y_volume > 0) {
-          y_diff_val = y_diff_acc.read(DomainPoint::from_point<2>(cur_point + oney));
-        }
-        else {
-          y_diff_val = 0;
-        }
-      }
-      else {
-        y_diff_val = curr_acc.read(DomainPoint::from_point<2>(cur_point + oney));
-      }
-      int computed_val = x_diff_val + y_diff_val;
-      if (computed_val == 0) {
-        computed_val = 1;
-      }
-      curr_acc.write(DomainPoint::from_point<2>(cur_point), computed_val);
-    }
-  }
-}
-
-void check_task_pascal(const Task *task,
-                const std::vector<PhysicalRegion> &regions,
-                Context ctx, Runtime *runtime)
-{
-  assert(regions.size() == 1);
-  assert(task->regions.size() == 1);
-  assert(task->regions[0].privilege_fields.size() == 3);
-  assert(task->arglen == sizeof(int));
-  const int side_length = *((const int*)task->args);  
-
-  std::set<unsigned int>::iterator fields = task->regions[0].privilege_fields.begin();
-  FieldID fidx = *fields;
-  FieldID fidy = *(++fields);
-  FieldID fid_pascal = *(++fields);
-
-  RegionAccessor<AccessorType::Generic, int> accx = 
-    regions[0].get_field_accessor(fidx).typeify<int>();
-  RegionAccessor<AccessorType::Generic, int> accy = 
-    regions[0].get_field_accessor(fidy).typeify<int>();
-  RegionAccessor<AccessorType::Generic, int> acc_pascal = 
-    regions[0].get_field_accessor(fid_pascal).typeify<int>();
-
-  Domain dom = runtime->get_index_space_domain(ctx,
-      task->regions[0].region.get_index_space());
-  Rect<2> rect = dom.get_rect<2>();
-
-  // This is the checking task so we can just do the slow path
-  bool all_passed = true;
-  for (GenericPointInRectIterator<2> pir(rect); pir; pir++)
-  {
-    int x = side_length - 1 - accx.read(DomainPoint::from_point<2>(pir.p));
-    int y = side_length - 1 - accy.read(DomainPoint::from_point<2>(pir.p));
-    int pascal = acc_pascal.read(DomainPoint::from_point<2>(pir.p));
-    int expected = 1;
-    int small, big;
-
-    if (x == 0 || y == 0) {
-      expected = 1;
-    }
-    else {
-      // compute the expected value
-      if (x >= y) {
-        big = x;
-        small = y;
-      } else {
-        big = y;
-        small = x;
-      }
-
-      for (int i = big + small; i > big; i--) {
-        expected = expected * i;
-      }
-      for (int i = small; i > 1; i--) {
-        expected = expected / i;
-      }
-    }
-    printf("At point (%lld, %lld)\n", pir.p[0], pir.p[1]);
-    printf("Checking for values %d and %d... expected %d, found %d\n", x, y, expected, pascal);
-    
-    if (expected != pascal)
-      all_passed = false;
-  }
-  if (all_passed)
-    printf("SUCCESS!\n");
-  else
-    printf("FAILURE!\n");
-}
-
 void registration_callback(Machine machine, HighLevelRuntime *rt,
                                const std::set<Processor> &local_procs)
 {
@@ -990,19 +758,11 @@ int main(int argc, char **argv)
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "init task");
   Runtime::register_legion_task<launcher_helper_task>(LAUNCHER_HELPER_TASK_ID,
       Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(false,true,false), "launcher helper task");
-  Runtime::register_legion_task<dummy_launcher_helper_task>(DUMMY_LAUNCHER_HELPER_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(false,true,false), "launcher helper task");
   Runtime::register_legion_task<compute_task>(COMPUTE_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(true, false, false), "compute task");
-  Runtime::register_legion_task<dummy_compute_task>(DUMMY_COMPUTE_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(true, false, false), "compute task");
   Runtime::register_legion_task<pause_task>(PAUSE_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(true, false, false), "pause task");
   Runtime::register_legion_task<check_task>(CHECK_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "check task");
-  Runtime::register_legion_task<compute_task_pascal>(COMPUTE_TASK_PASCAL_ID,
-      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "compute task");
-  Runtime::register_legion_task<check_task_pascal>(CHECK_TASK_PASCAL_ID,
       Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "check task");
   HighLevelRuntime::set_registration_callback(registration_callback);
 
