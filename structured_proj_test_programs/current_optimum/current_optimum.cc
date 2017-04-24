@@ -60,6 +60,11 @@ enum ProjIDs {
   Y_PROJ_SECOND = 5,
 };
 
+struct RectDims {
+  int side_length_x;
+  int side_length_y;
+};
+
 //class SingleDiffProjectionFunctor : public StructuredProjectionFunctor
 class SingleDiffProjectionFunctor : public ProjectionFunctor
 {
@@ -204,9 +209,13 @@ void top_level_task(const Task *task,
                     const std::vector<PhysicalRegion> &regions,
                     Context ctx, Runtime *runtime)
 {
-  int side_length = 4;
+  int side_length_x = 4;
+  int side_length_y = 4;
   int num_iterations = 1;
-  int num_subregions_side = 4; // Assumed to divide side_length
+  int num_subregions_x = 4; // Assumed to divide side_length_x
+  int num_subregions_y = 4; // Assumed to divide side_length_y
+  int angle = 225; // angle is measured ccw from positive x-axis
+
   // say it's disjoint by default,
   // give flag for toggling to force it to compute disjointedness
   PartitionKind partition_kind = DISJOINT_KIND;
@@ -216,29 +225,49 @@ void top_level_task(const Task *task,
       const InputArgs &command_args = Runtime::get_input_args();
     for (int i = 1; i < command_args.argc; i++)
     {
-      if (!strcmp(command_args.argv[i],"-n"))
-        side_length = 1 << atoi(command_args.argv[++i]);
-      if (!strcmp(command_args.argv[i],"-b"))
-        num_subregions_side = 1 << atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-n")) {
+        side_length_x = 1 << atoi(command_args.argv[++i]);
+        side_length_y = side_length_x;
+      }
+      if (!strcmp(command_args.argv[i],"-nx"))
+        side_length_x = 1 << atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-ny"))
+        side_length_y = 1 << atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-b")) {
+        num_subregions_x = 1 << atoi(command_args.argv[++i]);
+        num_subregions_y = num_subregions_x;
+      }
+      if (!strcmp(command_args.argv[i],"-bx"))
+        num_subregions_x = 1 << atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-by"))
+        num_subregions_y = 1 << atoi(command_args.argv[++i]);
       if (!strcmp(command_args.argv[i],"-i"))
         num_iterations = atoi(command_args.argv[++i]);
       if (!strcmp(command_args.argv[i],"-c"))
         partition_kind = COMPUTE_KIND;
+      if (!strcmp(command_args.argv[i],"-a"))
+        angle = atoi(command_args.argv[++i]);
     }
   }
 
-  if (side_length % num_subregions_side != 0) {
+  if (side_length_x % num_subregions_x != 0 || side_length_y % num_subregions_y != 0) {
     printf("subregions per side must evenly divide side length!\n");
     assert(0);
   }
 
-  printf("Running pascal triangle computation for %d side length...\n", side_length);
-  printf("Partitioning data into %d sub-regions per side...\n", num_subregions_side);
+  // Currently only support 3 different angles.
+  if (angle != 180 && angle != 225 && angle != 270) {
+    printf("Angle must be one of 180, 225, or 270\n");
+    assert(0);
+  }
+
+  printf("Running pascal triangle computation for (%d, %d) dimensions...\n", side_length_x, side_length_y);
+  printf("Partitioning data into (%d, %d) sub-regions...\n", num_subregions_x, num_subregions_y);
 
   // For this example we'll create a single logical region with three
   // fields.  We'll initialize the field identified by 'FID_X' and 'FID_Y' with
   // our input data and then compute the pascal value and write into 'FID_PASCAL_VAL'.
-  Rect<2> elem_rect(make_point(0,0),make_point(side_length-1, side_length-1));
+  Rect<2> elem_rect(make_point(0,0),make_point(side_length_x-1, side_length_y-1));
   IndexSpace is = runtime->create_index_space(ctx, 
                           Domain::from_rect<2>(elem_rect));
   FieldSpace fs = runtime->create_field_space(ctx);
@@ -253,7 +282,10 @@ void top_level_task(const Task *task,
   
   // Make our color_domain based on the number of subregions
   // that we want to create.
-  Rect<1> color_bounds(make_point(0), make_point(2*num_subregions_side-2));
+  // There is one less slice than the sum of the sides (for double counting the corner)
+  // We subtract an additional 1 when making the bounds for 0 indexing.
+  int total_diag_slices = num_subregions_x + num_subregions_y - 1;
+  Rect<1> color_bounds(make_point(0), make_point(total_diag_slices - 1));
   Domain color_domain = Domain::from_rect<1>(color_bounds);
 
   // Create two levels of partition
@@ -264,13 +296,14 @@ void top_level_task(const Task *task,
   LogicalPartition first_lp;
   {
     MultiDomainPointColoring d_coloring;
-    const int points_per_partition = side_length/num_subregions_side;
-    for (int x = 0; x < num_subregions_side; x++) {
-      for (int y = 0; y < num_subregions_side; y++) {
-        int x_start = x * points_per_partition;
-        int y_start = y * points_per_partition;
-        int x_end = x_start + points_per_partition - 1;
-        int y_end = y_start + points_per_partition - 1;
+    const int points_per_partition_x = side_length_x/num_subregions_x;
+    const int points_per_partition_y = side_length_y/num_subregions_y;
+    for (int x = 0; x < num_subregions_x; x++) {
+      for (int y = 0; y < num_subregions_y; y++) {
+        int x_start = x * points_per_partition_x;
+        int y_start = y * points_per_partition_y;
+        int x_end = x_start + points_per_partition_x - 1;
+        int y_end = y_start + points_per_partition_y - 1;
         Rect<2> subrect(make_point(x_start, y_start),make_point(x_end, y_end));
         d_coloring[DomainPoint::from_point<1>(make_point(x + y))].insert(
           Domain::from_rect<2>(subrect));
@@ -280,12 +313,29 @@ void top_level_task(const Task *task,
     first_ip = runtime->create_index_partition(ctx, is, color_domain, d_coloring, partition_kind);
     first_lp = runtime->get_logical_partition(ctx, pascal_lr, first_ip);
 
+    int min_subregions = num_subregions_x < num_subregions_y ? num_subregions_x : num_subregions_y;
+
     for (Domain::DomainPointIterator itr(color_domain); itr; itr++) {
       int bound = itr.p[0] + 1;
-      bool x_maxed = false;
-      if (bound > num_subregions_side) {
-        bound = 2 * num_subregions_side - bound;
-        x_maxed = true;
+      int short_offset = 0;
+      int long_offset = 0;
+      if (bound > total_diag_slices - min_subregions) {
+        long_offset = bound - min_subregions;
+        short_offset = bound - total_diag_slices + min_subregions - 1;
+        bound = total_diag_slices - bound + 1;
+      }
+      else if (bound > min_subregions) {
+        long_offset = bound - min_subregions;
+        bound = min_subregions;
+      }
+
+      int x_offset, y_offset;
+      if (num_subregions_x < num_subregions_y) {
+        x_offset = short_offset;
+        y_offset = long_offset;
+      } else {
+        x_offset = long_offset;
+        y_offset = short_offset;
       }
 
       Rect<1> sub_color_bounds(make_point(-1), make_point(bound));
@@ -302,17 +352,10 @@ void top_level_task(const Task *task,
           sub_d_coloring[itr2.p] = Domain::from_rect<2>(subrect);
           continue;
         }
-        int x_start, y_start;
-        if (x_maxed) {
-          y_start = (num_subregions_side - itr2.p[0] - 1) * points_per_partition;
-          x_start = (itr.p[0] - num_subregions_side + itr2.p[0] + 1) * points_per_partition;
-        }
-        else {
-          x_start = (itr2.p[0]) * points_per_partition;
-          y_start = (bound - itr2.p[0] - 1) * points_per_partition;
-        }
-        int x_end = x_start + points_per_partition - 1;
-        int y_end = y_start + points_per_partition - 1;
+        int x_start = (itr2.p[0] + x_offset) * points_per_partition_x;
+        int y_start = (bound - itr2.p[0] - 1 + y_offset) * points_per_partition_y;
+        int x_end = x_start + points_per_partition_x - 1;
+        int y_end = y_start + points_per_partition_y - 1;
         Rect<2> subrect(make_point(x_start, y_start),make_point(x_end, y_end));
         sub_d_coloring[itr2.p] = Domain::from_rect<2>(subrect);
       }
@@ -322,20 +365,21 @@ void top_level_task(const Task *task,
     }
   }
 
+  // Create a full partitioning to do a normal initialization index space launch
   Rect<2> full_color_bounds(make_point(0,0),
-      make_point(num_subregions_side - 1, num_subregions_side - 1));
+      make_point(num_subregions_x - 1, num_subregions_y - 1));
   Domain full_color_domain = Domain::from_rect<2>(full_color_bounds);
   IndexPartition full_ip;
   {
     DomainPointColoring d_coloring;
-    const int points_per_partition = side_length/num_subregions_side;
+    const int points_per_partition_x = side_length_x/num_subregions_x;
+    const int points_per_partition_y = side_length_y/num_subregions_y;
     for (Domain::DomainPointIterator itr(full_color_domain); itr; itr++) {
-      int x_start = itr.p[0] * points_per_partition;
-      int y_start = itr.p[1] * points_per_partition;
-      int x_end = x_start + points_per_partition - 1;
-      int y_end = y_start + points_per_partition - 1;
+      int x_start = itr.p[0] * points_per_partition_x;
+      int y_start = itr.p[1] * points_per_partition_y;
+      int x_end = x_start + points_per_partition_x - 1;
+      int y_end = y_start + points_per_partition_y - 1;
       Rect<2> subrect(make_point(x_start, y_start),make_point(x_end, y_end));
-          //subrect.lo[0], subrect.lo[1], subrect.hi[0], subrect.hi[1]);
       d_coloring[itr.p] = Domain::from_rect<2>(subrect);
     }
     full_ip = runtime->create_index_partition(ctx, is, full_color_domain, d_coloring, partition_kind);
@@ -360,7 +404,7 @@ void top_level_task(const Task *task,
   // We need to run a special compute task for the corner region
   LogicalRegion corner_intermediate_region =
     runtime->get_logical_subregion_by_color(first_lp,
-        DomainPoint::from_point<1>(make_point(2 * (num_subregions_side - 1))));
+        DomainPoint::from_point<1>(make_point(num_subregions_x + num_subregions_y - 2)));
   LogicalPartition corner_intermediate_partition =
     runtime->get_logical_partition_by_color(corner_intermediate_region,
         DomainPoint::from_point<1>(make_point(0)));
@@ -392,17 +436,17 @@ void top_level_task(const Task *task,
 
   // Now we launch the computation to calculate Pascal's triangle
   for (int j = 0; j < num_iterations; j++) {
-    for (int i = 2 * (num_subregions_side - 1) - 1; i >= 0; i--) {
+    for (int i = num_subregions_x + num_subregions_y - 3; i >= 0; i--) {
       DomainPoint compute_point = DomainPoint::from_point<1>(make_point(i));
       DomainPoint data_point = DomainPoint::from_point<1>(make_point(i+1));
       LogicalRegion compute_region =
           runtime->get_logical_subregion_by_color(first_lp, compute_point);
       LogicalRegion data_region =
           runtime->get_logical_subregion_by_color(first_lp, data_point);
-      bool past_half = i < (num_subregions_side - 1);
+      bool past_switch_corner = i < (num_subregions_y - 1);
 
       TaskLauncher helper_launcher(LAUNCHER_HELPER_TASK_ID,
-           TaskArgument(&past_half, sizeof(past_half)));
+           TaskArgument(&past_switch_corner, sizeof(past_switch_corner)));
       helper_launcher.add_region_requirement(
           RegionRequirement(compute_region,
                             READ_WRITE, EXCLUSIVE, pascal_lr));
@@ -413,16 +457,18 @@ void top_level_task(const Task *task,
       helper_launcher.add_field(1, FID_PASCAL_VAL);
       runtime->execute_task(ctx, helper_launcher);
     }
-    if (j == 0) {
+
+    if (j == 0 && num_iterations > 1) {
       LogicalRegion corner_intermediate_region =
         runtime->get_logical_subregion_by_color(first_lp,
-            DomainPoint::from_point<1>(make_point(2 * (num_subregions_side - 1))));
+            DomainPoint::from_point<1>(make_point(num_subregions_x + num_subregions_y - 2)));
       LogicalPartition corner_intermediate_partition =
         runtime->get_logical_partition_by_color(corner_intermediate_region,
             DomainPoint::from_point<1>(make_point(0)));
       LogicalRegion corner_region =
         runtime->get_logical_subregion_by_color(corner_intermediate_partition,
             DomainPoint::from_point<1>(make_point(0)));
+
       LogicalRegion corner_intermediate_region2 =
         runtime->get_logical_subregion_by_color(first_lp,
             DomainPoint::from_point<1>(make_point(0)));
@@ -448,8 +494,11 @@ void top_level_task(const Task *task,
   }
 
   // Finally, we launch a single task to check the results.
+  RectDims rect_dims;
+  rect_dims.side_length_x = side_length_x;
+  rect_dims.side_length_y = side_length_y;
   TaskLauncher check_launcher(CHECK_TASK_ID, 
-      TaskArgument(&side_length, sizeof(side_length)));
+      TaskArgument(&rect_dims, sizeof(RectDims)));
   check_launcher.add_region_requirement(
       RegionRequirement(pascal_lr, READ_ONLY, EXCLUSIVE, pascal_lr));
   check_launcher.add_field(0, FID_X);
@@ -507,7 +556,7 @@ void launcher_helper_task(const Task *task,
   assert(task->regions[0].privilege_fields.size() == 1);
   assert(task->regions[1].privilege_fields.size() == 1);
   assert(task->arglen == sizeof(bool));
-  const bool past_half = *((const bool*)task->args);  
+  const bool past_switch_corner = *((const bool*)task->args);
 
   LogicalRegion lr_0 = regions[0].get_logical_region(); // The region to compute
   LogicalRegion lr_1 = regions[1].get_logical_region(); // The data region
@@ -528,7 +577,7 @@ void launcher_helper_task(const Task *task,
 
   ProjIDs x_proj = X_PROJ_FIRST;
   ProjIDs y_proj = Y_PROJ_FIRST;
-  if (past_half) {
+  if (past_switch_corner) {
     x_proj = X_PROJ_SECOND;
     y_proj = Y_PROJ_SECOND;
   }
@@ -736,8 +785,10 @@ void check_task(const Task *task,
   assert(regions.size() == 1);
   assert(task->regions.size() == 1);
   assert(task->regions[0].privilege_fields.size() == 3);
-  assert(task->arglen == sizeof(int));
-  const int side_length = *((const int*)task->args);  
+  assert(task->arglen == sizeof(RectDims));
+  RectDims rect_dims = *((RectDims *)task->args);
+  const int side_length_x = rect_dims.side_length_x;
+  const int side_length_y = rect_dims.side_length_y;
 
   std::set<unsigned int>::iterator fields = task->regions[0].privilege_fields.begin();
   FieldID fidx = *fields;
@@ -759,14 +810,13 @@ void check_task(const Task *task,
   bool all_passed = true;
   for (GenericPointInRectIterator<2> pir(rect); pir; pir++)
   {
-    int x = side_length - 1 - accx.read(DomainPoint::from_point<2>(pir.p));
-    int y = side_length - 1 - accy.read(DomainPoint::from_point<2>(pir.p));
+    int x = side_length_x - 1 - accx.read(DomainPoint::from_point<2>(pir.p));
+    int y = side_length_y - 1 - accy.read(DomainPoint::from_point<2>(pir.p));
     int pascal = acc_pascal.read(DomainPoint::from_point<2>(pir.p));
     int expected = 1;
     expected = x + y + 1;
 
-    //printf("At point (%lld, %lld)\n", pir.p[0], pir.p[1]);
-    //printf("Checking for values %d and %d... expected %d, found %d\n", x, y, expected, pascal);
+    //printf("At point (%lld, %lld).  Checking for values %d and %d... expected %d, found %d\n", pir.p[0], pir.p[1], x, y, expected, pascal);
     
     if (expected != pascal) {
       all_passed = false;
