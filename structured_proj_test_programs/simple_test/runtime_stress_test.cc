@@ -43,14 +43,18 @@ enum TaskIDs {
 enum FieldIDs {
   FID_X,
   FID_Y,
-  FID_PASCAL_RO,
-  FID_PASCAL_VAL,
+  FID_VAL,
 };
 
 enum ProjIDs {
   X_PROJ = 1,
   Y_PROJ = 2,
   ID_PROJ = 3,
+};
+
+struct RectDims {
+  int side_length_x;
+  int side_length_y;
 };
 
 class IDProjectionFunctor : public StructuredProjectionFunctor
@@ -175,35 +179,66 @@ void top_level_task(const Task *task,
                     const std::vector<PhysicalRegion> &regions,
                     Context ctx, Runtime *runtime)
 {
-  int side_length = 4;
+  int side_length_x = 4;
+  int side_length_y = 4;
   int num_iterations = 1;
-  int num_subregions_side = 4; // Assumed to divide side_length
+  int num_subregions_x = 4; // Assumed to divide side_length_x
+  int num_subregions_y = 4; // Assumed to divide side_length_y
+  int angle = 225; // angle is measured ccw from positive x-axis
+
+  // say it's disjoint by default,
+  // give flag for toggling to force it to compute disjointedness
+  PartitionKind partition_kind = DISJOINT_KIND;
+
   // Check for any command line arguments
   {
-      const InputArgs &command_args = Runtime::get_input_args();
+    const InputArgs &command_args = Runtime::get_input_args();
     for (int i = 1; i < command_args.argc; i++)
     {
-      if (!strcmp(command_args.argv[i],"-n"))
-        side_length = 1 << atoi(command_args.argv[++i]);
-      if (!strcmp(command_args.argv[i],"-b"))
-        num_subregions_side = 1 << atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-n")) {
+        side_length_x = 1 << atoi(command_args.argv[++i]);
+        side_length_y = side_length_x;
+      }
+      if (!strcmp(command_args.argv[i],"-nx"))
+        side_length_x = 1 << atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-ny"))
+        side_length_y = 1 << atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-b")) {
+        num_subregions_x = 1 << atoi(command_args.argv[++i]);
+        num_subregions_y = num_subregions_x;
+      }
+      if (!strcmp(command_args.argv[i],"-bx"))
+        num_subregions_x = 1 << atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-by"))
+        num_subregions_y = 1 << atoi(command_args.argv[++i]);
       if (!strcmp(command_args.argv[i],"-i"))
-        num_iterations = 1 << atoi(command_args.argv[++i]);
+        num_iterations = atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-c"))
+        partition_kind = COMPUTE_KIND;
+      if (!strcmp(command_args.argv[i],"-a"))
+        angle = atoi(command_args.argv[++i]);
     }
   }
 
-  if (side_length % num_subregions_side != 0) {
+  if (side_length_x % num_subregions_x != 0 || side_length_y % num_subregions_y != 0) {
     printf("subregions per side must evenly divide side length!\n");
     assert(0);
   }
 
-  printf("Running pascal triangle computation for %d side length...\n", side_length);
-  printf("Partitioning data into %d sub-regions per side...\n", num_subregions_side);
+  // Currently only support 2 different angles.
+  if (angle != 180 && angle !=  225 && angle != 270) {
+    printf("Angle must be one of 180 or 270\n");
+    assert(0);
+  }
+
+  printf("Running computation for (%d, %d) dimensions at angle %d...\n",
+      side_length_x, side_length_y, angle);
+  printf("Partitioning data into (%d, %d) sub-regions...\n", num_subregions_x, num_subregions_y);
 
   // For this example we'll create a single logical region with two
   // fields.  We'll initialize the field identified by 'FID_X' and 'FID_Y' with
-  // our input data and then compute the pascal value and write into 'FID_PASCAL_VAL'.
-  Rect<2> elem_rect(make_point(0,0),make_point(side_length-1, side_length-1));
+  // our input data and then compute the value and write into 'FID_VAL'.
+  Rect<2> elem_rect(make_point(0,0),make_point(side_length_x-1, side_length_y-1));
   IndexSpace is = runtime->create_index_space(ctx, 
                           Domain::from_rect<2>(elem_rect));
   FieldSpace fs = runtime->create_field_space(ctx);
@@ -212,33 +247,33 @@ void top_level_task(const Task *task,
       runtime->create_field_allocator(ctx, fs);
     allocator.allocate_field(sizeof(int),FID_X);
     allocator.allocate_field(sizeof(int),FID_Y);
-    allocator.allocate_field(sizeof(int),FID_PASCAL_RO);
-    allocator.allocate_field(sizeof(int),FID_PASCAL_VAL);
+    allocator.allocate_field(sizeof(int),FID_VAL);
   }
-  LogicalRegion pascal_lr = runtime->create_logical_region(ctx, is, fs);
+  LogicalRegion top_lr = runtime->create_logical_region(ctx, is, fs);
   
   // Make our color_domain based on the number of subregions
   // that we want to create.  We creatre extra empty subregions around the outside of the grid
   // so that the compute tasks can all work the same.
-  Rect<2> color_bounds(make_point(0,0),make_point(num_subregions_side, num_subregions_side));
+  Rect<2> color_bounds(make_point(0,0), make_point(num_subregions_x, num_subregions_y));
   Domain color_domain = Domain::from_rect<2>(color_bounds);
 
   // Create (possibly coarser) grid partition of the grid of points
   IndexPartition grid_ip;
   {
-    const int points_per_partition = side_length/num_subregions_side;
+    const int points_per_partition_x = side_length_x/num_subregions_x;
+    const int points_per_partition_y = side_length_y/num_subregions_y;
     DomainPointColoring d_coloring;
     for (Domain::DomainPointIterator itr(color_domain); itr; itr++) {
       // Make the empty bounding subregions.
-      if (itr.p[0] == num_subregions_side || itr.p[1] == num_subregions_side) {
+      if (itr.p[0] == num_subregions_x || itr.p[1] == num_subregions_y) {
           Rect<2> subrect(make_point(0,0),make_point(-1,-1));
           d_coloring[itr.p] = Domain::from_rect<2>(subrect);
           continue;
       }
-      int x_start = itr.p[0] * points_per_partition;
-      int y_start = itr.p[1] * points_per_partition;
-      int x_end = (itr.p[0] + 1) * points_per_partition - 1;
-      int y_end = (itr.p[1] + 1) * points_per_partition - 1;
+      int x_start = itr.p[0] * points_per_partition_x;
+      int y_start = itr.p[1] * points_per_partition_y;
+      int x_end = (itr.p[0] + 1) * points_per_partition_x - 1;
+      int y_end = (itr.p[1] + 1) * points_per_partition_y - 1;
       Rect<2> subrect(make_point(x_start, y_start),make_point(x_end, y_end));
       d_coloring[itr.p] = Domain::from_rect<2>(subrect);
     }
@@ -251,13 +286,13 @@ void top_level_task(const Task *task,
   }
 
   // Once we've created our index partitions, we can get the
-  // corresponding logical partitions for the pascal_lr
+  // corresponding logical partitions for the top_lr
   // logical region.
   LogicalPartition grid_lp = 
-    runtime->get_logical_partition(ctx, pascal_lr, grid_ip);
+    runtime->get_logical_partition(ctx, top_lr, grid_ip);
 
   // Our launch domain will again be only include the data subregions and not the dummy ones
-  Rect<2> launch_bounds(make_point(0,0),make_point(num_subregions_side-1,num_subregions_side-1));
+  Rect<2> launch_bounds(make_point(0,0),make_point(num_subregions_x-1,num_subregions_y-1));
   Domain launch_domain = Domain::from_rect<2>(launch_bounds);
   ArgumentMap arg_map;
 
@@ -266,11 +301,10 @@ void top_level_task(const Task *task,
                               TaskArgument(NULL, 0), arg_map);
   init_launcher.add_region_requirement(
       RegionRequirement(grid_lp, 0/*projection ID*/,
-                        WRITE_DISCARD, EXCLUSIVE, pascal_lr));
+                        WRITE_DISCARD, EXCLUSIVE, top_lr));
   init_launcher.add_field(0, FID_X);
   init_launcher.add_field(0, FID_Y);
-  init_launcher.add_field(0, FID_PASCAL_RO);
-  init_launcher.add_field(0, FID_PASCAL_VAL);
+  init_launcher.add_field(0, FID_VAL);
   runtime->execute_index_space(ctx, init_launcher);
 
   // Now we launch the computation to calculate Pascal's triangle
@@ -279,32 +313,35 @@ void top_level_task(const Task *task,
          TaskArgument(NULL, 0), arg_map);
     compute_launcher.add_region_requirement(
         RegionRequirement(grid_lp, X_PROJ,
-                          READ_ONLY, EXCLUSIVE, pascal_lr));
+                          READ_ONLY, EXCLUSIVE, top_lr));
     compute_launcher.add_region_requirement(
         RegionRequirement(grid_lp, Y_PROJ,
-                          READ_ONLY, EXCLUSIVE, pascal_lr));
+                          READ_ONLY, EXCLUSIVE, top_lr));
     compute_launcher.add_region_requirement(
         RegionRequirement(grid_lp, ID_PROJ,
-                          READ_WRITE, EXCLUSIVE, pascal_lr));
-    compute_launcher.add_field(0, FID_PASCAL_VAL);
-    compute_launcher.add_field(1, FID_PASCAL_VAL);
-    compute_launcher.add_field(2, FID_PASCAL_VAL);
+                          READ_WRITE, EXCLUSIVE, top_lr));
+    compute_launcher.add_field(0, FID_VAL);
+    compute_launcher.add_field(1, FID_VAL);
+    compute_launcher.add_field(2, FID_VAL);
 
     runtime->execute_index_space(ctx, compute_launcher);
   }
 
   // Finally, we launch a single task to check the results.
+  RectDims rect_dims;
+  rect_dims.side_length_x = side_length_x;
+  rect_dims.side_length_y = side_length_y;
   TaskLauncher check_launcher(CHECK_TASK_ID, 
-      TaskArgument(&side_length, sizeof(side_length)));
+      TaskArgument(&rect_dims, sizeof(RectDims)));
   check_launcher.add_region_requirement(
-      RegionRequirement(pascal_lr, READ_ONLY, EXCLUSIVE, pascal_lr));
+      RegionRequirement(top_lr, READ_ONLY, EXCLUSIVE, top_lr));
   check_launcher.add_field(0, FID_X);
   check_launcher.add_field(0, FID_Y);
-  check_launcher.add_field(0, FID_PASCAL_VAL);
+  check_launcher.add_field(0, FID_VAL);
   runtime->execute_task(ctx, check_launcher);
 
   // Clean up our region, index space, and field space
-  runtime->destroy_logical_region(ctx, pascal_lr);
+  runtime->destroy_logical_region(ctx, top_lr);
   runtime->destroy_field_space(ctx, fs);
   runtime->destroy_index_space(ctx, is);
 }
@@ -316,13 +353,12 @@ void init_field_task(const Task *task,
 {
   assert(regions.size() == 1); 
   assert(task->regions.size() == 1);
-  assert(task->regions[0].privilege_fields.size() == 4);
+  assert(task->regions[0].privilege_fields.size() == 3);
 
   std::set<unsigned int>::iterator fields = task->regions[0].privilege_fields.begin();
   FieldID fidx = *fields;
   FieldID fidy = *(++fields);
-  FieldID fid_pascal_ro = *(++fields);
-  FieldID fid_pascal_write = *(++fields);
+  FieldID fid_val_write = *(++fields);
   const int pointx = task->index_point.point_data[0];
   const int pointy = task->index_point.point_data[1];
   fprintf(stderr, "Initializing fields %d and %d for block (%d, %d) with region id %d...\n",
@@ -332,10 +368,8 @@ void init_field_task(const Task *task,
     regions[0].get_field_accessor(fidx).typeify<int>();
   RegionAccessor<AccessorType::Generic, int> accy = 
     regions[0].get_field_accessor(fidy).typeify<int>();
-  RegionAccessor<AccessorType::Generic, int> acc_pascal_ro = 
-    regions[0].get_field_accessor(fid_pascal_ro).typeify<int>();
-  RegionAccessor<AccessorType::Generic, int> acc_pascal_write = 
-    regions[0].get_field_accessor(fid_pascal_write).typeify<int>();
+  RegionAccessor<AccessorType::Generic, int> acc_val_write = 
+    regions[0].get_field_accessor(fid_val_write).typeify<int>();
 
   Domain dom = runtime->get_index_space_domain(ctx, 
       task->regions[0].region.get_index_space());
@@ -344,37 +378,11 @@ void init_field_task(const Task *task,
   {
     accx.write(DomainPoint::from_point<2>(pir.p), pir.p[0]);
     accy.write(DomainPoint::from_point<2>(pir.p), pir.p[1]);
-    acc_pascal_write.write(DomainPoint::from_point<2>(pir.p), 1);
-    //acc_pascal_write.write(DomainPoint::from_point<2>(pir.p), pir.p[0]*5+pir.p[1]*3);
-    //fprintf(stderr, "writing value %d.\n", pir.p[0]*5+pir.p[1]*3);
-    if (pir.p[0] == 3 || pir.p[1] == 3) {
-      acc_pascal_ro.write(DomainPoint::from_point<2>(pir.p), 1);
-    } else {
-      int val = 1;
-      int small, big;
-      int x = 3 - pir.p[0]; // reverse the order so that the natural order of the tasks does not match the expected order
-      int y = 3 - pir.p[1];
-
-      if (x >= y) {
-        big = x;
-        small = y;
-      } else {
-        big = y;
-        small = x;
-      }
-
-      for (int i = big + small; i > big; i--) {
-        val = val * i;
-      }
-      for (int i = small; i > 1; i--) {
-        val = val / i;
-      }
-      acc_pascal_ro.write(DomainPoint::from_point<2>(pir.p), val);
-    }
+    acc_val_write.write(DomainPoint::from_point<2>(pir.p), 1);
   }
 }
 
-// Compute the pascal's triangle value for each point in the rectangle
+// Compute the value for each point in the rectangle
 void compute_task(const Task *task,
                   const std::vector<PhysicalRegion> &regions,
                   Context ctx, Runtime *runtime)
@@ -395,16 +403,16 @@ void compute_task(const Task *task,
   assert(task->regions[1].privilege_fields.size() == 1);
   assert(task->regions[2].privilege_fields.size() == 1);
   
-  FieldID pascal_fid_x_diff = *(task->regions[0].privilege_fields.begin());
-  FieldID pascal_fid_y_diff = *(task->regions[1].privilege_fields.begin());
-  FieldID pascal_fid_curr = *(task->regions[2].privilege_fields.begin());
+  FieldID val_fid_x_diff = *(task->regions[0].privilege_fields.begin());
+  FieldID val_fid_y_diff = *(task->regions[1].privilege_fields.begin());
+  FieldID val_fid_curr = *(task->regions[2].privilege_fields.begin());
 
   RegionAccessor<AccessorType::Generic, int> x_diff_acc = 
-    regions[0].get_field_accessor(pascal_fid_x_diff).typeify<int>();
+    regions[0].get_field_accessor(val_fid_x_diff).typeify<int>();
   RegionAccessor<AccessorType::Generic, int> y_diff_acc = 
-    regions[1].get_field_accessor(pascal_fid_y_diff).typeify<int>();
+    regions[1].get_field_accessor(val_fid_y_diff).typeify<int>();
   RegionAccessor<AccessorType::Generic, int> curr_acc = 
-    regions[2].get_field_accessor(pascal_fid_curr).typeify<int>();
+    regions[2].get_field_accessor(val_fid_curr).typeify<int>();
 
   Domain dom = runtime->get_index_space_domain(ctx,
       task->regions[2].region.get_index_space());
@@ -468,20 +476,22 @@ void check_task(const Task *task,
   assert(regions.size() == 1);
   assert(task->regions.size() == 1);
   assert(task->regions[0].privilege_fields.size() == 3);
-  assert(task->arglen == sizeof(int));
-  const int side_length = *((const int*)task->args);  
+  assert(task->arglen == sizeof(RectDims));
+  RectDims rect_dims = *((RectDims *)task->args);
+  const int side_length_x = rect_dims.side_length_x;
+  const int side_length_y = rect_dims.side_length_y;
 
   std::set<unsigned int>::iterator fields = task->regions[0].privilege_fields.begin();
   FieldID fidx = *fields;
   FieldID fidy = *(++fields);
-  FieldID fid_pascal = *(++fields);
+  FieldID fid_val = *(++fields);
 
   RegionAccessor<AccessorType::Generic, int> accx = 
     regions[0].get_field_accessor(fidx).typeify<int>();
   RegionAccessor<AccessorType::Generic, int> accy = 
     regions[0].get_field_accessor(fidy).typeify<int>();
-  RegionAccessor<AccessorType::Generic, int> acc_pascal = 
-    regions[0].get_field_accessor(fid_pascal).typeify<int>();
+  RegionAccessor<AccessorType::Generic, int> acc_val = 
+    regions[0].get_field_accessor(fid_val).typeify<int>();
 
   Domain dom = runtime->get_index_space_domain(ctx,
       task->regions[0].region.get_index_space());
@@ -491,16 +501,16 @@ void check_task(const Task *task,
   bool all_passed = true;
   for (GenericPointInRectIterator<2> pir(rect); pir; pir++)
   {
-    int x = side_length - 1 - accx.read(DomainPoint::from_point<2>(pir.p));
-    int y = side_length - 1 - accy.read(DomainPoint::from_point<2>(pir.p));
-    int pascal = acc_pascal.read(DomainPoint::from_point<2>(pir.p));
+    int x = side_length_x - 1 - accx.read(DomainPoint::from_point<2>(pir.p));
+    int y = side_length_y - 1 - accy.read(DomainPoint::from_point<2>(pir.p));
+    int val = acc_val.read(DomainPoint::from_point<2>(pir.p));
     int expected = 1;
     expected = x + y + 1;
 
     //printf("At point (%lld, %lld)\n", pir.p[0], pir.p[1]);
-    //printf("Checking for values %d and %d... expected %d, found %d\n", x, y, expected, pascal);
+    //printf("Checking for values %d and %d... expected %d, found %d\n", x, y, expected, val);
     
-    if (expected != pascal) {
+    if (expected != val) {
       all_passed = false;
       //break;
     }
