@@ -666,9 +666,9 @@ int main(int argc, char **argv)
   Runtime::register_legion_task<init_field_task>(INIT_FIELD_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "init task");
   Runtime::register_legion_task<compute_task_angle>(COMPUTE_TASK_ANGLE_ID,
-      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "compute angle task");
+      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(true,false,false), "compute angle task");
   Runtime::register_legion_task<compute_task_axis_aligned>(COMPUTE_TASK_AXIS_ALIGNED_ID,
-      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "compute axis aligned task");
+      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(true,false,false), "compute axis aligned task");
   Runtime::register_legion_task<check_task>(CHECK_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "check task");
   HighLevelRuntime::set_registration_callback(registration_callback);
