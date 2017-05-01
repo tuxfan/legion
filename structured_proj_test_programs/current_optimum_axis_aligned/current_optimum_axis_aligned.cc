@@ -461,7 +461,6 @@ void compute_task(const Task *task,
 
   for (long int i = hi[primary_loop_index]; i >= lo[primary_loop_index]; i--) {
     for (long int j = hi[1-primary_loop_index]; j >= lo[1-primary_loop_index]; j--) {
-      // Will probably have to change this for the other angle
       if (angle == 180) {
         cur_point = make_point(i, j);
       }

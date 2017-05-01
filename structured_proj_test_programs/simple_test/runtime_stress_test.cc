@@ -36,7 +36,8 @@ using namespace LegionRuntime::Arrays;
 enum TaskIDs {
   TOP_LEVEL_TASK_ID,
   INIT_FIELD_TASK_ID,
-  COMPUTE_TASK_ID,
+  COMPUTE_TASK_ANGLE_ID,
+  COMPUTE_TASK_AXIS_ALIGNED_ID,
   CHECK_TASK_ID,
 };
 
@@ -55,6 +56,11 @@ enum ProjIDs {
 struct RectDims {
   int side_length_x;
   int side_length_y;
+};
+
+struct ComputeArgs {
+  int angle;
+  int parallel_length;
 };
 
 class IDProjectionFunctor : public StructuredProjectionFunctor
@@ -233,7 +239,8 @@ void top_level_task(const Task *task,
 
   printf("Running computation for (%d, %d) dimensions at angle %d...\n",
       side_length_x, side_length_y, angle);
-  printf("Partitioning data into (%d, %d) sub-regions...\n", num_subregions_x, num_subregions_y);
+  printf("Partitioning data into (%d, %d) sub-regions...\n",
+      num_subregions_x, num_subregions_y);
 
   // For this example we'll create a single logical region with two
   // fields.  We'll initialize the field identified by 'FID_X' and 'FID_Y' with
@@ -250,7 +257,22 @@ void top_level_task(const Task *task,
     allocator.allocate_field(sizeof(int),FID_VAL);
   }
   LogicalRegion top_lr = runtime->create_logical_region(ctx, is, fs);
-  
+
+  int parallel_size;
+  // these may be needed later num_waves, subregions_per_wave, perp_size;
+  if (angle == 180) {
+    //perp_size = side_length_x;
+    parallel_size = side_length_y;
+    //num_waves = num_subregions_x;
+    //subregions_per_wave = num_subregions_y;
+  }
+  else if (angle == 270) {
+    //perp_size = side_length_y;
+    parallel_size = side_length_x;
+    //num_waves = num_subregions_y;
+    //subregions_per_wave = num_subregions_x;
+  }
+
   // Make our color_domain based on the number of subregions
   // that we want to create.  We creatre extra empty subregions around the outside of the grid
   // so that the compute tasks can all work the same.
@@ -282,7 +304,7 @@ void top_level_task(const Task *task,
     // Once we've computed our coloring then we can
     // create our partition.
     grid_ip = runtime->create_index_partition(ctx, is, color_domain,
-                                    d_coloring);
+                                    d_coloring, partition_kind);
   }
 
   // Once we've created our index partitions, we can get the
@@ -309,22 +331,48 @@ void top_level_task(const Task *task,
 
   // Now we launch the computation to calculate Pascal's triangle
   for (int j = 0; j < num_iterations; j++) {
-    IndexLauncher compute_launcher(COMPUTE_TASK_ID, launch_domain,
-         TaskArgument(NULL, 0), arg_map);
-    compute_launcher.add_region_requirement(
-        RegionRequirement(grid_lp, X_PROJ,
-                          READ_ONLY, EXCLUSIVE, top_lr));
-    compute_launcher.add_region_requirement(
-        RegionRequirement(grid_lp, Y_PROJ,
-                          READ_ONLY, EXCLUSIVE, top_lr));
-    compute_launcher.add_region_requirement(
-        RegionRequirement(grid_lp, ID_PROJ,
-                          READ_WRITE, EXCLUSIVE, top_lr));
-    compute_launcher.add_field(0, FID_VAL);
-    compute_launcher.add_field(1, FID_VAL);
-    compute_launcher.add_field(2, FID_VAL);
+    if (angle == 225) {
+      IndexLauncher compute_launcher(COMPUTE_TASK_ANGLE_ID, launch_domain,
+           TaskArgument(NULL, 0), arg_map);
+      compute_launcher.add_region_requirement(
+          RegionRequirement(grid_lp, X_PROJ,
+                            READ_ONLY, EXCLUSIVE, top_lr));
+      compute_launcher.add_region_requirement(
+          RegionRequirement(grid_lp, Y_PROJ,
+                            READ_ONLY, EXCLUSIVE, top_lr));
+      compute_launcher.add_region_requirement(
+          RegionRequirement(grid_lp, ID_PROJ,
+                            READ_WRITE, EXCLUSIVE, top_lr));
+      compute_launcher.add_field(0, FID_VAL);
+      compute_launcher.add_field(1, FID_VAL);
+      compute_launcher.add_field(2, FID_VAL);
 
-    runtime->execute_index_space(ctx, compute_launcher);
+      runtime->execute_index_space(ctx, compute_launcher);
+    }
+    else {
+      ProjectionID proj_id;
+      if (angle == 180) {
+        proj_id = X_PROJ;
+      }
+      else {
+        proj_id = Y_PROJ;
+      }
+      ComputeArgs compute_args;
+      compute_args.angle = angle;
+      compute_args.parallel_length = parallel_size;
+      IndexLauncher compute_launcher(COMPUTE_TASK_AXIS_ALIGNED_ID, launch_domain,
+           TaskArgument(&compute_args, sizeof(ComputeArgs)), arg_map);
+      compute_launcher.add_region_requirement(
+          RegionRequirement(grid_lp, proj_id,
+                            READ_ONLY, EXCLUSIVE, top_lr));
+      compute_launcher.add_region_requirement(
+          RegionRequirement(grid_lp, ID_PROJ,
+                            READ_WRITE, EXCLUSIVE, top_lr));
+      compute_launcher.add_field(0, FID_VAL);
+      compute_launcher.add_field(1, FID_VAL);
+
+      runtime->execute_index_space(ctx, compute_launcher);
+    }
   }
 
   // Finally, we launch a single task to check the results.
@@ -382,10 +430,11 @@ void init_field_task(const Task *task,
   }
 }
 
-// Compute the value for each point in the rectangle
-void compute_task(const Task *task,
-                  const std::vector<PhysicalRegion> &regions,
-                  Context ctx, Runtime *runtime)
+// Compute the value for each point in the rectangle, takes 3 regions
+// for an angular sweep
+void compute_task_angle(const Task *task,
+                        const std::vector<PhysicalRegion> &regions,
+                        Context ctx, Runtime *runtime)
 {
   /* UNCOMMENT BELOW FOR DEBUG PRINT STATEMENTS
 
@@ -469,6 +518,86 @@ void compute_task(const Task *task,
   }
 }
 
+// Compute the value for each point in the rectangle, takes 2 regions
+// for a sweep along one of the major axes.
+void compute_task_axis_aligned(const Task *task,
+                               const std::vector<PhysicalRegion> &regions,
+                               Context ctx, Runtime *runtime)
+{
+  /* UNCOMMENT BELOW FOR DEBUG PRINT STATEMENTS
+
+  fprintf(stderr, "Starting the compute task.\n");
+  const int pointx = task->index_point.point_data[0];
+  const int pointy = task->index_point.point_data[1];
+  fprintf(stderr, "At point (%d, %d).  My region is %d.  Other Region is %d.\n",
+     pointx, pointy,
+     task->regions[1].region.get_index_space().get_id(),
+     task->regions[0].region.get_index_space().get_id());*/
+  assert(regions.size() == 2);
+  assert(task->regions.size() == 2);
+  assert(task->regions[0].privilege_fields.size() == 1);
+  assert(task->regions[1].privilege_fields.size() == 1);
+  ComputeArgs compute_args = *((ComputeArgs *)task->args);
+  const int angle = compute_args.angle;
+  const int parallel_length  = compute_args.parallel_length;
+
+  FieldID val_prev = *(task->regions[0].privilege_fields.begin());
+  FieldID val_curr = *(task->regions[1].privilege_fields.begin());
+
+  RegionAccessor<AccessorType::Generic, int> prev_acc =
+    regions[0].get_field_accessor(val_prev).typeify<int>();
+  RegionAccessor<AccessorType::Generic, int> curr_acc =
+    regions[1].get_field_accessor(val_curr).typeify<int>();
+
+  Domain dom = runtime->get_index_space_domain(ctx,
+      task->regions[1].region.get_index_space());
+  Rect<2> rect = dom.get_rect<2>();
+
+  Domain prev_dom = runtime->get_index_space_domain(ctx,
+      task->regions[0].region.get_index_space());
+  size_t prev_volume = prev_dom.get_volume();
+
+  Point<2> lo = rect.lo;
+  Point<2> hi = rect.hi;
+  Point<2> cur_point;
+  int prev_val;
+  Point<2> offset_prev_val;
+  int primary_loop_index;
+  if (angle == 180) {
+    offset_prev_val = make_point(1,0);
+    primary_loop_index = 0;
+  }
+  else {
+    offset_prev_val = make_point(0,1);
+    primary_loop_index = 1;
+  }
+
+  for (long int i = hi[primary_loop_index]; i >= lo[primary_loop_index]; i--) {
+    for (long int j = hi[1-primary_loop_index]; j >= lo[1-primary_loop_index]; j--) {
+      if (angle == 180) {
+        cur_point = make_point(i, j);
+      }
+      else {
+        cur_point = make_point(j, i);
+      }
+      if (i == hi[primary_loop_index]) {
+        if (prev_volume > 0) {
+          prev_val = prev_acc.read(DomainPoint::from_point<2>(cur_point + offset_prev_val));
+        }
+        else {
+          // make the starting value be the index of the minor axis (parallel to wave direction)
+          prev_val = parallel_length - 1 - j;
+        }
+      }
+      else {
+        prev_val = curr_acc.read(DomainPoint::from_point<2>(cur_point + offset_prev_val));
+      }
+      int computed_val = prev_val + 1;
+      curr_acc.write(DomainPoint::from_point<2>(cur_point), computed_val);
+    }
+  }
+}
+
 void check_task(const Task *task,
                 const std::vector<PhysicalRegion> &regions,
                 Context ctx, Runtime *runtime)
@@ -536,8 +665,10 @@ int main(int argc, char **argv)
       Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "top level task");
   Runtime::register_legion_task<init_field_task>(INIT_FIELD_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "init task");
-  Runtime::register_legion_task<compute_task>(COMPUTE_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "compute task");
+  Runtime::register_legion_task<compute_task_angle>(COMPUTE_TASK_ANGLE_ID,
+      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "compute angle task");
+  Runtime::register_legion_task<compute_task_axis_aligned>(COMPUTE_TASK_AXIS_ALIGNED_ID,
+      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "compute axis aligned task");
   Runtime::register_legion_task<check_task>(CHECK_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "check task");
   HighLevelRuntime::set_registration_callback(registration_callback);
