@@ -2283,17 +2283,47 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    std::pair<std::vector<DomainPoint>, std::vector<DomainPoint> >
-      ProjectionAnalysisConstraint::get_dependent_points(DomainPoint &point)
+    std::vector<DomainPoint> ProjectionAnalysisConstraint::get_dependent_points(
+        DomainPoint &point, Domain &bounding_domain)
     //--------------------------------------------------------------------------
     {
-      std::pair<std::vector<DomainPoint>, std::vector<DomainPoint> > left_pair;
-      std::pair<std::vector<DomainPoint>, std::vector<DomainPoint> > right_pair;
-      std::vector<DomainPoint> set_intersection;
-      std::vector<DomainPoint> set_union;
-      std::vector<DomainPoint> set_difference;
-      std::vector<DomainPoint> empty1;
-      std::vector<DomainPoint> empty2;
+      std::pair<std::vector<SolverHelper>, std::vector<SolverHelper> > constraint_pairs = get_dependent_points_helper(point);
+      std::vector<DomainPoint> ret_vec;
+#ifdef DEBUG_LEGION
+      assert(constraint_pairs.first.size() == 0 || constraint_pairs.second.size() == 0);
+#endif
+      if (constraint_pairs.first.size() != 0) {
+        DomainPoint new_point(point);
+        for (unsigned idx = 0; idx < constraint_pairs.first.size(); idx++) {
+          // copy the point to get the right dimensions
+          SolverHelper solver_helper = constraint_pairs.first[idx];
+          new_point[0] = solver_helper.first_value;
+          new_point[1] = solver_helper.second_value;
+        }
+        if (new_point != point) {
+          ret_vec.push_back(new_point);
+        }
+      }
+      else {
+        //TODO implement this case!
+      }
+      return ret_vec;
+    }
+
+    //--------------------------------------------------------------------------
+    std::pair<std::vector<SolverHelper>, std::vector<SolverHelper> >
+      ProjectionAnalysisConstraint::get_dependent_points_helper(DomainPoint &point)
+    //--------------------------------------------------------------------------
+    {
+      std::pair<std::vector<SolverHelper>, std::vector<SolverHelper> > left_pair;
+      std::pair<std::vector<SolverHelper>, std::vector<SolverHelper> > right_pair;
+      std::vector<SolverHelper> set_intersection;
+      std::vector<SolverHelper> set_union;
+      std::vector<SolverHelper> set_difference;
+      std::vector<SolverHelper> empty1;
+      std::vector<SolverHelper> empty2;
+      SolverHelper new_constraint;
+      std::vector<SolverHelper> new_constraint_vec;
       switch(constraint_type)
       {
         case TRUE:
@@ -2303,8 +2333,9 @@ namespace Legion {
         case FALSE:
           return std::make_pair(empty1, empty2);
         case OR:
-          left_pair = lhs->get_dependent_points(point);
-          right_pair = rhs->get_dependent_points(point);
+          left_pair = lhs->get_dependent_points_helper(point);
+          return left_pair;
+          /*right_pair = rhs->get_dependent_points_helper(point);
           std::set_intersection(left_pair.second.begin(),
                                 left_pair.second.end(),
                                 right_pair.second.begin(),
@@ -2325,42 +2356,49 @@ namespace Legion {
           }
           else {
             return std::make_pair(set_union, empty1);
-          }
+          }*/
         case AND:
-          left_pair = lhs->get_dependent_points(point);
-          right_pair = rhs->get_dependent_points(point);
-          std::set_intersection(left_pair.first.begin(),
-                                left_pair.first.end(),
-                                right_pair.first.begin(),
-                                right_pair.first.end(),
-                                back_inserter(set_intersection));
+          left_pair = lhs->get_dependent_points_helper(point);
+          right_pair = rhs->get_dependent_points_helper(point);
+          set_intersection = intersect_helper(left_pair.first,
+              right_pair.first);
+          /*//std::set_intersection(left_pair.first.begin(),
+                                //left_pair.first.end(),
+                                //right_pair.first.begin(),
+                                //right_pair.first.end(),
+                                //back_inserter(set_intersection));
           std::set_union(left_pair.second.begin(),
                          left_pair.second.end(),
                          right_pair.second.begin(),
                          right_pair.second.end(),
-                         back_inserter(set_union));
+                         back_inserter(set_union));*/
           if (set_intersection.size() > 0) {
-            std::set_difference(set_intersection.begin(),
+            /*std::set_difference(set_intersection.begin(),
                                 set_intersection.end(),
                                 set_union.begin(),
                                 set_union.end(),
                                 back_inserter(set_difference));
-            return std::make_pair(set_difference, empty1);
+            return std::make_pair(set_difference, empty1);*/
+            return std::make_pair(set_intersection, empty1);
           }
           else {
-            return std::make_pair(empty1, set_union);
-          }
+            return std::make_pair(empty1, set_union); }
         case NOT:
-          left_pair = lhs->get_dependent_points(point);
+          left_pair = lhs->get_dependent_points_helper(point);
           return std::make_pair(left_pair.second, left_pair.first);
         case EQ:
+          new_constraint = solve_linear(point);
+          new_constraint_vec.push_back(new_constraint);
+          return std::make_pair(new_constraint_vec, empty1);
           //evaluate the point.
           //solve for the relevant domain points
           //add all the domain points to a vector
           //return that as the "yes" vector
-          //int evaluated = lhs_exp->evaluate(point);
           break;
         case NEQ:
+          new_constraint = solve_linear(point);
+          new_constraint_vec.push_back(new_constraint);
+          return std::make_pair(empty1, new_constraint_vec);
           //evaluate the point.
           //solve for the relevant domain points
           //add all the domain points to a vector
@@ -2372,9 +2410,8 @@ namespace Legion {
       }
     }
 
-    //
     //--------------------------------------------------------------------------
-    int ProjectionAnalysisConstraint::solve_linear(
+    SolverHelper ProjectionAnalysisConstraint::solve_linear(
         DomainPoint &point)
     //--------------------------------------------------------------------------
     {
@@ -2382,16 +2419,82 @@ namespace Legion {
       assert(lhs_exp->lhs->expression_type == MUL);
       assert(lhs_exp->rhs->expression_type == CONST);
       assert(lhs_exp->lhs->lhs->expression_type == CONST);
-      assert(lhs_exp->lhs->lhs->expression_type == VAR);
+      assert(lhs_exp->lhs->rhs->expression_type == VAR);
       assert(rhs_exp->expression_type == ADD);
       assert(rhs_exp->lhs->expression_type == MUL);
       assert(rhs_exp->rhs->expression_type == CONST);
       assert(rhs_exp->lhs->lhs->expression_type == CONST);
-      assert(rhs_exp->lhs->lhs->expression_type == VAR);
-      long int value = rhs_exp->evaluate(point);
-      value = value - lhs_exp->rhs->value;
-      value = value / lhs_exp->lhs->lhs->value;
-      return value;
+      assert(rhs_exp->lhs->rhs->expression_type == VAR);
+      long int value = lhs_exp->evaluate(point);
+      value = value - rhs_exp->rhs->value;
+      value = value / rhs_exp->lhs->lhs->value;
+      SolverHelper solver_helper;
+      int var = lhs_exp->lhs->rhs->value;
+      switch (var) {
+        case 0:
+          solver_helper.first_value = value;
+          solver_helper.first_wildcard = false;
+          break;
+        case 1:
+          solver_helper.second_value = value;
+          solver_helper.second_wildcard = false;
+          break;
+        case 2:
+          solver_helper.third_value = value;
+          solver_helper.third_wildcard = false;
+          break;
+        default:
+          assert(0); // Too many dimension
+      }
+      // Make a pair of the variable id and the value that it must have
+      return solver_helper;
+    }
+
+    //--------------------------------------------------------------------------
+    std::vector<SolverHelper> ProjectionAnalysisConstraint::intersect_helper(
+        std::vector<SolverHelper> first, std::vector<SolverHelper> second)
+    //--------------------------------------------------------------------------
+    {
+      std::vector<SolverHelper> ret_vec;
+      for (unsigned idx1 = 0; idx1 < first.size(); idx1++) {
+        for (unsigned idx2 = 0; idx2 < second.size(); idx2++) {
+          SolverHelper to_append;
+          SolverHelper first_helper = first[idx1];
+          SolverHelper second_helper = second[idx1];
+          if (first_helper.first_value == second_helper.first_value) {
+            to_append.first_value = first_helper.first_value;
+            to_append.first_wildcard =
+                first_helper.first_wildcard && second_helper.first_wildcard;
+          }
+          else if (first_helper.first_wildcard) {
+            to_append.first_value = second_helper.first_value;
+            to_append.first_wildcard = second_helper.first_wildcard;
+          }
+          else if (second_helper.first_wildcard) {
+            to_append.first_value = first_helper.first_value;
+            to_append.first_wildcard = first_helper.first_wildcard;
+          } else {
+            continue;
+          }
+          if (first_helper.second_value == second_helper.second_value) {
+            to_append.second_value = first_helper.second_value;
+            to_append.second_wildcard =
+                first_helper.second_wildcard && second_helper.second_wildcard;
+          }
+          else if (first_helper.second_wildcard) {
+            to_append.second_value = second_helper.second_value;
+            to_append.second_wildcard = second_helper.second_wildcard;
+          }
+          else if (second_helper.second_wildcard) {
+            to_append.second_value = first_helper.second_value;
+            to_append.second_wildcard = first_helper.second_wildcard;
+          } else {
+            continue;
+          }
+          ret_vec.push_back(to_append);
+        }
+      }
+      return ret_vec;
     }
 
     //--------------------------------------------------------------------------

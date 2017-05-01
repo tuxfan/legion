@@ -464,6 +464,21 @@ namespace Legion {
      * Constraints on regions discovered during structured projection
      * analysis.
      */
+    struct SolverHelper {
+      public:
+        long int first_value;
+        long int second_value;
+        long int third_value;
+        bool first_wildcard;
+        bool second_wildcard;
+        bool third_wildcard;
+      public:
+        SolverHelper(void) {
+          first_wildcard = true;
+          second_wildcard = true;
+          third_wildcard = true;
+        }
+    };
     class ProjectionAnalysisConstraint {
       public:
         ProjectionAnalysisConstraint(ConstraintType type);
@@ -477,13 +492,17 @@ namespace Legion {
         ProjectionAnalysisConstraint *simplify(void);
         ProjectionAnalysisConstraint *substitute(DomainPoint &left_point,
                                                  DomainPoint &right_point);
-        std::pair<std::vector<DomainPoint>, std::vector<DomainPoint> >
-            get_dependent_points(DomainPoint &point);
+        std::vector<DomainPoint> get_dependent_points(DomainPoint &point,
+            Domain &bounding_domain);
         std::vector<DomainPoint> get_dependent_points2(DomainPoint &point,
             Domain &bounding_domain);
         std::string stringify(void) const;
       private:
-        int solve_linear(DomainPoint &point);
+        std::pair<std::vector<SolverHelper>, std::vector<SolverHelper> >
+            get_dependent_points_helper(DomainPoint &point);
+        SolverHelper solve_linear(DomainPoint &point);
+        std::vector<SolverHelper> intersect_helper(std::vector<SolverHelper>,
+          std::vector<SolverHelper>);
       public:
         ConstraintType constraint_type;
         ProjectionAnalysisConstraint *lhs;

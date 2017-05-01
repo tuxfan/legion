@@ -5915,8 +5915,21 @@ namespace Legion {
         for (unsigned idx1 = 0; idx1 < slice_owner->index_owner->constraint_equations.size();
             idx1++) {
           ProjectionAnalysisConstraint* constraintEq = slice_owner->index_owner->constraint_equations[idx1];
-          std::vector<DomainPoint> dependentPoints = constraintEq->get_dependent_points2(index_point,
+          // USE THIS TO TEST THAT APPLICATION IS CORRECT! EVENTUALLY DELETE
+          /*std::vector<DomainPoint> dependentPoints =
+              constraintEq->get_dependent_points2(index_point,
+              slice_owner->index_owner->internal_domain);*/
+          std::vector<DomainPoint> dependentPoints =
+              constraintEq->get_dependent_points(index_point,
               slice_owner->index_owner->internal_domain);
+          /*std::vector<DomainPoint> dependentPoints;
+          dependentPoints.reserve(2);
+          const LegionRuntime::Arrays::Point<2> onex = LegionRuntime::Arrays::make_point(1,0);
+          const LegionRuntime::Arrays::Point<2> oney = LegionRuntime::Arrays::make_point(0,1);
+          LegionRuntime::Arrays::Point<2> dep_x = index_point.get_point<2>() + onex;
+          LegionRuntime::Arrays::Point<2> dep_y = index_point.get_point<2>() + oney;
+          dependentPoints.push_back(DomainPoint::from_point<2>(dep_x));
+          dependentPoints.push_back(DomainPoint::from_point<2>(dep_y));*/
           for (unsigned idx2 = 0; idx2 < dependentPoints.size(); idx2++) {
             DomainPoint dep_point = dependentPoints[idx2];
             map_preconditionss.insert(slice_owner->index_owner->point_task_events[dep_point]);
@@ -6699,18 +6712,19 @@ namespace Legion {
       restrict_infos.resize(regions.size());
       projection_infos.resize(regions.size());
       perform_structured_dependence_analysis();
-      //for (unsigned idx = 0; idx < regions.size(); idx++)
-      unsigned s = regions.size() - 1;
-      for (unsigned idx = 0; idx < 1; idx++)
+      for (unsigned idx = 0; idx < regions.size(); idx++)
+      //unsigned s = regions.size() - 1;
+      //for (unsigned idx = 0; idx < 1; idx++)
       {
-        projection_infos[s-idx] = 
-          ProjectionInfo(runtime, regions[s-idx], index_domain);
-        runtime->forest->perform_dependence_analysis(this, s-idx, regions[s-idx], 
-                                                     restrict_infos[s-idx],
-                                                     version_infos[s-idx],
-                                                     projection_infos[s-idx],
-                                                     privilege_paths[s-idx]);
+        projection_infos[idx] = 
+          ProjectionInfo(runtime, regions[idx], index_domain);
+        runtime->forest->perform_dependence_analysis(this, idx, regions[idx], 
+                                                     restrict_infos[idx],
+                                                     version_infos[idx],
+                                                     projection_infos[idx],
+                                                     privilege_paths[idx]);
       }
+      /*
       for (unsigned idx = 1; idx < regions.size(); idx++)
       {
         projection_infos[s-idx] = 
@@ -6718,7 +6732,7 @@ namespace Legion {
         //version_infos[0].copy_to(version_infos[s-idx]);
         version_infos[s-idx] = version_infos[2];
         restrict_infos[s-idx] = restrict_infos[2];
-      }
+      }*/
     }
 
     //--------------------------------------------------------------------------
