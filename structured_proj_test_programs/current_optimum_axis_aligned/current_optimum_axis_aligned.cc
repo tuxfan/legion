@@ -36,7 +36,8 @@ using namespace LegionRuntime::Arrays;
 enum TaskIDs {
   TOP_LEVEL_TASK_ID,
   INIT_FIELD_TASK_ID,
-  LAUNCHER_HELPER_TASK_ID,
+  INIT_LAUNCHER_HELPER_TASK_ID,
+  COMPUTE_LAUNCHER_HELPER_TASK_ID,
   COMPUTE_TASK_ID,
   CHECK_TASK_ID,
   PAUSE_TASK_ID,
@@ -223,41 +224,21 @@ void top_level_task(const Task *task,
     }
   }
 
-  // Create a full partitioning to do a normal initialization index space launch
-  Rect<2> full_color_bounds(make_point(0,0),
-      make_point(num_subregions_x - 1, num_subregions_y - 1));
-  Domain full_color_domain = Domain::from_rect<2>(full_color_bounds);
-  IndexPartition full_ip;
-  {
-    DomainPointColoring d_coloring;
-    const int points_per_partition_x = side_length_x/num_subregions_x;
-    const int points_per_partition_y = side_length_y/num_subregions_y;
-    for (Domain::DomainPointIterator itr(full_color_domain); itr; itr++) {
-      int x_start = itr.p[0] * points_per_partition_x;
-      int y_start = itr.p[1] * points_per_partition_y;
-      int x_end = x_start + points_per_partition_x - 1;
-      int y_end = y_start + points_per_partition_y - 1;
-      Rect<2> subrect(make_point(x_start, y_start),make_point(x_end, y_end));
-      d_coloring[itr.p] = Domain::from_rect<2>(subrect);
-    }
-    full_ip = runtime->create_index_partition(ctx, is, full_color_domain, d_coloring, partition_kind);
+  for (int i = num_waves - 1; i >= 0; i--) {
+    DomainPoint init_point = DomainPoint::from_point<1>(make_point(i));
+    LogicalRegion init_region =
+        runtime->get_logical_subregion_by_color(first_lp, init_point);
+
+    TaskLauncher init_helper_launcher(INIT_LAUNCHER_HELPER_TASK_ID,
+         TaskArgument(NULL, 0));
+    init_helper_launcher.add_region_requirement(
+        RegionRequirement(init_region,
+                          READ_WRITE, EXCLUSIVE, top_lr));
+    init_helper_launcher.add_field(0, FID_X);
+    init_helper_launcher.add_field(0, FID_Y);
+    init_helper_launcher.add_field(0, FID_VAL);
+    runtime->execute_task(ctx, init_helper_launcher);
   }
-  LogicalPartition full_lp = runtime->get_logical_partition(ctx, top_lr, full_ip);
-
-  // Our init launch domain will again be isomorphic to our coloring domain.
-  Domain launch_domain = full_color_domain;
-  ArgumentMap arg_map;
-
-  // First initialize the 'FID_X' and 'FID_Y' fields with some data
-  IndexLauncher init_launcher(INIT_FIELD_TASK_ID, launch_domain,
-                              TaskArgument(NULL, 0), arg_map);
-  init_launcher.add_region_requirement(
-      RegionRequirement(full_lp, 0/*projection ID*/,
-                        WRITE_DISCARD, EXCLUSIVE, top_lr));
-  init_launcher.add_field(0, FID_X);
-  init_launcher.add_field(0, FID_Y);
-  init_launcher.add_field(0, FID_VAL);
-  runtime->execute_index_space(ctx, init_launcher);
 
   // Now we launch the computation to calculate the value
   for (int j = 0; j < num_iterations; j++) {
@@ -272,7 +253,7 @@ void top_level_task(const Task *task,
       ComputeArgs compute_args;
       compute_args.angle = angle;
       compute_args.parallel_length = parallel_size;
-      TaskLauncher helper_launcher(LAUNCHER_HELPER_TASK_ID,
+      TaskLauncher helper_launcher(COMPUTE_LAUNCHER_HELPER_TASK_ID,
            TaskArgument(&compute_args, sizeof(ComputeArgs)));
       helper_launcher.add_region_requirement(
           RegionRequirement(compute_region,
@@ -283,40 +264,6 @@ void top_level_task(const Task *task,
       helper_launcher.add_field(0, FID_VAL);
       helper_launcher.add_field(1, FID_VAL);
       runtime->execute_task(ctx, helper_launcher);
-    }
-
-    if (j == 0 && num_iterations > 1) {
-      LogicalRegion first_wave_region_intermediate =
-        runtime->get_logical_subregion_by_color(first_lp,
-            DomainPoint::from_point<1>(make_point(num_waves - 1)));
-      LogicalPartition first_wave_intermediate_partition =
-        runtime->get_logical_partition_by_color(first_wave_region_intermediate,
-            DomainPoint::from_point<1>(make_point(0)));
-      LogicalRegion corner_region_first_wave =
-        runtime->get_logical_subregion_by_color(first_wave_intermediate_partition,
-            DomainPoint::from_point<1>(make_point(0)));
-
-      LogicalRegion last_wave_region_intermediate =
-        runtime->get_logical_subregion_by_color(first_lp,
-            DomainPoint::from_point<1>(make_point(0)));
-      LogicalPartition last_wave_intermediate_partition =
-        runtime->get_logical_partition_by_color(last_wave_region_intermediate,
-            DomainPoint::from_point<1>(make_point(0)));
-      LogicalRegion corner_region_last_wave =
-        runtime->get_logical_subregion_by_color(last_wave_intermediate_partition,
-            DomainPoint::from_point<1>(make_point(subregions_per_wave - 1)));
-
-      TaskLauncher pause_launcher(PAUSE_TASK_ID,
-           TaskArgument(NULL, 0));
-      pause_launcher.add_region_requirement(
-          RegionRequirement(corner_region_first_wave,
-                            READ_WRITE, EXCLUSIVE, top_lr));
-      pause_launcher.add_region_requirement(
-          RegionRequirement(corner_region_last_wave,
-                            READ_WRITE, EXCLUSIVE, top_lr));
-      pause_launcher.add_field(0, FID_VAL);
-      pause_launcher.add_field(1, FID_VAL);
-      runtime->execute_task(ctx, pause_launcher);
     }
   }
 
@@ -374,7 +321,36 @@ void init_field_task(const Task *task,
   }
 }
 
-void launcher_helper_task(const Task *task,
+void init_launcher_helper_task(const Task *task,
+                          const std::vector<PhysicalRegion> &regions,
+                          Context ctx, Runtime *runtime)
+{
+  assert(regions.size() == 1);
+  assert(task->regions.size() == 1);
+  assert(task->regions[0].privilege_fields.size() == 3);
+
+  LogicalRegion lr_0 = regions[0].get_logical_region();
+
+  LogicalPartition init_partition =
+      runtime->get_logical_partition_by_color(ctx, lr_0,
+                  DomainPoint::from_point<1>(make_point(0)));
+
+  Domain init_launch_domain =
+      runtime->get_index_partition_color_space(init_partition.get_index_partition());
+
+  ArgumentMap arg_map;
+  IndexLauncher init_launcher(INIT_FIELD_TASK_ID, init_launch_domain,
+                              TaskArgument(NULL, 0), arg_map);
+  init_launcher.add_region_requirement(
+      RegionRequirement(init_partition, 0/*projection ID*/,
+                        WRITE_DISCARD, EXCLUSIVE, lr_0));
+  init_launcher.add_field(0, FID_X);
+  init_launcher.add_field(0, FID_Y);
+  init_launcher.add_field(0, FID_VAL);
+  runtime->execute_index_space(ctx, init_launcher);
+}
+
+void compute_launcher_helper_task(const Task *task,
                           const std::vector<PhysicalRegion> &regions,
                           Context ctx, Runtime *runtime)
 {
@@ -553,17 +529,19 @@ int main(int argc, char **argv)
 {
   Runtime::set_top_level_task_id(TOP_LEVEL_TASK_ID);
   Runtime::register_legion_task<top_level_task>(TOP_LEVEL_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "top level task");
+      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "top_level_task");
   Runtime::register_legion_task<init_field_task>(INIT_FIELD_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "init task");
-  Runtime::register_legion_task<launcher_helper_task>(LAUNCHER_HELPER_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(false,true,false), "launcher helper task");
+      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "init_task");
+  Runtime::register_legion_task<init_launcher_helper_task>(INIT_LAUNCHER_HELPER_TASK_ID,
+      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(false,true,false), "init_launcher_helper_task");
+  Runtime::register_legion_task<compute_launcher_helper_task>(COMPUTE_LAUNCHER_HELPER_TASK_ID,
+      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(false,true,false), "compute_ launcher_helper_task");
   Runtime::register_legion_task<compute_task>(COMPUTE_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(true, false, false), "compute task");
+      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(true, false, false), "compute_task");
   Runtime::register_legion_task<pause_task>(PAUSE_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(true, false, false), "pause task");
+      Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(true, false, false), "pause_task");
   Runtime::register_legion_task<check_task>(CHECK_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "check task");
+      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "check_task");
 
   return Runtime::start(argc, argv);
 }
