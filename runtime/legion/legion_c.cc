@@ -547,6 +547,16 @@ legion_index_space_get_domain(legion_runtime_t runtime_,
   return CObjectWrapper::wrap(runtime->get_index_space_domain(handle));
 }
 
+legion_index_partition_t
+legion_index_space_get_parent_index_partition(legion_runtime_t runtime_,
+                                              legion_index_space_t handle_)
+{
+  Runtime *runtime = CObjectWrapper::unwrap(runtime_);
+  IndexSpace handle = CObjectWrapper::unwrap(handle_);
+
+  return CObjectWrapper::wrap(runtime->get_parent_index_partition(handle));
+}
+
 void
 legion_index_space_attach_name(legion_runtime_t runtime_,
                                legion_index_space_t handle_,
@@ -3199,6 +3209,13 @@ legion_future_get_result_bytes(legion_future_t handle_, void *buffer, size_t siz
   memcpy(buffer, handle->get_untyped_pointer(), size);
 }
 
+size_t
+legion_future_get_result_size(legion_future_t handle_)
+{
+  Future *handle = CObjectWrapper::unwrap(handle_);
+  return handle->get_untyped_size();
+}
+
 bool
 legion_future_is_empty(legion_future_t handle_,
                        bool block /* = false */)
@@ -3214,6 +3231,13 @@ legion_future_get_untyped_pointer(legion_future_t handle_)
   Future *handle = CObjectWrapper::unwrap(handle_);
 
   return handle->get_untyped_pointer();
+}
+
+size_t
+legion_future_get_untyped_size(legion_future_t handle_)
+{
+  Future *handle = CObjectWrapper::unwrap(handle_);
+  return handle->get_untyped_size();
 }
 
 // -----------------------------------------------------------------------
