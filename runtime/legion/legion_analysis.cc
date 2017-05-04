@@ -2415,6 +2415,7 @@ namespace Legion {
         DomainPoint &point)
     //--------------------------------------------------------------------------
     {
+#ifdef DEBUG_LEGION
       assert(lhs_exp->expression_type == ADD);
       assert(lhs_exp->lhs->expression_type == MUL);
       assert(lhs_exp->rhs->expression_type == CONST);
@@ -2425,6 +2426,7 @@ namespace Legion {
       assert(rhs_exp->rhs->expression_type == CONST);
       assert(rhs_exp->lhs->lhs->expression_type == CONST);
       assert(rhs_exp->lhs->rhs->expression_type == VAR);
+#endif
       long int value = lhs_exp->evaluate(point);
       value = value - rhs_exp->rhs->value;
       value = value / rhs_exp->lhs->lhs->value;
@@ -2491,11 +2493,89 @@ namespace Legion {
           } else {
             continue;
           }
+          if (first_helper.third_value == second_helper.third_value) {
+            to_append.third_value = first_helper.third_value;
+            to_append.third_wildcard =
+                first_helper.third_wildcard && second_helper.third_wildcard;
+          }
+          else if (first_helper.third_wildcard) {
+            to_append.third_value = second_helper.third_value;
+            to_append.third_wildcard = second_helper.third_wildcard;
+          }
+          else if (second_helper.third_wildcard) {
+            to_append.third_value = first_helper.third_value;
+            to_append.third_wildcard = first_helper.third_wildcard;
+          } else {
+            continue;
+          }
           ret_vec.push_back(to_append);
         }
       }
       return ret_vec;
     }
+
+    //--------------------------------------------------------------------------
+    std::vector<SolverHelper> ProjectionAnalysisConstraint::union_helper(
+        std::vector<SolverHelper> first, std::vector<SolverHelper> second)
+    //--------------------------------------------------------------------------
+    {
+      std::vector<SolverHelper> ret_vec;
+      for (unsigned idx1 = 0; idx1 < first.size(); idx1++) {
+        for (unsigned idx2 = 0; idx2 < second.size(); idx2++) {
+          SolverHelper to_append;
+          SolverHelper first_helper = first[idx1];
+          SolverHelper second_helper = second[idx1];
+          if (first_helper.first_value == second_helper.first_value) {
+            to_append.first_value = first_helper.first_value;
+            to_append.first_wildcard =
+                first_helper.first_wildcard && second_helper.first_wildcard;
+          }
+          else if (first_helper.first_wildcard) {
+            to_append.first_value = second_helper.first_value;
+            to_append.first_wildcard = second_helper.first_wildcard;
+          }
+          else if (second_helper.first_wildcard) {
+            to_append.first_value = first_helper.first_value;
+            to_append.first_wildcard = first_helper.first_wildcard;
+          } else {
+            continue;
+          }
+          if (first_helper.second_value == second_helper.second_value) {
+            to_append.second_value = first_helper.second_value;
+            to_append.second_wildcard =
+                first_helper.second_wildcard && second_helper.second_wildcard;
+          }
+          else if (first_helper.second_wildcard) {
+            to_append.second_value = second_helper.second_value;
+            to_append.second_wildcard = second_helper.second_wildcard;
+          }
+          else if (second_helper.second_wildcard) {
+            to_append.second_value = first_helper.second_value;
+            to_append.second_wildcard = first_helper.second_wildcard;
+          } else {
+            continue;
+          }
+          if (first_helper.third_value == second_helper.third_value) {
+            to_append.third_value = first_helper.third_value;
+            to_append.third_wildcard =
+                first_helper.third_wildcard && second_helper.third_wildcard;
+          }
+          else if (first_helper.third_wildcard) {
+            to_append.third_value = second_helper.third_value;
+            to_append.third_wildcard = second_helper.third_wildcard;
+          }
+          else if (second_helper.third_wildcard) {
+            to_append.third_value = first_helper.third_value;
+            to_append.third_wildcard = first_helper.third_wildcard;
+          } else {
+            continue;
+          }
+          ret_vec.push_back(to_append);
+        }
+      }
+      return ret_vec;
+    }
+
 
     //--------------------------------------------------------------------------
     std::vector<DomainPoint> ProjectionAnalysisConstraint::get_dependent_points2(

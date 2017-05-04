@@ -503,6 +503,8 @@ namespace Legion {
         SolverHelper solve_linear(DomainPoint &point);
         std::vector<SolverHelper> intersect_helper(std::vector<SolverHelper>,
           std::vector<SolverHelper>);
+        std::vector<SolverHelper> union_helper(std::vector<SolverHelper>,
+          std::vector<SolverHelper>);
       public:
         ConstraintType constraint_type;
         ProjectionAnalysisConstraint *lhs;
