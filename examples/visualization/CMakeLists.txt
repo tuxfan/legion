@@ -15,25 +15,17 @@
 #------------------------------------------------------------------------------#
 
 cmake_minimum_required(VERSION 3.1)
+project(LegionExample_prototype1)
 
+# Only search if were building stand-alone and not as part of Legion
 if(NOT Legion_SOURCE_DIR)
   find_package(Legion REQUIRED)
 endif()
 
-add_subdirectory(attach_file)
-add_subdirectory(circuit)
-add_subdirectory(dynamic_registration)
-add_subdirectory(ghost)
-add_subdirectory(ghost_pull)
-add_subdirectory(realm_saxpy)
-add_subdirectory(spmd_cgsolver)
-add_subdirectory(virtual_map)
-add_subdirectory(visualization)
-
-if(Legion_USE_GASNet)
-  add_subdirectory(mpi_interop)
-endif()
-
-if(Legion_USE_CUDA)
-  add_subdirectory(thrust_interop)
+add_executable(prototype1
+  prototype1.cc
+)
+target_link_libraries(prototype1 Legion::Legion)
+if(Legion_ENABLE_TESTING)
+  add_test(NAME prototype1 COMMAND $<TARGET_FILE:prototype1>) 
 endif()
