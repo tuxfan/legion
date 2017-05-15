@@ -106,6 +106,7 @@ namespace Legion {
             void partitionImageForComposite();
             void addCompositeRegionRequirement(Point<DIMENSIONS> point, int depth, TaskLauncher &taskLauncher);
             void addFutureToLauncher(TaskLauncher &taskLauncher, Future future);
+            Future launchCompositeTask(Point<DIMENSIONS> point, Future priorResult, int nextInput);
             Future launchCompositeTask(Point<DIMENSIONS> point, int depth0, int depth1);
             Future launchCompositeTask(Future future0, Future future1);
             Futures launchCompositeTaskTreeLevel( Futures futures);

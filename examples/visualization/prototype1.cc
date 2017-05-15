@@ -93,6 +93,7 @@ void render_task(const Task *task,
 
 #define TIME_PER_FRAME 1
 #define TIME_OVERALL 1
+#define TREE_REDUCTION 0
 
 void top_level_task(const Task *task,
                     const std::vector<PhysicalRegion> &regions,
@@ -119,42 +120,54 @@ void top_level_task(const Task *task,
     ImageSize imageSize = (ImageSize){ width, height, numSimulationTasks, numFragmentsPerLayer };
     RenderSpace *renderSpace = new RenderSpace(imageSize, ctx, runtime);
     
-    UsecTimer overall("overall time:");
-    overall.start();
-    UsecTimer frame("frame time:");
-    UsecTimer reduce("reduce time:");
-    Future displayFuture;
-    
-    for(int t = 0; t < numTimeSteps; ++t) {
-        frame.start();
-        simulateTimeStep(t);
-        FutureMap renderFutures = renderSpace->launchTaskByDepth(RENDER_TASK_ID);
-        reduce.start();
-        Futures reduceFutures = renderSpace->reduceAssociativeCommutative();
-#if TIME_PER_FRAME
-        reduceFutures[0].wait();
+    {
+        
+        UsecTimer overall("overall time:");
+        overall.start();
+        UsecTimer frame("frame time:");
+        UsecTimer reduce("reduce time:");
+        Future displayFuture;
+        
+        for(int t = 0; t < numTimeSteps; ++t) {
+            frame.start();
+            simulateTimeStep(t);
+            FutureMap renderFutures = renderSpace->launchTaskByDepth(RENDER_TASK_ID);
+            reduce.start();
+            
+#if TREE_REDUCTION
+            Futures reduceFutures = renderSpace->reduceAssociativeCommutative();
+#else
+            Futures reduceFutures = renderSpace->reduceNonassociativeCommutative();
 #endif
-        reduce.stop();
-        displayFuture = renderSpace->display(t);
+            
+            
 #if TIME_PER_FRAME
+            reduceFutures[0].wait();
+#endif
+            reduce.stop();
+            
+            displayFuture = renderSpace->display(t);
+            
+#if TIME_PER_FRAME
+            displayFuture.wait();
+#endif
+            frame.stop();
+        }
+        
+#if TIME_OVERALL
         displayFuture.wait();
 #endif
-        frame.stop();
-    }
-    
-#if TIME_OVERALL
-    displayFuture.wait();
-#endif
-    
-    overall.stop();
-
+        
+        overall.stop();
+        
 #if TIME_PER_FRAME
-    cout << frame.to_string() << endl;
-    cout << reduce.to_string() << endl;
+        cout << frame.to_string() << endl;
+        cout << reduce.to_string() << endl;
 #endif
 #if TIME_OVERALL
-    cout << overall.to_string() << endl;
+        cout << overall.to_string() << endl;
 #endif
+    }
     
     delete renderSpace;
 }

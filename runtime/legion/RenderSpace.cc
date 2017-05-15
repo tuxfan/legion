@@ -323,6 +323,17 @@ namespace Legion {
         }
         
         
+        Future RenderSpace::launchCompositeTask(Point<DIMENSIONS> point, Future priorResult, int nextInput) {
+            CompositeResult result = priorResult.get_result<CompositeResult>();
+            CompositeArguments args = { mImageSize, result.layer, nextInput };
+            TaskLauncher taskLauncher(COMPOSITE_INTERNAL_TASK_ID, TaskArgument(&args, sizeof(args)));
+            addFutureToLauncher(taskLauncher, priorResult);
+            addCompositeRegionRequirement(point, nextInput, taskLauncher);
+            Future resultFuture = mRuntime->execute_task(mContext, taskLauncher);
+            return resultFuture;
+        }
+        
+        
         Futures RenderSpace::launchCompositeTaskTreeLevel(Futures futures) {
             Futures result = Futures();
             for(int i = 0; i < futures.size(); i += 2) {
@@ -371,11 +382,18 @@ namespace Legion {
             return reduceAssociative(ordering);
         }
         
-        Futures RenderSpace::reduceNonassociative(int permutation[]) {
-            // use a serial pipeline
-            assert(false);//not completed
-            Futures result;
-            return result;
+        Futures RenderSpace::reduceNonassociative(int ordering[]) {
+            Futures futures = Futures();
+            Point<DIMENSIONS> point = Point<DIMENSIONS>::ZEROES();
+            for(int fragment = 0; fragment < mImageSize.numFragmentsPerLayer; ++fragment) {
+                Future future = launchCompositeTask(point, ordering[0], ordering[1]);
+                for(int order = 2; order < mImageSize.depth; ++order) {
+                    future = launchCompositeTask(point, future, ordering[order]);
+                }
+                futures.push_back(future);
+                point = mImageSize.incrementFragment(point);
+            }
+            return futures;
         }
         
         Futures RenderSpace::reduceNonassociativeCommutative(){
@@ -399,7 +417,7 @@ namespace Legion {
             PhysicalRegion displayPlane = regions[0];
             ByteOffset stride[DIMENSIONS];
             PixelField *r, *g, *b, *a, *z, *userdata;
-            createImageFieldPointers(args.imageSize, displayPlane, 0, r, g, b, a, z, userdata, stride);
+            createImageFieldPointers(args.imageSize, displayPlane, args.imageSize.depth - 1, r, g, b, a, z, userdata, stride);
 
             ofstream outputFile;
             outputFile.open(outputFileName, ios::out | ios::trunc);
