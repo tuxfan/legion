@@ -123,6 +123,7 @@ void top_level_task(const Task *task,
     overall.start();
     UsecTimer frame("frame time:");
     UsecTimer reduce("reduce time:");
+    Future displayFuture;
     
     for(int t = 0; t < numTimeSteps; ++t) {
         frame.start();
@@ -130,17 +131,30 @@ void top_level_task(const Task *task,
         FutureMap renderFutures = renderSpace->launchTaskByDepth(RENDER_TASK_ID);
         reduce.start();
         Futures reduceFutures = renderSpace->reduceAssociativeCommutative();
+#if TIME_PER_FRAME
         reduceFutures[0].wait();
+#endif
         reduce.stop();
-        Future displayFuture = renderSpace->display(t);
+        displayFuture = renderSpace->display(t);
+#if TIME_PER_FRAME
         displayFuture.wait();
+#endif
         frame.stop();
     }
     
+#if TIME_OVERALL
+    displayFuture.wait();
+#endif
+    
     overall.stop();
+
+#if TIME_PER_FRAME
     cout << frame.to_string() << endl;
     cout << reduce.to_string() << endl;
+#endif
+#if TIME_OVERALL
     cout << overall.to_string() << endl;
+#endif
     
     delete renderSpace;
 }
