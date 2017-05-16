@@ -293,6 +293,9 @@ namespace Legion {
         
         
         Future RenderSpace::launchCompositeTask(Point<DIMENSIONS> point, int depth0, int depth1) {
+            
+            cout << "launch composite tree leaf task " << depth0 << ", " << depth1 << endl;
+            
             CompositeArguments args = { mImageSize, depth0, depth1 };
             TaskLauncher taskLauncher(COMPOSITE_LEAF_TASK_ID, TaskArgument(&args, sizeof(args)));
             addCompositeRegionRequirement(point, depth0, taskLauncher);
@@ -314,6 +317,9 @@ namespace Legion {
         Future RenderSpace::launchCompositeTask(Future future0, Future future1) {
             CompositeResult result0 = future0.get_result<CompositeResult>();
             CompositeResult result1 = future1.get_result<CompositeResult>();
+            
+            cout << "launch composite tree internal task " << result0.layer << ", " << result1.layer << endl;
+            
             CompositeArguments args = { mImageSize, result0.layer, result1.layer };
             TaskLauncher taskLauncher(COMPOSITE_INTERNAL_TASK_ID, TaskArgument(&args, sizeof(args)));
             addFutureToLauncher(taskLauncher, future0);
@@ -336,6 +342,9 @@ namespace Legion {
         
         Futures RenderSpace::launchCompositeTaskTreeLevel(Futures futures) {
             Futures result = Futures();
+            
+            cout << "launch composite task tree level, futures = " << futures.size() << endl;
+            
             for(int i = 0; i < futures.size(); i += 2) {
                 Future future0 = futures[i];
                 Future future1 = futures[i + 1];
@@ -349,6 +358,9 @@ namespace Legion {
             Futures futures = Futures();
             for(int order = 0; order < mImageSize.depth; order += NUM_FRAGMENTS_PER_COMPOSITE_TASK) {
                 Point<DIMENSIONS> point = Point<DIMENSIONS>::ZEROES();
+                
+                cout << "launch tree leaf order " << order << " point " << point << " numFragments " << mImageSize.numFragmentsPerLayer << endl;
+                
                 for(int fragment = 0; fragment < mImageSize.numFragmentsPerLayer; ++fragment) {
                     futures.push_back(launchCompositeTask(point, ordering[order], ordering[order + 1]));
                     point = mImageSize.incrementFragment(point);
