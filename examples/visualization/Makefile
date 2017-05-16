@@ -29,7 +29,7 @@ ALT_MAPPERS     ?= 0		# Include alternative mappers (not recommended)
 # Put the binary file name here
 OUTFILE		?= prototype1
 # List all the application source files here
-GEN_SRC		?= prototype1.cc		# .cc files
+GEN_SRC		?= prototype1.cc 		# .cc files
 GEN_GPU_SRC	?=		# .cu files
 
 # You can modify these variables, some will be appended to by the runtime makefile
