@@ -253,6 +253,11 @@ namespace Legion {
             PhysicalRegion fragment0 = regions[0];
             PhysicalRegion fragment1 = regions[1];
             CompositeArguments args = ((CompositeArguments*)task->args)[0];
+
+#ifdef NULL_COMPOSITE_TASKS
+            return (CompositeResult) { fragment0.get_logical_region(), args.layer0 };//performance testing
+#endif
+
             PhysicalRegion compositedResult = compositeTwoRegions(args.imageSize, fragment0, args.layer0, fragment1, args.layer1);
             composite.stop();
             //cout << composite.to_string() << endl;
@@ -270,6 +275,11 @@ namespace Legion {
             PhysicalRegion fragment0 = regions[0];
             PhysicalRegion fragment1 = regions[1];
             CompositeArguments args = ((CompositeArguments*)task->args)[0];
+
+#ifdef NULL_COMPOSITE_TASKS
+            return (CompositeResult) { fragment0.get_logical_region(), args.layer0 };//performance testing
+#endif
+
             PhysicalRegion compositedResult = compositeTwoRegions(args.imageSize, fragment0, args.layer0, fragment1, args.layer1);
             composite.stop();
             //cout << composite.to_string() << endl;

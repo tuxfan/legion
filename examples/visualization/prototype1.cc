@@ -22,6 +22,17 @@
 #include "RenderSpace.h"
 #include "UsecTimer.h"
 
+#ifndef TIME_PER_FRAME
+#define TIME_PER_FRAME 1
+#endif
+
+#ifndef TIME_OVERALL
+#define TIME_OVERALL 1
+#endif
+
+#ifndef TREE_REDUCTION
+#define TREE_REDUCTION 1
+#endif
 
 #define ACCESSOR_TYPE AccessorType::Generic
 
@@ -91,9 +102,6 @@ void render_task(const Task *task,
 }
 
 
-#define TIME_PER_FRAME 1
-#define TIME_OVERALL 1
-#define TREE_REDUCTION 0
 
 void top_level_task(const Task *task,
                     const std::vector<PhysicalRegion> &regions,
@@ -109,13 +117,21 @@ void top_level_task(const Task *task,
     const int width = 3840;
     const int height = 2160;
 #elif 1
+    const int width = 2048;
+    const int height = 1024;
+#elif 0
     const int width = 512;
     const int height = 128;
 #else
     const int width = 16;
     const int height = 8;
 #endif
+
+#ifdef NUM_FRAGMENTS_PER_LAYER
+    const int numFragmentsPerLayer = NUM_FRAGMENTS_PER_LAYER;
+#else
     const int numFragmentsPerLayer = numSimulationTasks * 8;
+#endif
     
     ImageSize imageSize = (ImageSize){ width, height, numSimulationTasks, numFragmentsPerLayer };
     RenderSpace *renderSpace = new RenderSpace(imageSize, ctx, runtime);
@@ -142,6 +158,7 @@ void top_level_task(const Task *task,
             
             
 #if TIME_PER_FRAME
+            std::cout << "waiting for reduction" << std::endl;
             reduceFutures[0].wait();
 #endif
             reduce.stop();
@@ -149,6 +166,7 @@ void top_level_task(const Task *task,
             displayFuture = renderSpace->display(t);
             
 #if TIME_PER_FRAME
+            std::cout << "waiting for display" << std::endl;
             displayFuture.wait();
 #endif
             frame.stop();
