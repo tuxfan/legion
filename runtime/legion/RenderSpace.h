@@ -61,6 +61,7 @@ namespace Legion {
             Futures reduceNonassociativeCommutative();
             Futures reduceNonassociativeNoncommutative(int ordering[]);
             Future display(int t);
+            void reportTimers();
             
             static void createImageFieldPointers(ImageSize imageSize,
                                                  PhysicalRegion region,
@@ -118,6 +119,7 @@ namespace Legion {
             int *defaultPermutation();
             void addImageFieldsToRequirement(RegionRequirement &req);
             LogicalRegion createDisplayPlane();
+            void initializeTimers();
             
             static PhysicalRegion compositeTwoRegions(ImageSize imageSize, PhysicalRegion region0, int layer0, PhysicalRegion region1, int layer1);
             
@@ -154,6 +156,8 @@ namespace Legion {
             LogicalPartition mDepthPartition;
             LogicalPartition mCompositePartition;
             int *mDefaultPermutation;
+            UsecTimer *mCompositeLaunchTimer;
+            int mCompositeTaskCount;
         };
         
         

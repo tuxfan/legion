@@ -33,7 +33,7 @@ namespace Legion {
             int depth;
             int numFragmentsPerLayer;
             
-            int pixelsPerPlane() const{ return width * height; }
+            int pixelsPerLayer() const{ return width * height; }
             
             Point<DIMENSIONS> origin() const{ return Point<DIMENSIONS>::ZEROES(); }
             Point<DIMENSIONS> upperBound() const{

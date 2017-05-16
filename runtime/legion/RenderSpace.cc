@@ -32,6 +32,7 @@ namespace Legion {
             mContext = ctx;
             mRuntime = runtime;
             mDefaultPermutation = nullptr;
+            initializeTimers();
             createImage();
             partitionImageByDepth();
             partitionImageForComposite();
@@ -64,6 +65,17 @@ namespace Legion {
             mRuntime->attach_name(DISPLAY_TASK_ID, "display task");
             mRuntime->attach_name(COMPOSITE_LEAF_TASK_ID, "composite leaf task");
             mRuntime->attach_name(COMPOSITE_INTERNAL_TASK_ID, "composite internal task");
+        }
+        
+        void RenderSpace::initializeTimers() {
+            mCompositeLaunchTimer = new UsecTimer("time launching composite tasks:");
+            mCompositeTaskCount = 0;
+        }
+        
+        
+        void RenderSpace::reportTimers() {
+            cout << "launched " << mCompositeTaskCount << " composite tasks" << endl;
+            cout << mCompositeLaunchTimer->to_string() << endl;
         }
         
         
@@ -303,13 +315,11 @@ namespace Legion {
         
         
         Future RenderSpace::launchCompositeTask(Point<DIMENSIONS> point, int depth0, int depth1) {
-            
-            cout << "launch composite tree leaf task " << depth0 << ", " << depth1 << endl;
-            
             CompositeArguments args = { mImageSize, depth0, depth1 };
             TaskLauncher taskLauncher(COMPOSITE_LEAF_TASK_ID, TaskArgument(&args, sizeof(args)));
             addCompositeRegionRequirement(point, depth0, taskLauncher);
             addCompositeRegionRequirement(point, depth1, taskLauncher);
+            mCompositeTaskCount++;
             Future resultFuture = mRuntime->execute_task(mContext, taskLauncher);
             return resultFuture;
         }
@@ -327,13 +337,11 @@ namespace Legion {
         Future RenderSpace::launchCompositeTask(Future future0, Future future1) {
             CompositeResult result0 = future0.get_result<CompositeResult>();
             CompositeResult result1 = future1.get_result<CompositeResult>();
-            
-            cout << "launch composite tree internal task " << result0.layer << ", " << result1.layer << endl;
-            
             CompositeArguments args = { mImageSize, result0.layer, result1.layer };
             TaskLauncher taskLauncher(COMPOSITE_INTERNAL_TASK_ID, TaskArgument(&args, sizeof(args)));
             addFutureToLauncher(taskLauncher, future0);
             addFutureToLauncher(taskLauncher, future1);
+            mCompositeTaskCount++;
             Future resultFuture = mRuntime->execute_task(mContext, taskLauncher);
             return resultFuture;
         }
@@ -345,6 +353,7 @@ namespace Legion {
             TaskLauncher taskLauncher(COMPOSITE_INTERNAL_TASK_ID, TaskArgument(&args, sizeof(args)));
             addFutureToLauncher(taskLauncher, priorResult);
             addCompositeRegionRequirement(point, nextInput, taskLauncher);
+            mCompositeTaskCount++;
             Future resultFuture = mRuntime->execute_task(mContext, taskLauncher);
             return resultFuture;
         }
@@ -352,9 +361,6 @@ namespace Legion {
         
         Futures RenderSpace::launchCompositeTaskTreeLevel(Futures futures) {
             Futures result = Futures();
-            
-            cout << "launch composite task tree level, futures = " << futures.size() << endl;
-            
             for(int i = 0; i < futures.size(); i += 2) {
                 Future future0 = futures[i];
                 Future future1 = futures[i + 1];
@@ -368,9 +374,7 @@ namespace Legion {
             Futures futures = Futures();
             for(int order = 0; order < mImageSize.depth; order += NUM_FRAGMENTS_PER_COMPOSITE_TASK) {
                 Point<DIMENSIONS> point = Point<DIMENSIONS>::ZEROES();
-                
-                cout << "launch tree leaf order " << order << " point " << point << " numFragments " << mImageSize.numFragmentsPerLayer << endl;
-                
+                point.x[2] = order;
                 for(int fragment = 0; fragment < mImageSize.numFragmentsPerLayer; ++fragment) {
                     futures.push_back(launchCompositeTask(point, ordering[order], ordering[order + 1]));
                     point = mImageSize.incrementFragment(point);
@@ -381,7 +385,9 @@ namespace Legion {
         
         
         Futures RenderSpace::launchCompositeTaskTree(int ordering[]) {
+            mCompositeLaunchTimer->start();
             Futures futures = launchCompositeTaskTreeLeaves(ordering);
+            mCompositeLaunchTimer->stop();
             return launchCompositeTaskTreeLevel(futures);
         }
         
@@ -405,6 +411,7 @@ namespace Legion {
         }
         
         Futures RenderSpace::reduceNonassociative(int ordering[]) {
+            mCompositeLaunchTimer->start();
             Futures futures = Futures();
             Point<DIMENSIONS> point = Point<DIMENSIONS>::ZEROES();
             for(int fragment = 0; fragment < mImageSize.numFragmentsPerLayer; ++fragment) {
@@ -415,6 +422,7 @@ namespace Legion {
                 futures.push_back(future);
                 point = mImageSize.incrementFragment(point);
             }
+            mCompositeLaunchTimer->stop();
             return futures;
         }
         
@@ -440,16 +448,11 @@ namespace Legion {
             ByteOffset stride[DIMENSIONS];
             PixelField *r, *g, *b, *a, *z, *userdata;
             createImageFieldPointers(args.imageSize, displayPlane, args.imageSize.depth - 1, r, g, b, a, z, userdata, stride);
+            
+            FILE *outputFile = fopen(outputFileName.c_str(), "wb");
+            fwrite(r, 6 * sizeof(*r), args.imageSize.pixelsPerLayer(), outputFile);
+            fclose(outputFile);
 
-            ofstream outputFile;
-            outputFile.open(outputFileName, ios::out | ios::trunc);
-            for(int row = 0; row < args.imageSize.height; ++row) {
-#pragma unroll
-                for(int column = 0; column < args.imageSize.width; ++column) {
-                    outputFile << *r++ << "," << *g++ << "," << *b++ << "," << *a++ << "," << *z++ << "," << *userdata++ << endl;
-                }
-            }
-            outputFile.close();
             display.stop();
             cout << display.to_string() << endl;
         }

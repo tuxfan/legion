@@ -111,7 +111,7 @@ void top_level_task(const Task *task,
     runtime->attach_name(RENDER_TASK_ID, "render_task");
     
     const int numSimulationTasks = 4;
-    const int numTimeSteps = 5;
+    const int numTimeSteps = 10;
     
 #if 0
     const int width = 3840;
@@ -126,7 +126,8 @@ void top_level_task(const Task *task,
     const int width = 16;
     const int height = 8;
 #endif
-
+    
+    
 #ifdef NUM_FRAGMENTS_PER_LAYER
     const int numFragmentsPerLayer = NUM_FRAGMENTS_PER_LAYER;
 #else
@@ -186,6 +187,7 @@ void top_level_task(const Task *task,
         cout << overall.to_string() << endl;
 #endif
     }
+    renderSpace->reportTimers();
     
     delete renderSpace;
 }
