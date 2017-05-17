@@ -164,17 +164,17 @@ void top_level_task(const Task *task,
 #endif
             reduce.stop();
             
-            displayFuture = renderSpace->display(t);
+            //displayFuture = renderSpace->display(t);
             
 #if TIME_PER_FRAME
-            std::cout << "waiting for display" << std::endl;
-            displayFuture.wait();
+            //std::cout << "waiting for display" << std::endl;
+            //displayFuture.wait();
 #endif
             frame.stop();
         }
         
 #if TIME_OVERALL
-        displayFuture.wait();
+        //displayFuture.wait();
 #endif
         
         overall.stop();
