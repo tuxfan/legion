@@ -36,7 +36,7 @@ namespace Legion {
             createImage();
             partitionImageByDepth();
             partitionImageForComposite();
-            nameTasks();
+            registerTasks();
         }
         
         RenderSpace::~RenderSpace() {
@@ -50,22 +50,32 @@ namespace Legion {
         
         void RenderSpace::registerTasks() {
             
-            HighLevelRuntime::register_legion_task<display_task>(DISPLAY_TASK_ID,
-                                                                 Processor::LOC_PROC, false/*single*/, true/*index*/);
+            LayoutConstraintRegistrar layoutRegistrar(imageFields(), "layout");
+            LayoutConstraintID layoutConstraintID = mRuntime->register_layout(layoutRegistrar);
             
-            HighLevelRuntime::register_legion_task<CompositeResult, composite_leaf_task>(COMPOSITE_LEAF_TASK_ID,
-                                                                                       Processor::LOC_PROC, true/*single*/, false/*index*/);
+            mDisplayTaskID = mRuntime->generate_dynamic_task_id();
+            TaskVariantRegistrar displayRegistrar(mDisplayTaskID, "displayTask");
+            displayRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
+            .add_layout_constraint_set(0/*index*/, layoutConstraintID);
+            mRuntime->register_task_variant<display_task>(displayRegistrar);
+            mRuntime->attach_name(mDisplayTaskID, "displayTask");
             
-            HighLevelRuntime::register_legion_task<CompositeResult, composite_internal_task>(COMPOSITE_INTERNAL_TASK_ID,
-                                                                                           Processor::LOC_PROC, true/*single*/, false/*index*/);
+            mCompositeLeafTaskID = mRuntime->generate_dynamic_task_id();
+            TaskVariantRegistrar compositeLeafRegistrar(mCompositeLeafTaskID, "compositeLeafTask");
+            compositeLeafRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
+            .add_layout_constraint_set(0/*index*/, layoutConstraintID);
+            mRuntime->register_task_variant<CompositeResult, composite_leaf_task>(compositeLeafRegistrar);
+            mRuntime->attach_name(mCompositeLeafTaskID, "compositeLeafTask");
+            
+            mCompositeInternalTaskID = mRuntime->generate_dynamic_task_id();
+            TaskVariantRegistrar compositeInternalRegistrar(mCompositeInternalTaskID, "compositeInternalTask");
+            compositeInternalRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
+            .add_layout_constraint_set(0/*index*/, layoutConstraintID);
+            mRuntime->register_task_variant<CompositeResult, composite_internal_task>(compositeInternalRegistrar);
+            mRuntime->attach_name(mCompositeInternalTaskID, "compositeInternalTask");
+
         }
         
-        
-        void RenderSpace::nameTasks() {
-            mRuntime->attach_name(DISPLAY_TASK_ID, "display task");
-            mRuntime->attach_name(COMPOSITE_LEAF_TASK_ID, "composite leaf task");
-            mRuntime->attach_name(COMPOSITE_INTERNAL_TASK_ID, "composite internal task");
-        }
         
         void RenderSpace::initializeTimers() {
             mCompositeLaunchTimer = new UsecTimer("time launching composite tasks:");
@@ -243,7 +253,7 @@ namespace Legion {
             createImageFieldPointers(imageSize, region0, layer0, r0, g0, b0, a0, z0, userdata0, stride);
             PixelField *r1, *g1, *b1, *a1, *z1, *userdata1;
             createImageFieldPointers(imageSize, region1, layer1, r1, g1, b1, a1, z1, userdata1, stride);
-
+            
 #pragma unroll
             for(int i = 0; i < imageSize.numPixelsPerFragment(); ++i) {
                 compositeTwoPixels(r0, g0, b0, a0, z0, userdata0, r1, g1, b1, a1, z1, userdata1, r0, g0, b0, a0, z0, userdata0);
@@ -257,19 +267,19 @@ namespace Legion {
         
         
         CompositeResult RenderSpace::composite_leaf_task(const Task *task,
-                                                       const std::vector<PhysicalRegion> &regions,
-                                                       Context ctx, HighLevelRuntime *runtime) {
+                                                         const std::vector<PhysicalRegion> &regions,
+                                                         Context ctx, HighLevelRuntime *runtime) {
             
             UsecTimer composite(describeTask(task) + " leaf:");
             composite.start();
             PhysicalRegion fragment0 = regions[0];
             PhysicalRegion fragment1 = regions[1];
             CompositeArguments args = ((CompositeArguments*)task->args)[0];
-
+            
 #if NULL_COMPOSITE_TASKS
             return (CompositeResult) { fragment0.get_logical_region(), args.layer0 };//performance testing
 #endif
-
+            
             PhysicalRegion compositedResult = compositeTwoRegions(args.imageSize, fragment0, args.layer0, fragment1, args.layer1);
             composite.stop();
             cout << composite.to_string() << endl;
@@ -279,19 +289,19 @@ namespace Legion {
         
         
         CompositeResult RenderSpace::composite_internal_task(const Task *task,
-                                                           const std::vector<PhysicalRegion> &regions,
-                                                           Context ctx, HighLevelRuntime *runtime) {
+                                                             const std::vector<PhysicalRegion> &regions,
+                                                             Context ctx, HighLevelRuntime *runtime) {
             
             UsecTimer composite(describeTask(task) + " internal:");
             composite.start();
             PhysicalRegion fragment0 = regions[0];
             PhysicalRegion fragment1 = regions[1];
             CompositeArguments args = ((CompositeArguments*)task->args)[0];
-
+            
 #if NULL_COMPOSITE_TASKS
             return (CompositeResult) { fragment0.get_logical_region(), args.layer0 };//performance testing
 #endif
-
+            
             PhysicalRegion compositedResult = compositeTwoRegions(args.imageSize, fragment0, args.layer0, fragment1, args.layer1);
             composite.stop();
             cout << composite.to_string() << endl;
@@ -316,7 +326,7 @@ namespace Legion {
         
         Future RenderSpace::launchCompositeTask(Point<DIMENSIONS> point, int depth0, int depth1) {
             CompositeArguments args = { mImageSize, depth0, depth1 };
-            TaskLauncher taskLauncher(COMPOSITE_LEAF_TASK_ID, TaskArgument(&args, sizeof(args)));
+            TaskLauncher taskLauncher(mCompositeLeafTaskID, TaskArgument(&args, sizeof(args)));
             addCompositeRegionRequirement(point, depth0, taskLauncher);
             addCompositeRegionRequirement(point, depth1, taskLauncher);
             mCompositeTaskCount++;
@@ -338,7 +348,7 @@ namespace Legion {
             CompositeResult result0 = future0.get_result<CompositeResult>();
             CompositeResult result1 = future1.get_result<CompositeResult>();
             CompositeArguments args = { mImageSize, result0.layer, result1.layer };
-            TaskLauncher taskLauncher(COMPOSITE_INTERNAL_TASK_ID, TaskArgument(&args, sizeof(args)));
+            TaskLauncher taskLauncher(mCompositeInternalTaskID, TaskArgument(&args, sizeof(args)));
             addFutureToLauncher(taskLauncher, future0);
             addFutureToLauncher(taskLauncher, future1);
             mCompositeTaskCount++;
@@ -350,7 +360,7 @@ namespace Legion {
         Future RenderSpace::launchCompositeTask(Point<DIMENSIONS> point, Future priorResult, int nextInput) {
             CompositeResult result = priorResult.get_result<CompositeResult>();
             CompositeArguments args = { mImageSize, result.layer, nextInput };
-            TaskLauncher taskLauncher(COMPOSITE_INTERNAL_TASK_ID, TaskArgument(&args, sizeof(args)));
+            TaskLauncher taskLauncher(mCompositeInternalTaskID, TaskArgument(&args, sizeof(args)));
             addFutureToLauncher(taskLauncher, priorResult);
             addCompositeRegionRequirement(point, nextInput, taskLauncher);
             mCompositeTaskCount++;
@@ -437,8 +447,8 @@ namespace Legion {
         
         
         void RenderSpace::display_task(const Task *task,
-                                                       const std::vector<PhysicalRegion> &regions,
-                                                       Context ctx, HighLevelRuntime *runtime) {
+                                       const std::vector<PhysicalRegion> &regions,
+                                       Context ctx, HighLevelRuntime *runtime) {
             
             DisplayArguments args = ((DisplayArguments*)task->args)[0];
             string outputFileName = "display." + ::to_string(args.t) + ".txt";
@@ -452,7 +462,7 @@ namespace Legion {
             FILE *outputFile = fopen(outputFileName.c_str(), "wb");
             fwrite(r, 6 * sizeof(*r), args.imageSize.pixelsPerLayer(), outputFile);
             fclose(outputFile);
-
+            
             display.stop();
             cout << display.to_string() << endl;
         }
@@ -467,11 +477,11 @@ namespace Legion {
             LogicalRegion displayPlane = mRuntime->get_logical_subregion_by_color(mDepthPartition, point);
             return displayPlane;
         }
-
+        
         
         Future RenderSpace::display(int t) {
             DisplayArguments args = { mImageSize, t };
-            TaskLauncher taskLauncher(DISPLAY_TASK_ID, TaskArgument(&args, sizeof(args)));
+            TaskLauncher taskLauncher(mDisplayTaskID, TaskArgument(&args, sizeof(args)));
             LogicalRegion displayPlane = createDisplayPlane();
             RegionRequirement req(displayPlane, READ_ONLY, EXCLUSIVE, mImage);
             addImageFieldsToRequirement(req);
