@@ -23,11 +23,11 @@
 #include "UsecTimer.h"
 
 #ifndef TIME_PER_FRAME
-#define TIME_PER_FRAME 1
+#define TIME_PER_FRAME 0
 #endif
 
 #ifndef TIME_OVERALL
-#define TIME_OVERALL 1
+#define TIME_OVERALL 0
 #endif
 
 #ifndef TREE_REDUCTION
@@ -107,9 +107,6 @@ void top_level_task(const Task *task,
                     const std::vector<PhysicalRegion> &regions,
                     Context ctx, HighLevelRuntime *runtime) {
     
-    runtime->attach_name(TOP_LEVEL_TASK_ID, "top_level_task");
-    runtime->attach_name(RENDER_TASK_ID, "render_task");
-    
     const int numSimulationTasks = 4;
     const int numTimeSteps = 10;
     
@@ -164,17 +161,17 @@ void top_level_task(const Task *task,
 #endif
             reduce.stop();
             
-            //displayFuture = renderSpace->display(t);
+            displayFuture = renderSpace->display(t);
             
 #if TIME_PER_FRAME
-            //std::cout << "waiting for display" << std::endl;
-            //displayFuture.wait();
+            std::cout << "waiting for display" << std::endl;
+            displayFuture.wait();
 #endif
             frame.stop();
         }
         
 #if TIME_OVERALL
-        //displayFuture.wait();
+        displayFuture.wait();
 #endif
         
         overall.stop();
@@ -187,7 +184,9 @@ void top_level_task(const Task *task,
         cout << overall.to_string() << endl;
 #endif
     }
+#if TIME_PER_FRAME
     renderSpace->reportTimers();
+#endif
     
     delete renderSpace;
 }
@@ -200,11 +199,11 @@ int main(const int argc, char *argv[]) {
     
     HighLevelRuntime::set_top_level_task_id(TOP_LEVEL_TASK_ID);
     HighLevelRuntime::register_legion_task<top_level_task>(TOP_LEVEL_TASK_ID,
-                                                           Processor::LOC_PROC, true/*single*/, false/*index*/);
+                                                           Processor::LOC_PROC, true/*single*/, false/*index*/,
+                                                           AUTO_GENERATE_ID, TaskConfigOptions(false/*leaf*/), "topLevelTask");
     HighLevelRuntime::register_legion_task<render_task>(RENDER_TASK_ID,
-                                                        Processor::LOC_PROC, false/*single*/, true/*index*/);
-    
-    RenderSpace::registerTasks();
+                                                        Processor::LOC_PROC, false/*single*/, true/*index*/,
+                                                        AUTO_GENERATE_ID, TaskConfigOptions(true/*leaf*/), "renderTask");
     
     return HighLevelRuntime::start(argc, argv);
 }

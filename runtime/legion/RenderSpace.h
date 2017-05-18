@@ -53,7 +53,6 @@ namespace Legion {
             RenderSpace(){}
             RenderSpace(ImageSize imageSize, Context ctx, HighLevelRuntime *runtime);
             virtual ~RenderSpace();
-            void prepareToDestruct();
             
             FutureMap launchTaskByDepth(unsigned taskID);
             Futures reduceAssociativeCommutative();
@@ -96,11 +95,9 @@ namespace Legion {
                 + std::to_string(task->index_point.point_data[2]) + ")";
             }
             
-            static void registerTasks();
             
             
         private:
-            void nameTasks();
             FieldSpace imageFields();
             void createImage();
             void partitionImageByDepth();
@@ -120,6 +117,7 @@ namespace Legion {
             void addImageFieldsToRequirement(RegionRequirement &req);
             LogicalRegion createDisplayPlane();
             void initializeTimers();
+            void registerTasks();
             
             static PhysicalRegion compositeTwoRegions(ImageSize imageSize, PhysicalRegion region0, int layer0, PhysicalRegion region1, int layer1);
             
@@ -158,13 +156,9 @@ namespace Legion {
             int *mDefaultPermutation;
             UsecTimer *mCompositeLaunchTimer;
             int mCompositeTaskCount;
-        };
-        
-        
-        enum TaskIDs {
-            COMPOSITE_LEAF_TASK_ID = MAX_APPLICATION_TASK_ID - 3,//problem, how to reserve these task ids
-            COMPOSITE_INTERNAL_TASK_ID,
-            DISPLAY_TASK_ID,
+            TaskID mCompositeLeafTaskID;
+            TaskID mCompositeInternalTaskID;
+            TaskID mDisplayTaskID;
         };
         
     }
