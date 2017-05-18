@@ -272,7 +272,7 @@ namespace Legion {
 
             PhysicalRegion compositedResult = compositeTwoRegions(args.imageSize, fragment0, args.layer0, fragment1, args.layer1);
             composite.stop();
-            //cout << composite.to_string() << endl;
+            cout << composite.to_string() << endl;
             CompositeResult result = { compositedResult.get_logical_region(), args.layer0 };
             return result;
         }
@@ -294,7 +294,7 @@ namespace Legion {
 
             PhysicalRegion compositedResult = compositeTwoRegions(args.imageSize, fragment0, args.layer0, fragment1, args.layer1);
             composite.stop();
-            // cout << composite.to_string() << endl;
+            cout << composite.to_string() << endl;
             CompositeResult result = { compositedResult.get_logical_region(), args.layer0 };
             return result;
         }
