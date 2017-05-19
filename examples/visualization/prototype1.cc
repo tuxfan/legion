@@ -149,15 +149,15 @@ void top_level_task(const Task *task,
             reduce.start();
             
 #if TREE_REDUCTION
-            Futures reduceFutures = renderSpace->reduceAssociativeCommutative();
+            FutureMap reduceFutures = renderSpace->reduceAssociativeCommutative();
 #else
-            Futures reduceFutures = renderSpace->reduceNonassociativeCommutative();
+            FutureMap reduceFutures = renderSpace->reduceNonassociativeCommutative();
 #endif
             
             
 #if TIME_PER_FRAME
             std::cout << "waiting for reduction" << std::endl;
-            reduceFutures[0].wait();
+            reduceFutures.wait_all_results();
 #endif
             reduce.stop();
             
@@ -184,9 +184,6 @@ void top_level_task(const Task *task,
         cout << overall.to_string() << endl;
 #endif
     }
-#if TIME_PER_FRAME
-    renderSpace->reportTimers();
-#endif
     
     delete renderSpace;
 }

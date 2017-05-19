@@ -19,6 +19,8 @@
 #include <fstream>
 #include <math.h>
 
+#include <OpenGL/OpenGL.h>
+
 using namespace LegionRuntime::HighLevel;
 using namespace LegionRuntime::Accessor;
 
@@ -32,7 +34,6 @@ namespace Legion {
             mContext = ctx;
             mRuntime = runtime;
             mDefaultPermutation = nullptr;
-            initializeTimers();
             createImage();
             partitionImageByDepth();
             partitionImageForComposite();
@@ -53,39 +54,19 @@ namespace Legion {
             LayoutConstraintRegistrar layoutRegistrar(imageFields(), "layout");
             LayoutConstraintID layoutConstraintID = mRuntime->register_layout(layoutRegistrar);
             
+            mCompositeTaskID = mRuntime->generate_dynamic_task_id();
+            TaskVariantRegistrar compositeRegistrar(mCompositeTaskID, "compositeTask");
+            compositeRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
+            .add_layout_constraint_set(0/*index*/, layoutConstraintID);
+            mRuntime->register_task_variant<composite_task>(compositeRegistrar);
+            mRuntime->attach_name(mCompositeTaskID, "compositeTask");
+            
             mDisplayTaskID = mRuntime->generate_dynamic_task_id();
             TaskVariantRegistrar displayRegistrar(mDisplayTaskID, "displayTask");
             displayRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
             .add_layout_constraint_set(0/*index*/, layoutConstraintID);
             mRuntime->register_task_variant<display_task>(displayRegistrar);
             mRuntime->attach_name(mDisplayTaskID, "displayTask");
-            
-            mCompositeLeafTaskID = mRuntime->generate_dynamic_task_id();
-            TaskVariantRegistrar compositeLeafRegistrar(mCompositeLeafTaskID, "compositeLeafTask");
-            compositeLeafRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
-            .add_layout_constraint_set(0/*index*/, layoutConstraintID);
-            mRuntime->register_task_variant<CompositeResult, composite_leaf_task>(compositeLeafRegistrar);
-            mRuntime->attach_name(mCompositeLeafTaskID, "compositeLeafTask");
-            
-            mCompositeInternalTaskID = mRuntime->generate_dynamic_task_id();
-            TaskVariantRegistrar compositeInternalRegistrar(mCompositeInternalTaskID, "compositeInternalTask");
-            compositeInternalRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
-            .add_layout_constraint_set(0/*index*/, layoutConstraintID);
-            mRuntime->register_task_variant<CompositeResult, composite_internal_task>(compositeInternalRegistrar);
-            mRuntime->attach_name(mCompositeInternalTaskID, "compositeInternalTask");
-
-        }
-        
-        
-        void RenderSpace::initializeTimers() {
-            mCompositeLaunchTimer = new UsecTimer("time launching composite tasks:");
-            mCompositeTaskCount = 0;
-        }
-        
-        
-        void RenderSpace::reportTimers() {
-            cout << "launched " << mCompositeTaskCount << " composite tasks" << endl;
-            cout << mCompositeLaunchTimer->to_string() << endl;
         }
         
         
@@ -134,14 +115,82 @@ namespace Legion {
         }
         
         
-        void RenderSpace::partitionImageForComposite() {
+        void RenderSpace::fragmentImageLayers() {
             Blockify<DIMENSIONS> coloring(mImageSize.fragmentSize());
             IndexPartition imageCompositeIndexPartition = mRuntime->create_index_partition(mContext, mImage.get_index_space(), coloring);
             mRuntime->attach_name(imageCompositeIndexPartition, "image composite partition");
             mCompositePartition = mRuntime->get_logical_partition(mContext, mImage, imageCompositeIndexPartition);
-            Rect<DIMENSIONS> compositeBounds(mImageSize.origin(), mImageSize.numFragments() - Point<DIMENSIONS>::ONES());
-            mCompositeDomain = Domain::from_rect<DIMENSIONS>(compositeBounds);
-            //TODO mRuntime->attach_name(mCompositeDomain, "composite domain");
+        }
+        
+        
+        void RenderSpace::prepareCompositeLaunchDomains() {
+            Point<DIMENSIONS> numTreeComposites = mImageSize.numFragments();
+            numTreeComposites.x[2] /= NUM_FRAGMENTS_PER_COMPOSITE_TASK;
+            Rect<DIMENSIONS> compositeTreeBounds(mImageSize.origin(), numTreeComposites - Point<DIMENSIONS>::ONES());
+            mCompositeTreeDomain = Domain::from_rect<DIMENSIONS>(compositeTreeBounds);
+            Rect<DIMENSIONS> compositePipelineBounds(mImageSize.origin(), mImageSize.numFragments() - Point<DIMENSIONS>::ONES());
+            mCompositePipelineDomain = Domain::from_rect<DIMENSIONS>(compositePipelineBounds);
+        }
+        
+        
+        int projectionFunctorIndex(int level, bool isLeft) {
+            int result = 1 + level * NUM_FRAGMENTS_PER_COMPOSITE_TASK + (isLeft ? 0 : 1);
+            return result;
+        }
+        
+        
+        void RenderSpace::prepareProjectionFunctors() {
+            mProjectionFunctors = new vector<CompositeProjectionFunctor*>();
+            mProjectionFunctors->push_back(NULL);//skip position zero
+            // level 0
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<1>());
+            assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
+            // level 1
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<2>());
+            // level 2
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<4>());
+            // level 3
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<8>());
+            // level 4
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<16>());
+            // level 5
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<32>());
+            // level 6
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<64>());
+            // level 7
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<128>());
+            // level 8
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<256>());
+            // level 9
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<512>());
+            // level 10
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
+            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<1024>());
+            assert(log2f(mImageSize.depth) <= 10);
+            
+            for(int i = 0; i < mProjectionFunctors->size() - 1; i += NUM_FRAGMENTS_PER_COMPOSITE_TASK) {
+                int level = i / NUM_FRAGMENTS_PER_COMPOSITE_TASK;
+                int functorID0 = projectionFunctorIndex(level, true);
+                mRuntime->register_projection_functor(functorID0, (*mProjectionFunctors)[functorID0]);
+                int functorID1 = projectionFunctorIndex(level, false);
+                mRuntime->register_projection_functor(functorID1, (*mProjectionFunctors)[functorID1]);
+            }
+        }
+        
+        void RenderSpace::partitionImageForComposite() {
+            fragmentImageLayers();
+            prepareCompositeLaunchDomains();
+            prepareProjectionFunctors();
         }
         
         
@@ -176,9 +225,9 @@ namespace Legion {
                                                    ByteOffset stride[3]) {
             
             Rect<DIMENSIONS> tempBounds;
-            Point<3> origin = imageSize.origin();
+            Point<DIMENSIONS> origin = imageSize.origin();
             origin.x[2] = layer;
-            Point<3> upperBound = imageSize.upperBound() - Point<3>::ONES();
+            Point<DIMENSIONS> upperBound = imageSize.upperBound() - Point<DIMENSIONS>::ONES();
             upperBound.x[2] = layer;
             Rect<DIMENSIONS> imageBounds = Rect<DIMENSIONS>(origin, upperBound);
             
@@ -217,24 +266,24 @@ namespace Legion {
         }
         
         
-        inline void RenderSpace::compositeTwoPixels(PixelField *r0,
-                                                    PixelField *g0,
-                                                    PixelField *b0,
-                                                    PixelField *a0,
-                                                    PixelField *z0,
-                                                    PixelField *userdata0,
-                                                    PixelField *r1,
-                                                    PixelField *g1,
-                                                    PixelField *b1,
-                                                    PixelField *a1,
-                                                    PixelField *z1,
-                                                    PixelField *userdata1,
-                                                    PixelField *rOut,
-                                                    PixelField *gOut,
-                                                    PixelField *bOut,
-                                                    PixelField *aOut,
-                                                    PixelField *zOut,
-                                                    PixelField *userdataOut) {
+        inline void RenderSpace::compositeTwoPixelsOver(PixelField *r0,
+                                                        PixelField *g0,
+                                                        PixelField *b0,
+                                                        PixelField *a0,
+                                                        PixelField *z0,
+                                                        PixelField *userdata0,
+                                                        PixelField *r1,
+                                                        PixelField *g1,
+                                                        PixelField *b1,
+                                                        PixelField *a1,
+                                                        PixelField *z1,
+                                                        PixelField *userdata1,
+                                                        PixelField *rOut,
+                                                        PixelField *gOut,
+                                                        PixelField *bOut,
+                                                        PixelField *aOut,
+                                                        PixelField *zOut,
+                                                        PixelField *userdataOut) {
             
             // hidden surface elimination
             if(*z0 < *z1) {
@@ -246,17 +295,29 @@ namespace Legion {
         }
         
         
-        inline PhysicalRegion RenderSpace::compositeTwoRegions(ImageSize imageSize, PhysicalRegion region0, int layer0, PhysicalRegion region1, int layer1) {
+        inline RenderSpace::CompositeFunction RenderSpace::compositeFunctionPointer(int depthFunction, int blendFunction) {
+            CompositeFunction result = NULL;
+            if(depthFunction != 0) {
+                result = compositeTwoPixelsOver;
+            } else if(blendFunction != 0) {
+                
+            }
+            return result;
+        }
+        
+        
+        inline PhysicalRegion RenderSpace::compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1) {
             
             ByteOffset stride[DIMENSIONS];
             PixelField *r0, *g0, *b0, *a0, *z0, *userdata0;
-            createImageFieldPointers(imageSize, region0, layer0, r0, g0, b0, a0, z0, userdata0, stride);
+            createImageFieldPointers(args.imageSize, region0, args.layer0, r0, g0, b0, a0, z0, userdata0, stride);
             PixelField *r1, *g1, *b1, *a1, *z1, *userdata1;
-            createImageFieldPointers(imageSize, region1, layer1, r1, g1, b1, a1, z1, userdata1, stride);
+            createImageFieldPointers(args.imageSize, region1, args.layer1, r1, g1, b1, a1, z1, userdata1, stride);
             
-#pragma unroll
-            for(int i = 0; i < imageSize.numPixelsPerFragment(); ++i) {
-                compositeTwoPixels(r0, g0, b0, a0, z0, userdata0, r1, g1, b1, a1, z1, userdata1, r0, g0, b0, a0, z0, userdata0);
+            CompositeFunction compositeFunction = compositeFunctionPointer(args.depthFunction, args.blendFunction);
+            
+            for(int i = 0; i < args.imageSize.numPixelsPerFragment(); ++i) {
+                compositeFunction(r0, g0, b0, a0, z0, userdata0, r1, g1, b1, a1, z1, userdata1, r0, g0, b0, a0, z0, userdata0);
                 r0++; g0++; b0++; a0++; z0++; userdata0++;
                 r1++; g1++; b1++; a1++; z1++; userdata1++;
             }
@@ -266,9 +327,9 @@ namespace Legion {
         
         
         
-        CompositeResult RenderSpace::composite_leaf_task(const Task *task,
-                                                         const std::vector<PhysicalRegion> &regions,
-                                                         Context ctx, HighLevelRuntime *runtime) {
+        void RenderSpace::composite_task(const Task *task,
+                                         const std::vector<PhysicalRegion> &regions,
+                                         Context ctx, HighLevelRuntime *runtime) {
             
             UsecTimer composite(describeTask(task) + " leaf:");
             composite.start();
@@ -277,170 +338,112 @@ namespace Legion {
             CompositeArguments args = ((CompositeArguments*)task->args)[0];
             
 #if NULL_COMPOSITE_TASKS
-            return (CompositeResult) { fragment0.get_logical_region(), args.layer0 };//performance testing
+            return;//performance testing
 #endif
             
-            PhysicalRegion compositedResult = compositeTwoRegions(args.imageSize, fragment0, args.layer0, fragment1, args.layer1);
+            PhysicalRegion compositedResult = compositeTwoFragments(args, fragment0, fragment1);
             composite.stop();
-            //cout << composite.to_string() << endl;
-            CompositeResult result = { compositedResult.get_logical_region(), args.layer0 };
-            return result;
+            cout << composite.to_string() << endl;
         }
         
         
-        CompositeResult RenderSpace::composite_internal_task(const Task *task,
-                                                             const std::vector<PhysicalRegion> &regions,
-                                                             Context ctx, HighLevelRuntime *runtime) {
-            
-            UsecTimer composite(describeTask(task) + " internal:");
-            composite.start();
-            PhysicalRegion fragment0 = regions[0];
-            PhysicalRegion fragment1 = regions[1];
-            CompositeArguments args = ((CompositeArguments*)task->args)[0];
-            
-#if NULL_COMPOSITE_TASKS
-            return (CompositeResult) { fragment0.get_logical_region(), args.layer0 };//performance testing
-#endif
-            
-            PhysicalRegion compositedResult = compositeTwoRegions(args.imageSize, fragment0, args.layer0, fragment1, args.layer1);
-            composite.stop();
-            //cout << composite.to_string() << endl;
-            CompositeResult result = { compositedResult.get_logical_region(), args.layer0 };
-            return result;
-        }
         
         
-        void RenderSpace::addCompositeRegionRequirement(Point<DIMENSIONS> point, int depth, TaskLauncher &taskLauncher) {
-            DomainPoint domainPoint;
-            domainPoint.dim = DIMENSIONS;
-            for(int i = 0; i < DIMENSIONS; ++i) {
-                domainPoint[i] = point.x[i];
+        void RenderSpace::addArgumentsToLauncher(Legion::IndexTaskLauncher &launcher, int layer0, int layer1, int taskZ, Legion::ArgumentMap &argMap) {
+            assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
+            Point<DIMENSIONS> point = Point<DIMENSIONS>::ZEROES();
+            point.x[2] = taskZ;
+            CompositeArguments args = { mImageSize, layer0, layer1, 0, 0 };
+            
+            for(int fragment = 0; fragment < mImageSize.numFragmentsPerLayer; ++fragment) {
+                DomainPoint domainPoint = DomainPoint::from_point<DIMENSIONS>(point);
+                argMap.set_point(domainPoint, TaskArgument(&args, sizeof(args)));
+                point = mImageSize.incrementFragment(point);
             }
-            domainPoint[2] = depth;
-            LogicalRegion region = mRuntime->get_logical_subregion_by_color(mCompositePartition, domainPoint);
-            RegionRequirement req(region, READ_ONLY, SIMULTANEOUS, mImage);
+        }
+        
+        
+        void RenderSpace::addTreeRegionRequirementToLauncher(Legion::IndexTaskLauncher &launcher, int level, bool isLeft, PrivilegeMode privilege, CoherenceProperty coherence) {
+            int projectionFunctorID = projectionFunctorIndex(level, isLeft);
+            RegionRequirement req(mCompositePartition, projectionFunctorID, privilege, coherence, mImage);
             addImageFieldsToRequirement(req);
-            taskLauncher.add_region_requirement(req);
+            launcher.add_region_requirement(req);
         }
         
         
-        Future RenderSpace::launchCompositeTask(Point<DIMENSIONS> point, int depth0, int depth1) {
-            CompositeArguments args = { mImageSize, depth0, depth1 };
-            TaskLauncher taskLauncher(mCompositeLeafTaskID, TaskArgument(&args, sizeof(args)));
-            addCompositeRegionRequirement(point, depth0, taskLauncher);
-            addCompositeRegionRequirement(point, depth1, taskLauncher);
-            mCompositeTaskCount++;
-            Future resultFuture = mRuntime->execute_task(mContext, taskLauncher);
-            return resultFuture;
-        }
-        
-        
-        void RenderSpace::addFutureToLauncher(TaskLauncher &taskLauncher, Future future) {
-            taskLauncher.add_future(future);
-            LogicalRegion region = future.get_result<LogicalRegion>();
-            RegionRequirement req(region, READ_ONLY, SIMULTANEOUS, mImage);
-            addImageFieldsToRequirement(req);
-            taskLauncher.add_region_requirement(req);
-        }
-        
-        
-        Future RenderSpace::launchCompositeTask(Future future0, Future future1) {
-            CompositeResult result0 = future0.get_result<CompositeResult>();
-            CompositeResult result1 = future1.get_result<CompositeResult>();
-            CompositeArguments args = { mImageSize, result0.layer, result1.layer };
-            TaskLauncher taskLauncher(mCompositeInternalTaskID, TaskArgument(&args, sizeof(args)));
-            addFutureToLauncher(taskLauncher, future0);
-            addFutureToLauncher(taskLauncher, future1);
-            mCompositeTaskCount++;
-            Future resultFuture = mRuntime->execute_task(mContext, taskLauncher);
-            return resultFuture;
-        }
-        
-        
-        Future RenderSpace::launchCompositeTask(Point<DIMENSIONS> point, Future priorResult, int nextInput) {
-            CompositeResult result = priorResult.get_result<CompositeResult>();
-            CompositeArguments args = { mImageSize, result.layer, nextInput };
-            TaskLauncher taskLauncher(mCompositeInternalTaskID, TaskArgument(&args, sizeof(args)));
-            addFutureToLauncher(taskLauncher, priorResult);
-            addCompositeRegionRequirement(point, nextInput, taskLauncher);
-            mCompositeTaskCount++;
-            Future resultFuture = mRuntime->execute_task(mContext, taskLauncher);
-            return resultFuture;
-        }
-        
-        
-        Futures RenderSpace::launchCompositeTaskTreeLevel(Futures futures) {
-            Futures result = Futures();
-            for(int i = 0; i < futures.size(); i += 2) {
-                Future future0 = futures[i];
-                Future future1 = futures[i + 1];
-                result.push_back(launchCompositeTask(future0, future1));
+        FutureMap RenderSpace::launchTreeLevel(int level, int ordering[]) {
+            ArgumentMap argMap;
+            IndexTaskLauncher treeLauncher(mCompositeTaskID, mCompositeTreeDomain, TaskArgument(NULL, 0), argMap);
+            addTreeRegionRequirementToLauncher(treeLauncher, level, true, READ_WRITE, EXCLUSIVE);
+            addTreeRegionRequirementToLauncher(treeLauncher, level, false, READ_ONLY, SIMULTANEOUS);
+            assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
+            
+            int increment = (int)powf(2.0, (float)level);
+            for(int i = 0; i < mImageSize.depth; i += increment * NUM_FRAGMENTS_PER_COMPOSITE_TASK) {
+                int taskZ = i / NUM_FRAGMENTS_PER_COMPOSITE_TASK;
+                addArgumentsToLauncher(treeLauncher, i, i + increment, taskZ, argMap);
             }
-            return (result.size() == 1 ? result : launchCompositeTaskTreeLevel(result));
+            FutureMap futures = mRuntime->execute_index_space(mContext, treeLauncher);
+            return futures;
         }
         
         
-        Futures RenderSpace::launchCompositeTaskTreeLeaves(int ordering[]) {
-            Futures futures = Futures();
-            for(int order = 0; order < mImageSize.depth; order += NUM_FRAGMENTS_PER_COMPOSITE_TASK) {
-                Point<DIMENSIONS> point = Point<DIMENSIONS>::ZEROES();
-                point.x[2] = order;
-                for(int fragment = 0; fragment < mImageSize.numFragmentsPerLayer; ++fragment) {
-                    futures.push_back(launchCompositeTask(point, ordering[order], ordering[order + 1]));
-                    point = mImageSize.incrementFragment(point);
-                }
+        
+        FutureMap RenderSpace::launchCompositeTaskTree(int ordering[]) {
+            int numTreeLevels = (int)log2f((float)mImageSize.depth);
+            FutureMap futures;
+            for(int level = 0; level < numTreeLevels; ++level) {
+                futures = launchTreeLevel(level, ordering);
             }
             return futures;
         }
         
         
-        Futures RenderSpace::launchCompositeTaskTree(int ordering[]) {
-            mCompositeLaunchTimer->start();
-            Futures futures = launchCompositeTaskTreeLeaves(ordering);
-            mCompositeLaunchTimer->stop();
-            return launchCompositeTaskTreeLevel(futures);
+        FutureMap RenderSpace::reduceAssociative(int ordering[]) {
+            return launchCompositeTaskTree(ordering);
         }
         
-        
-        Futures RenderSpace::launchCompositeTaskPipeline(int ordering[]) {
-            Futures result;
-            return result;
-        }
-        
-        
-        Futures RenderSpace::reduceAssociative(int permutation[]) {
-            return launchCompositeTaskTree(permutation);
-        }
-        
-        Futures RenderSpace::reduceAssociativeCommutative(){
+        FutureMap RenderSpace::reduceAssociativeCommutative(){
             return reduceAssociative(defaultPermutation());
         }
         
-        Futures RenderSpace::reduceAssociativeNoncommutative(int ordering[]){
+        FutureMap RenderSpace::reduceAssociativeNoncommutative(int ordering[]){
             return reduceAssociative(ordering);
         }
         
-        Futures RenderSpace::reduceNonassociative(int ordering[]) {
-            mCompositeLaunchTimer->start();
-            Futures futures = Futures();
-            Point<DIMENSIONS> point = Point<DIMENSIONS>::ZEROES();
-            for(int fragment = 0; fragment < mImageSize.numFragmentsPerLayer; ++fragment) {
-                Future future = launchCompositeTask(point, ordering[0], ordering[1]);
-                for(int order = 2; order < mImageSize.depth; ++order) {
-                    future = launchCompositeTask(point, future, ordering[order]);
-                }
-                futures.push_back(future);
-                point = mImageSize.incrementFragment(point);
+        FutureMap RenderSpace::launchCompositeTaskPipeline(int ordering[]) {
+            ArgumentMap argMap;
+            IndexTaskLauncher pipelineLauncher(mCompositeTaskID, mCompositePipelineDomain, TaskArgument(NULL, 0), argMap);
+            
+            int projectionFunctorID0 = projectionFunctorIndex(0, true);
+            RegionRequirement req0(mCompositePartition, projectionFunctorID0, READ_WRITE, EXCLUSIVE, mImage);
+            addImageFieldsToRequirement(req0);
+            pipelineLauncher.add_region_requirement(req0);
+            
+            int projectionFunctorID1 = projectionFunctorIndex(0, false);
+            RegionRequirement req1(mCompositePartition, projectionFunctorID1, READ_ONLY, SIMULTANEOUS, mImage);
+            addImageFieldsToRequirement(req1);
+            pipelineLauncher.add_region_requirement(req1);
+            assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
+            
+            for(int i = mImageSize.depth; i > 0; i -= NUM_FRAGMENTS_PER_COMPOSITE_TASK) {
+                int layer = i - NUM_FRAGMENTS_PER_COMPOSITE_TASK;
+                addArgumentsToLauncher(pipelineLauncher, layer, layer + 1, layer, argMap);
             }
-            mCompositeLaunchTimer->stop();
+            
+            FutureMap futures = mRuntime->execute_index_space(mContext, pipelineLauncher);
             return futures;
         }
         
-        Futures RenderSpace::reduceNonassociativeCommutative(){
+        FutureMap RenderSpace::reduceNonassociative(int ordering[]) {
+            return launchCompositeTaskPipeline(ordering);
+        }
+        
+        FutureMap RenderSpace::reduceNonassociativeCommutative(){
             return reduceNonassociative(defaultPermutation());
         }
         
-        Futures RenderSpace::reduceNonassociativeNoncommutative(int ordering[]){
+        FutureMap RenderSpace::reduceNonassociativeNoncommutative(int ordering[]){
             return reduceNonassociative(ordering);
         }
         

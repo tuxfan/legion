@@ -28,26 +28,77 @@ using namespace LegionRuntime::Accessor;
 namespace Legion {
     namespace Visualization {
         
-        typedef std::vector<Future> Futures;
-
-        typedef struct {
-            LogicalRegion region;
-            int layer;
-        } CompositeResult;
-
         typedef struct {
             ImageSize imageSize;
             int layer0;
             int layer1;
+            int depthFunction;
+            int blendFunction;
         } CompositeArguments;
-
+        
         typedef struct {
             ImageSize imageSize;
             int t;
         } DisplayArguments;
-
+        
         
         class RenderSpace {
+            
+        public:
+            class CompositeProjectionFunctor : public ProjectionFunctor {
+            public:
+                CompositeProjectionFunctor(void){}
+                
+                virtual LogicalRegion project(Context context, Task *task,
+                                              unsigned index,
+                                              LogicalPartition upperBound,
+                                              const DomainPoint &point) {
+                    LogicalRegion result = Legion::Runtime::get_runtime()->get_logical_subregion_by_color(context, upperBound, newPoint(point));
+                    return result;
+                }
+                
+                virtual LogicalRegion project(Context context, Task *task,
+                                              unsigned index,
+                                              LogicalRegion upperBound,
+                                              const DomainPoint &point) { return LogicalRegion::NO_REGION; }
+                virtual LogicalRegion project(const Mappable *mappable, unsigned index,
+                                              LogicalRegion upperBound,
+                                              const DomainPoint &point) { return LogicalRegion::NO_REGION; }
+                virtual LogicalRegion project(const Mappable *mappable, unsigned index,
+                                              LogicalPartition upperBound,
+                                              const DomainPoint &point) { return LogicalRegion::NO_REGION; }
+                virtual bool is_exclusive(void) const{ return true; }
+                virtual unsigned get_depth(void) const{ return 0; }
+                
+            protected:
+                virtual DomainPoint newPoint(DomainPoint point) = 0;
+            };
+            
+            // ProjectionFunctor has to be a pure function (currently)
+            // So make this a template that depends on increment
+            // In the future this also has to depend on ordering which is a dynamic int array
+            
+            template<int increment>
+            class CompositeProjectionFunctorClass : public CompositeProjectionFunctor {
+            public:
+                CompositeProjectionFunctorClass(void){}
+            private:
+                virtual DomainPoint newPoint(DomainPoint point) {
+                    Point<DIMENSIONS> p = point.get_point<DIMENSIONS>();
+                    int layer = p.x[2] * NUM_FRAGMENTS_PER_COMPOSITE_TASK + increment;
+                    //p.x[2] = mOrdering[layer];//no ordering yet, commutative only
+                    p.x[2] = layer;
+                    DomainPoint result = DomainPoint::from_point<DIMENSIONS>(p);
+                    
+                    cout << "functor task at " << point << " increment " << increment << " access subregion " << result << endl;
+                    
+                    return result;
+                }
+            };
+            
+            
+            
+            
         public:
             
             RenderSpace(){}
@@ -55,12 +106,11 @@ namespace Legion {
             virtual ~RenderSpace();
             
             FutureMap launchTaskByDepth(unsigned taskID);
-            Futures reduceAssociativeCommutative();
-            Futures reduceAssociativeNoncommutative(int ordering[]);
-            Futures reduceNonassociativeCommutative();
-            Futures reduceNonassociativeNoncommutative(int ordering[]);
+            FutureMap reduceAssociativeCommutative();
+            FutureMap reduceAssociativeNoncommutative(int ordering[]);
+            FutureMap reduceNonassociativeCommutative();
+            FutureMap reduceNonassociativeNoncommutative(int ordering[]);
             Future display(int t);
-            void reportTimers();
             
             static void createImageFieldPointers(ImageSize imageSize,
                                                  PhysicalRegion region,
@@ -78,13 +128,10 @@ namespace Legion {
                                      const std::vector<PhysicalRegion> &regions,
                                      Context ctx, Runtime *runtime);
             
-            static CompositeResult composite_leaf_task(const Task *task,
-                                                     const std::vector<PhysicalRegion> &regions,
-                                                     Context ctx, Runtime *runtime);
+            static void composite_task(const Task *task,
+                                       const std::vector<PhysicalRegion> &regions,
+                                       Context ctx, Runtime *runtime);
             
-            static CompositeResult composite_internal_task(const Task *task,
-                                                         const std::vector<PhysicalRegion> &regions,
-                                                         Context ctx, Runtime *runtime);
             
             static std::string describeTask(const Task *task) {
                 return std::string(task->get_task_name()) + " "
@@ -101,47 +148,52 @@ namespace Legion {
             FieldSpace imageFields();
             void createImage();
             void partitionImageByDepth();
+            void fragmentImageLayers();
+            void prepareCompositeLaunchDomains();
             void partitionImageForComposite();
-            void addCompositeRegionRequirement(Point<DIMENSIONS> point, int depth, TaskLauncher &taskLauncher);
-            void addFutureToLauncher(TaskLauncher &taskLauncher, Future future);
-            Future launchCompositeTask(Point<DIMENSIONS> point, Future priorResult, int nextInput);
-            Future launchCompositeTask(Point<DIMENSIONS> point, int depth0, int depth1);
-            Future launchCompositeTask(Future future0, Future future1);
-            Futures launchCompositeTaskTreeLevel( Futures futures);
-            Futures launchCompositeTaskTreeLeaves(int ordering[]);
-            Futures launchCompositeTaskTree(int ordering[]);
-            Futures launchCompositeTaskPipeline(int ordering[]);
-            Futures reduceAssociative(int permutation[]);
-            Futures reduceNonassociative(int permutation[]);
+            void prepareProjectionFunctors();
+            FutureMap reduceAssociative(int permutation[]);
+            FutureMap reduceNonassociative(int permutation[]);
+            FutureMap launchCompositeTaskTree(int permutation[]);
+            FutureMap launchCompositeTaskPipeline(int permutation[]);
+            FutureMap launchTreeLevel(int level, int permutation[]);
+            void addArgumentsToLauncher(IndexTaskLauncher &launcher, int layer0, int layer1, int taskZ, ArgumentMap &argMap);
+            void addTreeRegionRequirementToLauncher(IndexTaskLauncher &launcher, int level, bool isLeft, PrivilegeMode privilege, CoherenceProperty coherence);
             int *defaultPermutation();
             void addImageFieldsToRequirement(RegionRequirement &req);
             LogicalRegion createDisplayPlane();
-            void initializeTimers();
             void registerTasks();
             
-            static PhysicalRegion compositeTwoRegions(ImageSize imageSize, PhysicalRegion region0, int layer0, PhysicalRegion region1, int layer1);
+            typedef void(*CompositeFunction)
+            (PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, PixelField*,
+            PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, PixelField*,
+            PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, PixelField*);
+
+            static CompositeFunction compositeFunctionPointer(int depthFunction, int blendFunction);
             
-            static void compositeTwoPixels(PixelField *r0,
-                                           PixelField *g0,
-                                           PixelField *b0,
-                                           PixelField *a0,
-                                           PixelField *z0,
-                                           PixelField *userdata0,
-                                           PixelField *r1,
-                                           PixelField *g1,
-                                           PixelField *b1,
-                                           PixelField *a1,
-                                           PixelField *z1,
-                                           PixelField *userdata1,
-                                           PixelField *rOut,
-                                           PixelField *gOut,
-                                           PixelField *bOut,
-                                           PixelField *aOut,
-                                           PixelField *zOut,
-                                           PixelField *userdataOut);
+            static PhysicalRegion compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1);
+            
+            static void compositeTwoPixelsOver(PixelField *r0,
+                                               PixelField *g0,
+                                               PixelField *b0,
+                                               PixelField *a0,
+                                               PixelField *z0,
+                                               PixelField *userdata0,
+                                               PixelField *r1,
+                                               PixelField *g1,
+                                               PixelField *b1,
+                                               PixelField *a1,
+                                               PixelField *z1,
+                                               PixelField *userdata1,
+                                               PixelField *rOut,
+                                               PixelField *gOut,
+                                               PixelField *bOut,
+                                               PixelField *aOut,
+                                               PixelField *zOut,
+                                               PixelField *userdataOut);
             
             static void createImageFieldPointer(RegionAccessor<AccessorType::Generic, PixelField> &acc, int fieldID, PixelField *&field,
-                                                Rect<3> imageBounds, PhysicalRegion region, ByteOffset offset[]);
+                                                Rect<DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]);
             
             ImageSize mImageSize;
             Context mContext;
@@ -149,16 +201,17 @@ namespace Legion {
             LogicalRegion mImage;
             Domain mImageDomain;
             Domain mDepthDomain;
-            Domain mCompositeDomain;
+            Domain mCompositeTreeDomain;
+            Domain mCompositePipelineDomain;
             Domain mDisplayDomain;
             LogicalPartition mDepthPartition;
             LogicalPartition mCompositePartition;
             int *mDefaultPermutation;
-            UsecTimer *mCompositeLaunchTimer;
             int mCompositeTaskCount;
-            TaskID mCompositeLeafTaskID;
-            TaskID mCompositeInternalTaskID;
+            TaskID mCompositeTaskID;
             TaskID mDisplayTaskID;
+            vector<CompositeProjectionFunctor*> *mProjectionFunctors;
+            
         };
         
     }
