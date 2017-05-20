@@ -19,7 +19,7 @@
 #include <fstream>
 #include <math.h>
 
-#include <OpenGL/OpenGL.h>
+//#include <OpenGL/OpenGL.h>
 
 using namespace LegionRuntime::HighLevel;
 using namespace LegionRuntime::Accessor;
