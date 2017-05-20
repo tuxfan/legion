@@ -364,9 +364,6 @@ namespace Legion {
         
         void RenderSpace::addRegionRequirementToCompositeLauncher(Legion::IndexTaskLauncher &launcher, int level, bool isLeft, PrivilegeMode privilege, CoherenceProperty coherence) {
             int projectionFunctorID = projectionFunctorIndex(level, isLeft);
-            
-            projectionFunctorID=0;/////bug
-            
             RegionRequirement req(mCompositePartition, projectionFunctorID, privilege, coherence, mImage);
             addImageFieldsToRequirement(req);
             launcher.add_region_requirement(req);
