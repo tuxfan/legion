@@ -52,10 +52,10 @@ public:
         }
         double sToUs = 1000000.0;
         return mDescription
-        + " " + std::to_string(mCumulativeElapsedSeconds) + " sec"
-        + " " + std::to_string(mCumulativeElapsedSeconds * sToUs)
-        + " usec = " + std::to_string(meanSampleElapsedSeconds * sToUs)
-        + " usec * " + std::to_string(mNumSamples)
+        //+ " " + std::to_string(mCumulativeElapsedSeconds) + " sec"
+        //+ " " + std::to_string(mCumulativeElapsedSeconds * sToUs)
+        //+ " usec = " + std::to_string(meanSampleElapsedSeconds * sToUs)
+        //+ " usec * " + std::to_string(mNumSamples)
         + (mNumSamples == 1 ? " sample" : " samples");
     }
     
