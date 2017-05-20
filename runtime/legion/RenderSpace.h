@@ -57,16 +57,6 @@ namespace Legion {
                     return result;
                 }
                 
-                virtual LogicalRegion project(Context context, Task *task,
-                                              unsigned index,
-                                              LogicalRegion upperBound,
-                                              const DomainPoint &point) { return LogicalRegion::NO_REGION; }
-                virtual LogicalRegion project(const Mappable *mappable, unsigned index,
-                                              LogicalRegion upperBound,
-                                              const DomainPoint &point) { return LogicalRegion::NO_REGION; }
-                virtual LogicalRegion project(const Mappable *mappable, unsigned index,
-                                              LogicalPartition upperBound,
-                                              const DomainPoint &point) { return LogicalRegion::NO_REGION; }
                 virtual bool is_exclusive(void) const{ return true; }
                 virtual unsigned get_depth(void) const{ return 0; }
                 
@@ -89,9 +79,6 @@ namespace Legion {
                     //p.x[2] = mOrdering[layer];//no ordering yet, commutative only
                     p.x[2] = layer;
                     DomainPoint result = DomainPoint::from_point<DIMENSIONS>(p);
-                    
-                    cout << "functor task at " << point << " increment " << increment << " access subregion " << result << endl;
-                    
                     return result;
                 }
             };

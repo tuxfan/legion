@@ -336,7 +336,7 @@ namespace Legion {
             composite.start();
             PhysicalRegion fragment0 = regions[0];
             PhysicalRegion fragment1 = regions[1];
-            CompositeArguments args = ((CompositeArguments*)task->args)[0];
+            CompositeArguments args = ((CompositeArguments*)task->local_args)[0];
             
 #if NULL_COMPOSITE_TASKS
             return;//performance testing
