@@ -42,14 +42,10 @@
 #define REALM_USE_LEGION_LAYOUT_CONSTRAINTS
 #include "realm.h"
 
-#ifdef ENABLE_LEGION_TLS
-#if HAS_CXX11_THREAD_LOCAL // for clang on OSX
-#define HAS_LEGION_THREAD_LOCAL
-#elif !defined(__MACH__) && __cplusplus >= 201103L // for non-OSX
-#define HAS_LEGION_THREAD_LOCAL
+#if __cplusplus >= 201402L
+#define LEGION_DEPRECATED(x) [[deprecated(x)]]
 #else
-#include <pthread.h> // needed for thread local storage before C++11
-#endif
+#define LEGION_DEPRECATED(x)
 #endif
 
 namespace BindingLib { class Utility; } // BindingLib namespace
@@ -1232,11 +1228,7 @@ namespace Legion {
     // Nasty global variable for TLS support of figuring out
     // our context implicitly, this is experimental only
 #ifdef ENABLE_LEGION_TLS
-#ifdef HAS_LEGION_THREAD_LOCAL
-    extern thread_local TaskContext *implicit_context;
-#else
-    extern pthread_key_t implicit_context;
-#endif
+    extern __thread TaskContext *implicit_context;
 #endif
     
     // legion_trace.h
@@ -1416,19 +1408,19 @@ namespace Legion {
     friend class BindingLib::Utility;                       \
     friend class CObjectWrapper;                  
 
-#define LEGION_EXTERN_LOGGER_DECLARATIONS                        \
-    extern LegionRuntime::Logger::Category log_run;              \
-    extern LegionRuntime::Logger::Category log_task;             \
-    extern LegionRuntime::Logger::Category log_index;            \
-    extern LegionRuntime::Logger::Category log_field;            \
-    extern LegionRuntime::Logger::Category log_region;           \
-    extern LegionRuntime::Logger::Category log_inst;             \
-    extern LegionRuntime::Logger::Category log_variant;          \
-    extern LegionRuntime::Logger::Category log_allocation;       \
-    extern LegionRuntime::Logger::Category log_prof;             \
-    extern LegionRuntime::Logger::Category log_garbage;          \
-    extern LegionRuntime::Logger::Category log_spy;              \
-    extern LegionRuntime::Logger::Category log_shutdown;
+#define LEGION_EXTERN_LOGGER_DECLARATIONS      \
+    extern Realm::Logger log_run;              \
+    extern Realm::Logger log_task;             \
+    extern Realm::Logger log_index;            \
+    extern Realm::Logger log_field;            \
+    extern Realm::Logger log_region;           \
+    extern Realm::Logger log_inst;             \
+    extern Realm::Logger log_variant;          \
+    extern Realm::Logger log_allocation;       \
+    extern Realm::Logger log_prof;             \
+    extern Realm::Logger log_garbage;          \
+    extern Realm::Logger log_spy;              \
+    extern Realm::Logger log_shutdown;
 
   }; // Internal namespace
 
@@ -1452,6 +1444,7 @@ namespace Legion {
   typedef Realm::ElementMask::Enumerator Enumerator;
   typedef ::legion_lowlevel_coord_t coord_t;
   typedef Realm::IndexSpace::FieldDataDescriptor FieldDataDescriptor;
+  typedef Realm::Logger Logger;
   typedef std::map<CustomSerdezID, 
                    const Realm::CustomSerdezUntyped *> SerdezOpTable;
   typedef std::map<Realm::ReductionOpID, 
@@ -1681,24 +1674,12 @@ namespace Legion {
     inline void lg_wait(void) const
       {
 #ifdef ENABLE_LEGION_TLS
-        if (!has_triggered())
-        {
-          // Save the context locally
-#ifdef HAS_LEGION_THREAD_LOCAL
-          Context local_ctx = Internal::implicit_context; 
-#else
-          Context local_ctx = static_cast<Context>(
-              pthread_getspecific(Internal::implicit_context));
-#endif
-          // Do the wait
-          wait();
-          // Write the context back
-#ifdef HAS_LEGION_THREAD_LOCAL
-          Internal::implicit_context = local_ctx;
-#else
-          pthread_setspecific(Internal::implicit_context, local_ctx);
-#endif
-        }
+        // Save the context locally
+        TaskContext *local_ctx = Internal::implicit_context; 
+        // Do the wait
+        wait();
+        // Write the context back
+        Internal::implicit_context = local_ctx;
 #else
         // Just do the normal wait call
         wait(); 

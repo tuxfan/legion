@@ -36,7 +36,8 @@ namespace Legion {
      * A class for deduplicating memory used with task arguments
      * and knowing when to collect the data associated with it
      */
-    class AllocManager : public Collectable {
+    class AllocManager : public Collectable,
+                         public LegionHeapify<AllocManager> {
     public:
       static const AllocationType alloc_type = ALLOC_MANAGER_ALLOC;
     public:
@@ -73,7 +74,8 @@ namespace Legion {
      * a single backing store to de-duplicate domain
      * points and values.
      */
-    class ArgumentMapImpl : public Collectable {
+    class ArgumentMapImpl : public Collectable,
+                            public LegionHeapify<ArgumentMapImpl> {
     public:
       static const AllocationType alloc_type = ARGUMENT_MAP_ALLOC;
     public:
@@ -109,7 +111,8 @@ namespace Legion {
      * remotely.  We use the distributed collectable scheme
      * to manage garbage collection of distributed futures
      */
-    class FutureImpl : public DistributedCollectable {
+    class FutureImpl : public DistributedCollectable,
+                       public LegionHeapify<FutureImpl> {
     public:
       static const AllocationType alloc_type = FUTURE_ALLOC;
     public:
@@ -194,7 +197,8 @@ namespace Legion {
      * that can be used to find the name of a future for a
      * given point anywhere in the machine.
      */
-    class FutureMapImpl : public DistributedCollectable {
+    class FutureMapImpl : public DistributedCollectable,
+                          public LegionHeapify<FutureMapImpl> {
     public:
       static const AllocationType alloc_type = FUTURE_MAP_ALLOC;
     public:
@@ -263,7 +267,8 @@ namespace Legion {
      * will only be manipulated by a single task which is 
      * guaranteed to only be running on one processor.
      */
-    class PhysicalRegionImpl : public Collectable {
+    class PhysicalRegionImpl : public Collectable,
+                               public LegionHeapify<PhysicalRegionImpl> {
     public:
       static const AllocationType alloc_type = PHYSICAL_REGION_ALLOC;
     public:
@@ -348,7 +353,7 @@ namespace Legion {
      * locks.  Grants continues accepting registrations
      * until the runtime marks that it is no longer active.
      */
-    class GrantImpl : public Collectable {
+    class GrantImpl : public Collectable, public LegionHeapify<GrantImpl> {
     public:
       static const AllocationType alloc_type = GRANT_ALLOC;
     public:
@@ -386,7 +391,8 @@ namespace Legion {
       Reservation grant_lock;
     };
 
-    class MPILegionHandshakeImpl : public Collectable {
+    class MPILegionHandshakeImpl : public Collectable,
+                       public LegionHeapify<MPILegionHandshakeImpl> {
     public:
       static const AllocationType alloc_type = MPI_HANDSHAKE_ALLOC;
     public:
@@ -1061,7 +1067,7 @@ namespace Legion {
      * This class is used for storing all the meta-data associated 
      * with a logical task
      */
-    class TaskImpl {
+    class TaskImpl : public LegionHeapify<TaskImpl> {
     public:
       static const AllocationType alloc_type = TASK_IMPL_ALLOC;
     public:
@@ -1087,14 +1093,15 @@ namespace Legion {
       void find_valid_variants(std::vector<VariantID> &valid_variants, 
                                Processor::Kind kind) const;
     public:
-      const char* get_name(bool needs_lock = true) const;
+      const char* get_name(bool needs_lock = true);
       void attach_semantic_information(SemanticTag tag, AddressSpaceID source,
          const void *buffer, size_t size, bool is_mutable, bool send_to_owner);
       bool retrieve_semantic_information(SemanticTag tag,
                                          const void *&buffer, size_t &size,
                                          bool can_fail, bool wait_until);
       void send_semantic_info(AddressSpaceID target, SemanticTag tag,
-                              const void *value, size_t size, bool is_mutable);
+                        const void *value, size_t size, bool is_mutable,
+                        RtUserEvent to_trigger = RtUserEvent::NO_RT_USER_EVENT);
       void send_semantic_request(AddressSpaceID target, SemanticTag tag, 
                              bool can_fail, bool wait_until, RtUserEvent ready);
       void process_semantic_request(SemanticTag tag, AddressSpaceID target, 
@@ -1113,6 +1120,7 @@ namespace Legion {
     public:
       const TaskID task_id;
       Runtime *const runtime;
+      char *const initial_name;
     private:
       Reservation task_lock;
       std::map<VariantID,VariantImpl*> variants;
@@ -1129,7 +1137,7 @@ namespace Legion {
      * This class is used for storing all the meta-data associated
      * with a particular variant implementation of a task
      */
-    class VariantImpl { 
+    class VariantImpl : public LegionHeapify<VariantImpl> { 
     public:
       static const AllocationType alloc_type = VARIANT_IMPL_ALLOC;
     public:
@@ -1200,7 +1208,8 @@ namespace Legion {
      * variout places so we make it a distributed collectable
      */
     class LayoutConstraints : 
-      public LayoutConstraintSet, public Collectable {
+      public LayoutConstraintSet, public Collectable,
+      public LegionHeapify<LayoutConstraints> {
     public:
       static const AllocationType alloc_type = LAYOUT_CONSTRAINTS_ALLOC; 
     protected:
@@ -2715,9 +2724,10 @@ namespace Legion {
         int       diff_allocations;
         off_t           diff_bytes;
       };
-      Reservation allocation_lock;
-      std::map<AllocationType,AllocationTracker> allocation_manager;
-      unsigned long long allocation_tracing_count;
+      Reservation allocation_lock; // leak this lock intentionally
+      // Make these static so they live through the end of the runtime
+      static std::map<AllocationType,AllocationTracker> allocation_manager;
+      static unsigned long long allocation_tracing_count;
 #endif
     protected:
       Reservation individual_task_lock;
@@ -3089,7 +3099,7 @@ namespace Legion {
       }
       // Couldn't find one so make one
       if (result == NULL)
-        result = legion_new<T>(this);
+        result = new T(this);
 #ifdef DEBUG_LEGION
       assert(result != NULL);
 #endif
@@ -3103,7 +3113,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       if (CAN_BE_DELETED && (queue.size() == LEGION_MAX_RECYCLABLE_OBJECTS))
-        legion_delete(operation);
+        delete (operation);
       else
         queue.push_front(operation);
     }
