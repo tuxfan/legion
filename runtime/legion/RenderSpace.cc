@@ -364,6 +364,9 @@ namespace Legion {
         
         void RenderSpace::addRegionRequirementToCompositeLauncher(Legion::IndexTaskLauncher &launcher, int level, bool isLeft, PrivilegeMode privilege, CoherenceProperty coherence) {
             int projectionFunctorID = projectionFunctorIndex(level, isLeft);
+            
+            projectionFunctorID=0;/////bug
+            
             RegionRequirement req(mCompositePartition, projectionFunctorID, privilege, coherence, mImage);
             addImageFieldsToRequirement(req);
             launcher.add_region_requirement(req);
@@ -387,7 +390,7 @@ namespace Legion {
             
             IndexTaskLauncher treeLauncher(mCompositeTaskID, mCompositeTreeDomain, TaskArgument(NULL, 0), argMap);
             addRegionRequirementToCompositeLauncher(treeLauncher, level, true, READ_WRITE, EXCLUSIVE);
-//            addRegionRequirementToCompositeLauncher(treeLauncher, level, false, READ_ONLY, SIMULTANEOUS);
+            addRegionRequirementToCompositeLauncher(treeLauncher, level, false, READ_ONLY, SIMULTANEOUS);
             assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
             
             FutureMap futures = mRuntime->execute_index_space(mContext, treeLauncher);
