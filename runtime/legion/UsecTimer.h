@@ -20,7 +20,7 @@
 #include <chrono>
 
 using namespace std;
-using std::chrono::high_resolution_clock;
+//using std::chrono::high_resolution_clock;
 
 class UsecTimer {
 public:
@@ -32,15 +32,15 @@ public:
     }
     ~UsecTimer(){}
     void start(){
-        mStart = high_resolution_clock::now();
+        //mStart = high_resolution_clock::now();
         mStarted = true;
     }
     void stop(){
         if(mStarted) {
-            std::chrono::time_point<std::chrono::high_resolution_clock> end = high_resolution_clock::now();
-            double elapsedSeconds = ((end - mStart).count()) * high_resolution_clock::period::num /
-            static_cast<double>(high_resolution_clock::period::den);
-            mCumulativeElapsedSeconds += elapsedSeconds;
+            //std::chrono::time_point<std::chrono::high_resolution_clock> end = high_resolution_clock::now();
+            //double elapsedSeconds = ((end - mStart).count()) * high_resolution_clock::period::num /
+            //static_cast<double>(high_resolution_clock::period::den);
+            //mCumulativeElapsedSeconds += elapsedSeconds;
             mNumSamples++;
             mStarted = false;
         }
@@ -61,7 +61,7 @@ public:
     
 private:
     bool mStarted;
-    high_resolution_clock::time_point mStart;
+    //high_resolution_clock::time_point mStart;
     string mDescription;
     double mCumulativeElapsedSeconds;
     int mNumSamples;
