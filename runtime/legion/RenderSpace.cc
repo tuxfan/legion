@@ -33,7 +33,7 @@ namespace Legion {
             assert(imageSize.depth % 2 == 0);
             mContext = ctx;
             mRuntime = runtime;
-            mDefaultPermutation = nullptr;
+            mDefaultPermutation = NULL;
             createImage();
             partitionImageByDepth();
             partitionImageForComposite();
@@ -41,9 +41,9 @@ namespace Legion {
         }
         
         RenderSpace::~RenderSpace() {
-            if(mDefaultPermutation != nullptr) {
+            if(mDefaultPermutation != NULL) {
                 delete [] mDefaultPermutation;
-                mDefaultPermutation = nullptr;
+                mDefaultPermutation = NULL;
             }
         }
         
@@ -258,7 +258,7 @@ namespace Legion {
         
         
         int *RenderSpace::defaultPermutation(){
-            if(mDefaultPermutation == nullptr) {
+            if(mDefaultPermutation == NULL) {
                 mDefaultPermutation = new int[mImageSize.depth];
                 for(int i = 0; i < mImageSize.depth; ++i) {
                     mDefaultPermutation[i] = i;
@@ -465,7 +465,9 @@ namespace Legion {
                                        Context ctx, HighLevelRuntime *runtime) {
             
             DisplayArguments args = ((DisplayArguments*)task->args)[0];
-            string outputFileName = "display." + ::to_string(args.t) + ".txt";
+            char fileName[1024];
+            sprintf(fileName, "display.%d.txt", args.t);
+            string outputFileName = string(fileName);
             UsecTimer display(describeTask(task) + " write to " + outputFileName + ":");
             display.start();
             PhysicalRegion displayPlane = regions[0];
