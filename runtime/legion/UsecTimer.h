@@ -50,7 +50,7 @@ public:
         if(mNumSamples > 0) {
             meanSampleElapsedSeconds = mCumulativeElapsedSeconds / mNumSamples;
         }
-        double sToUs = 1000000.0;
+        //double sToUs = 1000000.0;
         return mDescription
         //+ " " + std::to_string(mCumulativeElapsedSeconds) + " sec"
         //+ " " + std::to_string(mCumulativeElapsedSeconds * sToUs)

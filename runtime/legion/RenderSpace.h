@@ -135,11 +135,12 @@ namespace Legion {
             
             static std::string describeTask(const Task *task) {
                 return std::string(task->get_task_name()) + " "
-                + std::to_string(task->get_unique_id()) +
-                + " ("
-                + std::to_string(task->index_point.point_data[0]) + ","
-                + std::to_string(task->index_point.point_data[1]) + ","
-                + std::to_string(task->index_point.point_data[2]) + ")";
+//                + std::to_string(task->get_unique_id()) +
+//                + " ("
+//                + std::to_string(task->index_point.point_data[0]) + ","
+//                + std::to_string(task->index_point.point_data[1]) + ","
+//                + std::to_string(task->index_point.point_data[2]) + ")"
+                ;
             }
             
             
