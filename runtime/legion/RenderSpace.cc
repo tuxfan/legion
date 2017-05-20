@@ -365,7 +365,8 @@ namespace Legion {
         
         void RenderSpace::addTreeRegionRequirementToLauncher(Legion::IndexTaskLauncher &launcher, int level, bool isLeft, PrivilegeMode privilege, CoherenceProperty coherence) {
             int projectionFunctorID = projectionFunctorIndex(level, isLeft);
-            RegionRequirement req(mCompositePartition, projectionFunctorID, privilege, coherence, mImage);
+//            RegionRequirement req(mCompositePartition, projectionFunctorID, privilege, coherence, mImage);
+            RegionRequirement req(mCompositePartition, 0, privilege, coherence, mImage);
             addImageFieldsToRequirement(req);
             launcher.add_region_requirement(req);
         }
@@ -374,7 +375,7 @@ namespace Legion {
         FutureMap RenderSpace::launchTreeLevel(int level, int ordering[]) {
             ArgumentMap argMap;
             IndexTaskLauncher treeLauncher(mCompositeTaskID, mCompositeTreeDomain, TaskArgument(NULL, 0), argMap);
-            addTreeRegionRequirementToLauncher(treeLauncher, level, true, READ_WRITE, EXCLUSIVE);
+            addTreeRegionRequirementToLauncher(treeLauncher, level, true, READ_WRITE, SIMULTANEOUS);
             addTreeRegionRequirementToLauncher(treeLauncher, level, false, READ_ONLY, SIMULTANEOUS);
             assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
             
@@ -394,6 +395,9 @@ namespace Legion {
             FutureMap futures;
             for(int level = 0; level < numTreeLevels; ++level) {
                 futures = launchTreeLevel(level, ordering);
+                
+                futures.wait_all_results();////
+                
             }
             return futures;
         }
