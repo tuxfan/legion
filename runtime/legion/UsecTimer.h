@@ -37,7 +37,7 @@ public:
     }
     void stop(){
         if(mStarted) {
-            auto end = high_resolution_clock::now();
+            std::chrono::time_point<std::chrono::high_resolution_clock> end = high_resolution_clock::now();
             double elapsedSeconds = ((end - mStart).count()) * high_resolution_clock::period::num /
             static_cast<double>(high_resolution_clock::period::den);
             mCumulativeElapsedSeconds += elapsedSeconds;

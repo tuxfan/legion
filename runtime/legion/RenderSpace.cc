@@ -363,7 +363,7 @@ namespace Legion {
         
         
         void RenderSpace::addTreeRegionRequirementToLauncher(Legion::IndexTaskLauncher &launcher, int level, bool isLeft, PrivilegeMode privilege, CoherenceProperty coherence) {
-            int projectionFunctorID = projectionFunctorIndex(level, isLeft);
+//            int projectionFunctorID = projectionFunctorIndex(level, isLeft);
 //            RegionRequirement req(mCompositePartition, projectionFunctorID, privilege, coherence, mImage);
             RegionRequirement req(mCompositePartition, 0, privilege, coherence, mImage);
             addImageFieldsToRequirement(req);

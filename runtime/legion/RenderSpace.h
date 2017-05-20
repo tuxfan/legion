@@ -207,7 +207,6 @@ namespace Legion {
             LogicalPartition mDepthPartition;
             LogicalPartition mCompositePartition;
             int *mDefaultPermutation;
-            int mCompositeTaskCount;
             TaskID mCompositeTaskID;
             TaskID mDisplayTaskID;
             vector<CompositeProjectionFunctor*> *mProjectionFunctors;

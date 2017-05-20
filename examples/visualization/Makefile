@@ -26,6 +26,13 @@ USE_GASNET      ?= 0		# Include GASNet support (requires GASNet)
 USE_HDF         ?= 0		# Include HDF5 support (requires HDF5)
 ALT_MAPPERS     ?= 0		# Include alternative mappers (not recommended)
 
+NUM_FRAGMENTS_PER_LAYER ?= 4
+TIME_PER_FRAME ?= 0
+TIME_OVERALL ?= 0
+NULL_COMPOSITE_TASKS ?= 0
+TREE_REDUCTION ?= 1
+
+
 # Put the binary file name here
 OUTFILE		?= prototype1
 # List all the application source files here
@@ -34,7 +41,7 @@ GEN_GPU_SRC	?=		# .cu files
 
 # You can modify these variables, some will be appended to by the runtime makefile
 INC_FLAGS	?=
-CC_FLAGS	?= -std=c++11 -DNUM_FRAGMENTS_PER_LAYER=$(NUM_FRAGMENTS_PER_LAYER) -DTIME_PER_FRAME=$(TIME_PER_FRAME) -DTIME_OVERALL=$(TIME_OVERALL) -DNULL_COMPOSITE_TASKS=$(NULL_COMPOSITE_TASKS) -DTREE_REDUCTION=$(TREE_REDUCTION)
+CC_FLAGS	?= -std=c++98 -DNUM_FRAGMENTS_PER_LAYER=$(NUM_FRAGMENTS_PER_LAYER) -DTIME_PER_FRAME=$(TIME_PER_FRAME) -DTIME_OVERALL=$(TIME_OVERALL) -DNULL_COMPOSITE_TASKS=$(NULL_COMPOSITE_TASKS) -DTREE_REDUCTION=$(TREE_REDUCTION)
 NVCC_FLAGS	?=
 GASNET_FLAGS	?=
 LD_FLAGS	?=
