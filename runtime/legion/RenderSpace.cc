@@ -348,7 +348,6 @@ namespace Legion {
         
         
         
-        
         void RenderSpace::addArgumentsToLauncher(Legion::IndexTaskLauncher &launcher, int layer0, int layer1, int taskZ, Legion::ArgumentMap &argMap) {
             assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
             Point<DIMENSIONS> point = Point<DIMENSIONS>::ZEROES();
