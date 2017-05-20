@@ -157,8 +157,8 @@ namespace Legion {
             FutureMap launchCompositeTaskTree(int permutation[]);
             FutureMap launchCompositeTaskPipeline(int permutation[]);
             FutureMap launchTreeLevel(int level, int permutation[]);
-            void addArgumentsToLauncher(IndexTaskLauncher &launcher, int layer0, int layer1, int taskZ, ArgumentMap &argMap);
-            void addTreeRegionRequirementToLauncher(IndexTaskLauncher &launcher, int level, bool isLeft, PrivilegeMode privilege, CoherenceProperty coherence);
+            void addCompositeArgumentsToArgmap(CompositeArguments *args, int taskZ, ArgumentMap &argMap);
+            void addRegionRequirementToCompositeLauncher(IndexTaskLauncher &launcher, int level, bool isLeft, PrivilegeMode privilege, CoherenceProperty coherence);
             int *defaultPermutation();
             void addImageFieldsToRequirement(RegionRequirement &req);
             LogicalRegion createDisplayPlane();
@@ -167,30 +167,31 @@ namespace Legion {
             typedef void(*CompositeFunction)
             (PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, PixelField*,
             PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, PixelField*,
-            PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, PixelField*);
-
+            PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, int);
+            
             static CompositeFunction compositeFunctionPointer(int depthFunction, int blendFunction);
             
             static PhysicalRegion compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1);
             
-            static void compositeTwoPixelsOver(PixelField *r0,
-                                               PixelField *g0,
-                                               PixelField *b0,
-                                               PixelField *a0,
-                                               PixelField *z0,
-                                               PixelField *userdata0,
-                                               PixelField *r1,
-                                               PixelField *g1,
-                                               PixelField *b1,
-                                               PixelField *a1,
-                                               PixelField *z1,
-                                               PixelField *userdata1,
-                                               PixelField *rOut,
-                                               PixelField *gOut,
-                                               PixelField *bOut,
-                                               PixelField *aOut,
-                                               PixelField *zOut,
-                                               PixelField *userdataOut);
+            static void compositePixelsLess(PixelField *r0,
+                                            PixelField *g0,
+                                            PixelField *b0,
+                                            PixelField *a0,
+                                            PixelField *z0,
+                                            PixelField *userdata0,
+                                            PixelField *r1,
+                                            PixelField *g1,
+                                            PixelField *b1,
+                                            PixelField *a1,
+                                            PixelField *z1,
+                                            PixelField *userdata1,
+                                            PixelField *rOut,
+                                            PixelField *gOut,
+                                            PixelField *bOut,
+                                            PixelField *aOut,
+                                            PixelField *zOut,
+                                            PixelField *userdataOut,
+                                            int numPixels);
             
             static void createImageFieldPointer(RegionAccessor<AccessorType::Generic, PixelField> &acc, int fieldID, PixelField *&field,
                                                 Rect<DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]);
