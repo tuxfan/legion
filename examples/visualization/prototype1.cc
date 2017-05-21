@@ -108,7 +108,7 @@ void top_level_task(const Task *task,
                     Context ctx, HighLevelRuntime *runtime) {
     
     const int numSimulationTasks = 4;
-    const int numTimeSteps = 10;
+    const int numTimeSteps = 3;
     
 #if 0
     const int width = 3840;
@@ -128,7 +128,7 @@ void top_level_task(const Task *task,
 #ifdef NUM_FRAGMENTS_PER_LAYER
     const int numFragmentsPerLayer = NUM_FRAGMENTS_PER_LAYER;
 #else
-    const int numFragmentsPerLayer = numSimulationTasks * 8;
+    const int numFragmentsPerLayer = 1;
 #endif
     
     ImageSize imageSize = (ImageSize){ width, height, numSimulationTasks, numFragmentsPerLayer };

@@ -36,6 +36,8 @@ namespace Legion {
             int blendFunction;
         } CompositeArguments;
         
+        
+
         typedef struct {
             ImageSize imageSize;
             int t;
@@ -86,8 +88,6 @@ namespace Legion {
             
             
             
-        public:
-            
             RenderSpace(){}
             RenderSpace(ImageSize imageSize, Context ctx, HighLevelRuntime *runtime);
             virtual ~RenderSpace();
@@ -133,11 +133,21 @@ namespace Legion {
             
             
         private:
+            typedef struct {
+                CompositeProjectionFunctor* functor0;
+                CompositeProjectionFunctor* functor1;
+                int functorID0;
+                int functorID1;
+                Domain domain;
+            } CompositeLaunchDescriptor;
+
             FieldSpace imageFields();
             void createImage();
             void partitionImageByDepth();
-            void fragmentImageLayers();
+            void prepareCompositePartition();
             void prepareCompositeLaunchDomains();
+            CompositeProjectionFunctor* newProjectionFunctor(int increment);
+            Domain compositeDomain(int level);
             void partitionImageForComposite();
             void prepareProjectionFunctors();
             FutureMap reduceAssociative(int permutation[]);
@@ -190,7 +200,6 @@ namespace Legion {
             LogicalRegion mImage;
             Domain mImageDomain;
             Domain mDepthDomain;
-            Domain mCompositeTreeDomain;
             Domain mCompositePipelineDomain;
             Domain mDisplayDomain;
             LogicalPartition mDepthPartition;
@@ -198,7 +207,7 @@ namespace Legion {
             int *mDefaultPermutation;
             TaskID mCompositeTaskID;
             TaskID mDisplayTaskID;
-            vector<CompositeProjectionFunctor*> *mProjectionFunctors;
+            vector<CompositeLaunchDescriptor> mCompositeLaunchDescriptor;
             
         };
         

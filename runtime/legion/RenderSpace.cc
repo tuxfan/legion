@@ -116,23 +116,13 @@ namespace Legion {
         }
         
         
-        void RenderSpace::fragmentImageLayers() {
+        void RenderSpace::prepareCompositePartition() {
             Blockify<DIMENSIONS> coloring(mImageSize.fragmentSize());
             IndexPartition imageCompositeIndexPartition = mRuntime->create_index_partition(mContext, mImage.get_index_space(), coloring);
             mRuntime->attach_name(imageCompositeIndexPartition, "image composite index partition");
             mCompositePartition = mRuntime->get_logical_partition(mContext, mImage, imageCompositeIndexPartition);
         }
         
-        
-        void RenderSpace::prepareCompositeLaunchDomains() {
-            Point<DIMENSIONS> numTreeComposites = mImageSize.numFragments();
-            numTreeComposites.x[2] /= NUM_FRAGMENTS_PER_COMPOSITE_TASK;
-            Rect<DIMENSIONS> compositeTreeBounds(mImageSize.origin(), numTreeComposites - Point<DIMENSIONS>::ONES());
-            mCompositeTreeDomain = Domain::from_rect<DIMENSIONS>(compositeTreeBounds);
-            
-            Rect<DIMENSIONS> compositePipelineBounds(mImageSize.origin(), mImageSize.numFragments() - Point<DIMENSIONS>::ONES());
-            mCompositePipelineDomain = Domain::from_rect<DIMENSIONS>(compositePipelineBounds);
-        }
         
         
         int projectionFunctorIndex(int level, bool isLeft) {
@@ -141,58 +131,64 @@ namespace Legion {
         }
         
         
-        void RenderSpace::prepareProjectionFunctors() {
-            mProjectionFunctors = new vector<CompositeProjectionFunctor*>();
-            mProjectionFunctors->push_back(NULL);//skip position zero
-            // level 0
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<1>());
-            assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
-            // level 1
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<2>());
-            // level 2
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<4>());
-            // level 3
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<8>());
-            // level 4
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<16>());
-            // level 5
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<32>());
-            // level 6
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<64>());
-            // level 7
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<128>());
-            // level 8
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<256>());
-            // level 9
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<512>());
-            // level 10
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<0>());
-            mProjectionFunctors->push_back(new CompositeProjectionFunctorClass<1024>());
-            assert(log2f(mImageSize.depth) <= 10);
-            
-            for(int i = 0; i < mProjectionFunctors->size() - 1; i += NUM_FRAGMENTS_PER_COMPOSITE_TASK) {
-                int level = i / NUM_FRAGMENTS_PER_COMPOSITE_TASK;
-                int functorID0 = projectionFunctorIndex(level, true);
-                mRuntime->register_projection_functor(functorID0, (*mProjectionFunctors)[functorID0]);
-                int functorID1 = projectionFunctorIndex(level, false);
-                mRuntime->register_projection_functor(functorID1, (*mProjectionFunctors)[functorID1]);
+#define MAX_TREE_LEVELS 16
+        
+        RenderSpace::CompositeProjectionFunctor* RenderSpace::newProjectionFunctor(int increment) {
+            switch(increment){
+                case 0: return new CompositeProjectionFunctorClass<0>;
+                case 1: return new CompositeProjectionFunctorClass<1>;
+                case 2: return new CompositeProjectionFunctorClass<2>;
+                case 4: return new CompositeProjectionFunctorClass<4>;
+                case 8: return new CompositeProjectionFunctorClass<8>;
+                case 16: return new CompositeProjectionFunctorClass<16>;
+                case 32: return new CompositeProjectionFunctorClass<32>;
+                case 64: return new CompositeProjectionFunctorClass<64>;
+                case 128: return new CompositeProjectionFunctorClass<128>;
+                case 256: return new CompositeProjectionFunctorClass<256>;
+                case 512: return new CompositeProjectionFunctorClass<512>;
+                case 1024: return new CompositeProjectionFunctorClass<1024>;
+                case 2048: return new CompositeProjectionFunctorClass<2048>;
+                case 4096: return new CompositeProjectionFunctorClass<4096>;
+                case 8192: return new CompositeProjectionFunctorClass<8192>;
+                case 16384: return new CompositeProjectionFunctorClass<16384>;
+                case 32768: return new CompositeProjectionFunctorClass<32768>;
+                default:
+                    assert(false);
             }
         }
         
+        
+        Domain RenderSpace::compositeDomain(int increment) {
+            Point<DIMENSIONS> numTreeComposites = mImageSize.numFragments();
+            numTreeComposites.x[2] /= (NUM_FRAGMENTS_PER_COMPOSITE_TASK * increment);
+            Rect<DIMENSIONS> compositeTreeBounds(mImageSize.origin(), numTreeComposites - Point<DIMENSIONS>::ONES());
+            return Domain::from_rect<DIMENSIONS>(compositeTreeBounds);
+            
+        }
+
+        
         void RenderSpace::partitionImageForComposite() {
-            fragmentImageLayers();
-            prepareCompositeLaunchDomains();
-            prepareProjectionFunctors();
+            prepareCompositePartition();
+            mCompositeLaunchDescriptor = vector<CompositeLaunchDescriptor>();
+            
+            int increment = 1;
+            int numTreeLevels = log2f(mImageSize.depth);
+            for(int level = 0; level < numTreeLevels; ++level) {
+                CompositeLaunchDescriptor launch = {
+                    newProjectionFunctor(0),
+                    newProjectionFunctor(increment),
+                    projectionFunctorIndex(level, true),
+                    projectionFunctorIndex(level, false),
+                    compositeDomain(increment)
+                };
+                mRuntime->register_projection_functor(launch.functorID0, launch.functor0);
+                mRuntime->register_projection_functor(launch.functorID1, launch.functor1);
+                mCompositeLaunchDescriptor.push_back(launch);
+                increment *= 2;
+            }
+            
+            Rect<DIMENSIONS> compositePipelineBounds(mImageSize.origin(), mImageSize.numFragments() - Point<DIMENSIONS>::ONES());
+            mCompositePipelineDomain = Domain::from_rect<DIMENSIONS>(compositePipelineBounds);
         }
         
         
@@ -302,7 +298,7 @@ namespace Legion {
         
         
         inline RenderSpace::CompositeFunction RenderSpace::compositeFunctionPointer(int depthFunction, int blendFunction) {
-            CompositeFunction result = NULL;
+            CompositeFunction result = compositePixelsLess;
             if(depthFunction != 0) {
                 result = compositePixelsLess;
             } else if(blendFunction != 0) {
@@ -372,8 +368,8 @@ namespace Legion {
         
         FutureMap RenderSpace::launchTreeLevel(int level, int ordering[]) {
             ArgumentMap argMap;
-            int increment = 2^level;
-            int numLayers = mImageSize.depth / increment * NUM_FRAGMENTS_PER_COMPOSITE_TASK;
+            int increment = powf(2.0f, level);
+            int numLayers = mImageSize.depth / (increment * NUM_FRAGMENTS_PER_COMPOSITE_TASK);
             CompositeArguments args[numLayers];
             
             for(int i = 0; i < numLayers; i++) {
@@ -385,7 +381,8 @@ namespace Legion {
                 addCompositeArgumentsToArgmap(args + taskZ, taskZ, argMap);
             }
             
-            IndexTaskLauncher treeLauncher(mCompositeTaskID, mCompositeTreeDomain, TaskArgument(NULL, 0), argMap);
+            Domain launchDomain = mCompositeLaunchDescriptor[level].domain;
+            IndexTaskLauncher treeLauncher(mCompositeTaskID, launchDomain, TaskArgument(NULL, 0), argMap);
             addRegionRequirementToCompositeLauncher(treeLauncher, level, true, READ_WRITE, EXCLUSIVE);
             addRegionRequirementToCompositeLauncher(treeLauncher, level, false, READ_ONLY, SIMULTANEOUS);
             assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
