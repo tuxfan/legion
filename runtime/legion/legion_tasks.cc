@@ -1900,6 +1900,15 @@ namespace Legion {
         for (unsigned idx = 0; idx < regions.size(); idx++)
           log_requirement(our_uid, idx, regions[idx]);
       }
+#ifdef DEBUG_LEGION
+      {
+        std::vector<RegionTreePath> privilege_paths(regions.size());
+        for (unsigned idx = 0; idx < regions.size(); idx++)
+          initialize_privilege_path(privilege_paths[idx], regions[idx]);
+        perform_intra_task_alias_analysis(false/*tracing*/, NULL/*trace*/,
+                                          privilege_paths);
+      }
+#endif
       // Return true if this point has any valid region requirements
       return (!all_invalid);
     }
@@ -3827,7 +3836,7 @@ namespace Legion {
             // back the local instance references
           }
           // Make sure you have the metadata for the region with no access priv
-          if (no_access_regions[idx])
+          if (no_access_regions[idx] && regions[idx].region.exists())
             runtime->forest->get_node(clone_requirements[idx].region);
         }
         // Initialize any region tree contexts
@@ -5821,6 +5830,55 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    void PointTask::report_interfering_requirements(unsigned idx1,
+                                                    unsigned idx2)
+    //--------------------------------------------------------------------------
+    {
+      switch (index_point.get_dim())
+      {
+        case 1:
+          {
+            log_run.error("Aliased and interfering region requirements for "
+                    "point tasks are not permitted. Region requirements "
+                    "%d and %d of point %lld of index space task %s (UID %lld) "
+                    "in parent task %s (UID %lld) are interfering.", 
+                    idx1, idx2, index_point[0], get_task_name(),
+                    get_unique_id(), parent_ctx->get_task_name(),
+                    parent_ctx->get_unique_id());
+            break;
+          }
+        case 2:
+          {
+            log_run.error("Aliased and interfering region requirements for "
+                    "point tasks are not permitted. Region requirements "
+                    "%d and %d of point (%lld,%lld) of index space task %s "
+                    "(UID %lld) in parent task %s (UID %lld) are interfering.",
+                    idx1, idx2, index_point[0], index_point[1], 
+                    get_task_name(), get_unique_id(), 
+                    parent_ctx->get_task_name(), parent_ctx->get_unique_id());
+            break;
+          }
+        case 3:
+          {
+            log_run.error("Aliased and interfering region requirements for "
+                    "point tasks are not permitted. Region requirements "
+                    "%d and %d of point (%lld,%lld,%lld) of index space task %s"
+                    " (UID %lld) in parent task %s (UID %lld) are interfering.",
+                    idx1, idx2, index_point[0], index_point[1], 
+                    index_point[2], get_task_name(), get_unique_id(), 
+                    parent_ctx->get_task_name(), parent_ctx->get_unique_id());
+            break;
+          }
+        default:
+          assert(false);
+      }
+#ifdef DEBUG_LEGION
+      assert(false);
+#endif
+      exit(ERROR_ALIASED_REGION_REQUIREMENTS);
+    }
+
+    //--------------------------------------------------------------------------
     void PointTask::resolve_false(bool speculated, bool launched)
     //--------------------------------------------------------------------------
     {
@@ -6210,12 +6268,13 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       slice_owner = owner;
-      compute_point_region_requirements(&mp);
-      update_no_access_regions();
       // Get our point
       index_point = mp.get_domain_point();
       // Get our argument
       mp.assign_argument(local_args, local_arglen);
+      // Compute our point region requirements
+      compute_point_region_requirements(&mp);
+      update_no_access_regions();
       // Make a new termination event for this point
       point_termination = Runtime::create_ap_user_event();
     }  
@@ -7436,6 +7495,10 @@ namespace Legion {
           {
             // Skip same region requireemnt for same point
             if (same_point && (it->first == it->second))
+              continue;
+            // If either one are the NO_REGION then there is no interference
+            if (!point_reqs[it->first].exists() || 
+                !other_reqs[it->second].exists())
               continue;
             if (!runtime->forest->are_disjoint(
                   point_reqs[it->first].get_index_space(), 
