@@ -69,9 +69,15 @@ namespace Legion {
                                               unsigned index,
                                               LogicalPartition upperBound,
                                               const DomainPoint &point) {
+                    
+                    std::cout << "functor " << layerID << " at point " << point << " has local_args " << task->local_args << std::endl;
+                    
                     CompositeArguments args = ((CompositeArguments*)(task->local_args))[0];
                     DomainPoint newPoint = point;
                     newPoint[2] = (layerID == 0) ? args.layer0 : args.layer1;
+                    
+                    std::cout << "functor " << layerID << " at point " << point << " layers are " << args.layer0 << "," << args.layer1 << " new point " << newPoint << std::endl;
+                    
                     LogicalRegion result = Runtime::get_runtime()->get_logical_subregion_by_color(context, upperBound, newPoint);
                     return result;
                 }

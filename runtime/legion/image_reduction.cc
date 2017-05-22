@@ -150,6 +150,7 @@ namespace Legion {
             mCompositeTreeDomain = vector<Domain>();
             for(int level = 0; level < numTreeLevels(); ++level) {
                 mCompositeTreeDomain.push_back(compositeDomain(increment));
+                increment *= 2;
             }
             
             Rect<IMAGE_REDUCTION_DIMENSIONS> compositePipelineBounds(mImageSize.origin(), mImageSize.numFragments() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES());
@@ -335,8 +336,6 @@ namespace Legion {
             FutureMap futures;
             for(int level = 0; level < numTreeLevels(); ++level) {
                 futures = launchTreeLevel(level, ordering);
-                
-                futures.wait_all_results();///
             }
             return futures;
         }
