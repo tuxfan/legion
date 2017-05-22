@@ -14,13 +14,21 @@
  */
 
 
-#ifndef RenderSpace_h
-#define RenderSpace_h
+#ifndef ImageReduction_h
+#define ImageReduction_h
+
 
 #include "legion.h"
 #include "legion_visualization.h"
+#include "image_reduction_composite.h"
 
-#include "UsecTimer.h"
+#include "usec_timer.h"
+
+#include <OpenGL/OpenGL.h>
+#include <OpenGL/gl.h>
+
+#include <iostream>
+#include <sstream>
 
 using namespace LegionRuntime::HighLevel;
 using namespace LegionRuntime::Accessor;
@@ -32,24 +40,25 @@ namespace Legion {
             ImageSize imageSize;
             int layer0;
             int layer1;
-            int depthFunction;
-            int blendFunction;
+            GLenum depthFunction;
+            GLenum blendFunctionSource;
+            GLenum blendFunctionDestination;
         } CompositeArguments;
         
         
-
+        
         typedef struct {
             ImageSize imageSize;
             int t;
         } DisplayArguments;
         
         
-        class RenderSpace {
+        class ImageReduction {
             
         public:
             class CompositeProjectionFunctor : public ProjectionFunctor {
             public:
-                CompositeProjectionFunctor(void){}
+                CompositeProjectionFunctor(Runtime *runtime){ mRuntime = runtime; }
                 
                 virtual LogicalRegion project(Context context, Task *task,
                                               unsigned index,
@@ -64,6 +73,7 @@ namespace Legion {
                 
             protected:
                 virtual DomainPoint newPoint(DomainPoint point) = 0;
+                Runtime *mRuntime;
             };
             
             // ProjectionFunctor has to be a pure function (currently)
@@ -88,9 +98,9 @@ namespace Legion {
             
             
             
-            RenderSpace(){}
-            RenderSpace(ImageSize imageSize, Context ctx, HighLevelRuntime *runtime);
-            virtual ~RenderSpace();
+            ImageReduction(){}
+            ImageReduction(ImageSize imageSize, Context ctx, HighLevelRuntime *runtime);
+            virtual ~ImageReduction();
             
             FutureMap launchTaskByDepth(unsigned taskID);
             FutureMap reduceAssociativeCommutative();
@@ -98,6 +108,11 @@ namespace Legion {
             FutureMap reduceNonassociativeCommutative();
             FutureMap reduceNonassociativeNoncommutative(int ordering[]);
             Future display(int t);
+            void setBlendFunc(GLenum sfactor, GLenum dfactor) {
+                mBlendFunctionSource = sfactor;
+                mBlendFunctionDestination = dfactor;
+            }
+            void setDepthFunc(GLenum func){ mDepthFunction = func; }
             
             static void createImageFieldPointers(ImageSize imageSize,
                                                  PhysicalRegion region,
@@ -115,19 +130,22 @@ namespace Legion {
                                      const std::vector<PhysicalRegion> &regions,
                                      Context ctx, Runtime *runtime);
             
+            static PhysicalRegion compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1);
+            
             static void composite_task(const Task *task,
                                        const std::vector<PhysicalRegion> &regions,
                                        Context ctx, Runtime *runtime);
             
             
             static std::string describeTask(const Task *task) {
-                return std::string(task->get_task_name()) + " "
-//                + std::to_string(task->get_unique_id()) +
-//                + " ("
-//                + std::to_string(task->index_point.point_data[0]) + ","
-//                + std::to_string(task->index_point.point_data[1]) + ","
-//                + std::to_string(task->index_point.point_data[2]) + ")"
+                std::ostringstream output;
+                output << task->get_task_name() << " " << task->get_unique_id()
+                << " (" << task->index_point.point_data[0]
+                << ", " << task->index_point.point_data[1]
+                << ", " << task->index_point.point_data[2]
+                << ")"
                 ;
+                return output.str();
             }
             
             
@@ -140,7 +158,7 @@ namespace Legion {
                 int functorID1;
                 Domain domain;
             } CompositeLaunchDescriptor;
-
+            
             FieldSpace imageFields();
             void createImage();
             void partitionImageByDepth();
@@ -159,37 +177,8 @@ namespace Legion {
             void addRegionRequirementToCompositeLauncher(IndexTaskLauncher &launcher, int level, bool isLeft, PrivilegeMode privilege, CoherenceProperty coherence);
             int *defaultPermutation();
             void addImageFieldsToRequirement(RegionRequirement &req);
-            LogicalRegion createDisplayPlane();
             void registerTasks();
             
-            typedef void(*CompositeFunction)
-            (PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, PixelField*,
-            PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, PixelField*,
-            PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, int);
-            
-            static CompositeFunction compositeFunctionPointer(int depthFunction, int blendFunction);
-            
-            static PhysicalRegion compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1);
-            
-            static void compositePixelsLess(PixelField *r0,
-                                            PixelField *g0,
-                                            PixelField *b0,
-                                            PixelField *a0,
-                                            PixelField *z0,
-                                            PixelField *userdata0,
-                                            PixelField *r1,
-                                            PixelField *g1,
-                                            PixelField *b1,
-                                            PixelField *a1,
-                                            PixelField *z1,
-                                            PixelField *userdata1,
-                                            PixelField *rOut,
-                                            PixelField *gOut,
-                                            PixelField *bOut,
-                                            PixelField *aOut,
-                                            PixelField *zOut,
-                                            PixelField *userdataOut,
-                                            int numPixels);
             
             static void createImageFieldPointer(RegionAccessor<AccessorType::Generic, PixelField> &acc, int fieldID, PixelField *&field,
                                                 Rect<DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]);
@@ -208,10 +197,12 @@ namespace Legion {
             TaskID mCompositeTaskID;
             TaskID mDisplayTaskID;
             vector<CompositeLaunchDescriptor> mCompositeLaunchDescriptor;
-            
+            GLenum mDepthFunction;
+            GLenum mBlendFunctionSource;
+            GLenum mBlendFunctionDestination;
         };
         
     }
 }
 
-#endif /* RenderSpace_h */
+#endif /* ImageReduction_h */

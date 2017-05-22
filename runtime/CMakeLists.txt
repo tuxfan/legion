@@ -232,7 +232,7 @@ list(APPEND HIGH_RUNTIME_SRC
   legion/region_tree.h         legion/region_tree.cc
   legion/runtime.h             legion/runtime.cc
   legion/legion_visualization.h
-  legion/RenderSpace.h         legion/RenderSpace.cc
+  legion/ImageReduction.h         legion/ImageReduction.cc
   legion/UsecTimer.h
 )
 

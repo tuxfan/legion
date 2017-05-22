@@ -13,13 +13,12 @@
  * limitations under the License.
  */
 
-#include "RenderSpace.h"
+#include "image_reduction.h"
 
 #include <iostream>
 #include <fstream>
 #include <math.h>
 
-//#include <OpenGL/OpenGL.h>
 
 using namespace LegionRuntime::HighLevel;
 using namespace LegionRuntime::Accessor;
@@ -28,19 +27,21 @@ using namespace LegionRuntime::Accessor;
 namespace Legion {
     namespace Visualization {
         
-        RenderSpace::RenderSpace(ImageSize imageSize, Context ctx, HighLevelRuntime *runtime) {
+        ImageReduction::ImageReduction(ImageSize imageSize, Context ctx, HighLevelRuntime *runtime) {
             mImageSize = imageSize;
-            assert(imageSize.depth % 2 == 0);
             mContext = ctx;
             mRuntime = runtime;
             mDefaultPermutation = NULL;
+            mDepthFunction = 0;
+            mBlendFunctionSource = 0;
+            mBlendFunctionDestination = 0;
             createImage();
             partitionImageByDepth();
             partitionImageForComposite();
             registerTasks();
         }
         
-        RenderSpace::~RenderSpace() {
+        ImageReduction::~ImageReduction() {
             if(mDefaultPermutation != NULL) {
                 delete [] mDefaultPermutation;
                 mDefaultPermutation = NULL;
@@ -49,7 +50,7 @@ namespace Legion {
         
         
         
-        void RenderSpace::registerTasks() {
+        void ImageReduction::registerTasks() {
             
             LayoutConstraintRegistrar layoutRegistrar(imageFields(), "layout");
             LayoutConstraintID layoutConstraintID = mRuntime->register_layout(layoutRegistrar);
@@ -70,7 +71,7 @@ namespace Legion {
         }
         
         
-        FieldSpace RenderSpace::imageFields() {
+        FieldSpace ImageReduction::imageFields() {
             FieldSpace fields = mRuntime->create_field_space(mContext);
             mRuntime->attach_name(fields, "pixel fields");
             {
@@ -92,7 +93,7 @@ namespace Legion {
         }
         
         
-        void RenderSpace::createImage() {
+        void ImageReduction::createImage() {
             Rect<DIMENSIONS> imageBounds(mImageSize.origin(), mImageSize.upperBound() - Point<DIMENSIONS>::ONES());
             mImageDomain = Domain::from_rect<DIMENSIONS>(imageBounds);
             //TODO mRuntime->attach_name(mImageDomain, "image domain");
@@ -104,7 +105,7 @@ namespace Legion {
         }
         
         
-        void RenderSpace::partitionImageByDepth() {
+        void ImageReduction::partitionImageByDepth() {
             Blockify<DIMENSIONS> coloring(mImageSize.layerSize());
             IndexPartition imageDepthIndexPartition = mRuntime->create_index_partition(mContext, mImage.get_index_space(), coloring);
             mRuntime->attach_name(imageDepthIndexPartition, "image depth index partition");
@@ -116,7 +117,7 @@ namespace Legion {
         }
         
         
-        void RenderSpace::prepareCompositePartition() {
+        void ImageReduction::prepareCompositePartition() {
             Blockify<DIMENSIONS> coloring(mImageSize.fragmentSize());
             IndexPartition imageCompositeIndexPartition = mRuntime->create_index_partition(mContext, mImage.get_index_space(), coloring);
             mRuntime->attach_name(imageCompositeIndexPartition, "image composite index partition");
@@ -131,9 +132,8 @@ namespace Legion {
         }
         
         
-#define MAX_TREE_LEVELS 16
         
-        RenderSpace::CompositeProjectionFunctor* RenderSpace::newProjectionFunctor(int increment) {
+        ImageReduction::CompositeProjectionFunctor* ImageReduction::newProjectionFunctor(int increment) {
             switch(increment){
                 case 0: return new CompositeProjectionFunctorClass<0>;
                 case 1: return new CompositeProjectionFunctorClass<1>;
@@ -158,21 +158,25 @@ namespace Legion {
         }
         
         
-        Domain RenderSpace::compositeDomain(int increment) {
+        Domain ImageReduction::compositeDomain(int increment) {
             Point<DIMENSIONS> numTreeComposites = mImageSize.numFragments();
             numTreeComposites.x[2] /= (NUM_FRAGMENTS_PER_COMPOSITE_TASK * increment);
             Rect<DIMENSIONS> compositeTreeBounds(mImageSize.origin(), numTreeComposites - Point<DIMENSIONS>::ONES());
             return Domain::from_rect<DIMENSIONS>(compositeTreeBounds);
             
         }
-
         
-        void RenderSpace::partitionImageForComposite() {
+        
+        void ImageReduction::partitionImageForComposite() {
             prepareCompositePartition();
             mCompositeLaunchDescriptor = vector<CompositeLaunchDescriptor>();
             
             int increment = 1;
             int numTreeLevels = log2f(mImageSize.depth);
+            if(powf(2.0f, numTreeLevels) < mImageSize.depth) {
+                numTreeLevels++;
+            }
+            
             for(int level = 0; level < numTreeLevels; ++level) {
                 CompositeLaunchDescriptor launch = {
                     newProjectionFunctor(0),
@@ -192,7 +196,7 @@ namespace Legion {
         }
         
         
-        void RenderSpace::addImageFieldsToRequirement(RegionRequirement &req) {
+        void ImageReduction::addImageFieldsToRequirement(RegionRequirement &req) {
             req.add_field(FID_FIELD_R);
             req.add_field(FID_FIELD_G);
             req.add_field(FID_FIELD_B);
@@ -202,8 +206,8 @@ namespace Legion {
         }
         
         
-        void RenderSpace::createImageFieldPointer(RegionAccessor<AccessorType::Generic, PixelField> &acc, int fieldID, PixelField *&field,
-                                                  Rect<DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]) {
+        void ImageReduction::createImageFieldPointer(RegionAccessor<AccessorType::Generic, PixelField> &acc, int fieldID, PixelField *&field,
+                                                     Rect<DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]) {
             acc = region.get_field_accessor(fieldID).typeify<PixelField>();
             Rect<DIMENSIONS> tempBounds;
             field = acc.raw_rect_ptr<DIMENSIONS>(imageBounds, tempBounds, offset);
@@ -211,16 +215,16 @@ namespace Legion {
         }
         
         
-        void RenderSpace::createImageFieldPointers(ImageSize imageSize,
-                                                   PhysicalRegion region,
-                                                   int layer,
-                                                   PixelField *&r,
-                                                   PixelField *&g,
-                                                   PixelField *&b,
-                                                   PixelField *&a,
-                                                   PixelField *&z,
-                                                   PixelField *&userdata,
-                                                   ByteOffset stride[3]) {
+        void ImageReduction::createImageFieldPointers(ImageSize imageSize,
+                                                      PhysicalRegion region,
+                                                      int layer,
+                                                      PixelField *&r,
+                                                      PixelField *&g,
+                                                      PixelField *&b,
+                                                      PixelField *&a,
+                                                      PixelField *&z,
+                                                      PixelField *&userdata,
+                                                      ByteOffset stride[3]) {
             
             Rect<DIMENSIONS> tempBounds;
             Point<DIMENSIONS> origin = imageSize.origin();
@@ -240,7 +244,7 @@ namespace Legion {
         }
         
         
-        FutureMap RenderSpace::launchTaskByDepth(unsigned taskID){
+        FutureMap ImageReduction::launchTaskByDepth(unsigned taskID){
             ArgumentMap argMap;
             IndexTaskLauncher depthLauncher(taskID, mDepthDomain, TaskArgument(&mImageSize, sizeof(ImageSize)), argMap);
             //TODO mRuntime->attach_name(depthLauncher, "depth task launcher");
@@ -253,7 +257,7 @@ namespace Legion {
         
         
         
-        int *RenderSpace::defaultPermutation(){
+        int *ImageReduction::defaultPermutation(){
             if(mDefaultPermutation == NULL) {
                 mDefaultPermutation = new int[mImageSize.depth];
                 for(int i = 0; i < mImageSize.depth; ++i) {
@@ -264,59 +268,16 @@ namespace Legion {
         }
         
         
-        inline void RenderSpace::compositePixelsLess(PixelField *r0,
-                                                     PixelField *g0,
-                                                     PixelField *b0,
-                                                     PixelField *a0,
-                                                     PixelField *z0,
-                                                     PixelField *userdata0,
-                                                     PixelField *r1,
-                                                     PixelField *g1,
-                                                     PixelField *b1,
-                                                     PixelField *a1,
-                                                     PixelField *z1,
-                                                     PixelField *userdata1,
-                                                     PixelField *rOut,
-                                                     PixelField *gOut,
-                                                     PixelField *bOut,
-                                                     PixelField *aOut,
-                                                     PixelField *zOut,
-                                                     PixelField *userdataOut,
-                                                     int numPixels) {
-            
-            for(int i = 0; i < numPixels; ++i) {
-                if(*z0 < *z1) {
-                    *rOut++ = *r0++; *gOut++ = *g0++; *bOut++ = *b0++; *aOut++ = *a0++; *zOut++ = *z0++; *userdataOut++ = *userdata0++;
-                    r1++; g1++; b1++; a1++; z1++; userdata1++;
-                } else {
-                    *rOut++ = *r1++; *gOut++ = *g1++; *bOut++ = *b1++; *aOut++ = *a1++; *zOut++ = *z1++; *userdataOut++ = *userdata1++;
-                    r0++; g0++; b0++; a0++; z0++; userdata0++;
-                }
-            }
-            
-        }
-        
-        
-        inline RenderSpace::CompositeFunction RenderSpace::compositeFunctionPointer(int depthFunction, int blendFunction) {
-            CompositeFunction result = compositePixelsLess;
-            if(depthFunction != 0) {
-                result = compositePixelsLess;
-            } else if(blendFunction != 0) {
-                
-            }
-            return result;
-        }
-        
-        
-        inline PhysicalRegion RenderSpace::compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1) {
+        inline PhysicalRegion ImageReduction::compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1) {
             
             ByteOffset stride[DIMENSIONS];
             PixelField *r0, *g0, *b0, *a0, *z0, *userdata0;
-            createImageFieldPointers(args.imageSize, region0, args.layer0, r0, g0, b0, a0, z0, userdata0, stride);
             PixelField *r1, *g1, *b1, *a1, *z1, *userdata1;
-            createImageFieldPointers(args.imageSize, region1, args.layer1, r1, g1, b1, a1, z1, userdata1, stride);
+            ImageReductionComposite::CompositeFunction* compositeFunction;
             
-            CompositeFunction compositeFunction = compositeFunctionPointer(args.depthFunction, args.blendFunction);
+            createImageFieldPointers(args.imageSize, region0, args.layer0, r0, g0, b0, a0, z0, userdata0, stride);
+            createImageFieldPointers(args.imageSize, region1, args.layer1, r1, g1, b1, a1, z1, userdata1, stride);
+            compositeFunction = ImageReductionComposite::compositeFunctionPointer(args.depthFunction, args.blendFunctionSource, args.blendFunctionDestination);
             compositeFunction(r0, g0, b0, a0, z0, userdata0, r1, g1, b1, a1, z1, userdata1, r0, g0, b0, a0, z0, userdata0, args.imageSize.numPixelsPerFragment());
             
             return region0;
@@ -325,27 +286,29 @@ namespace Legion {
         
         
         
-        void RenderSpace::composite_task(const Task *task,
-                                         const std::vector<PhysicalRegion> &regions,
-                                         Context ctx, HighLevelRuntime *runtime) {
+        void ImageReduction::composite_task(const Task *task,
+                                            const std::vector<PhysicalRegion> &regions,
+                                            Context ctx, HighLevelRuntime *runtime) {
             UsecTimer composite(describeTask(task) + " leaf:");
             composite.start();
-            PhysicalRegion fragment0 = regions[0];
-            PhysicalRegion fragment1 = regions[1];
             CompositeArguments args = ((CompositeArguments*)task->local_args)[0];
-            
+            if(args.layer1 >= 0) {
+                PhysicalRegion fragment0 = regions[0];
+                PhysicalRegion fragment1 = regions[1];
+                
 #if NULL_COMPOSITE_TASKS
-            return;//performance testing
+                return;//performance testing
 #endif
-            
-            PhysicalRegion compositedResult = compositeTwoFragments(args, fragment0, fragment1);
+                
+                PhysicalRegion compositedResult = compositeTwoFragments(args, fragment0, fragment1);
+            }
             composite.stop();
             cout << composite.to_string() << endl;
         }
         
         
         
-        void RenderSpace::addCompositeArgumentsToArgmap(CompositeArguments *args, int taskZ, Legion::ArgumentMap &argMap) {
+        void ImageReduction::addCompositeArgumentsToArgmap(CompositeArguments *args, int taskZ, Legion::ArgumentMap &argMap) {
             assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
             Point<DIMENSIONS> point = Point<DIMENSIONS>::ZEROES();
             point.x[2] = taskZ;
@@ -358,7 +321,7 @@ namespace Legion {
         }
         
         
-        void RenderSpace::addRegionRequirementToCompositeLauncher(Legion::IndexTaskLauncher &launcher, int level, bool isLeft, PrivilegeMode privilege, CoherenceProperty coherence) {
+        void ImageReduction::addRegionRequirementToCompositeLauncher(Legion::IndexTaskLauncher &launcher, int level, bool isLeft, PrivilegeMode privilege, CoherenceProperty coherence) {
             int projectionFunctorID = projectionFunctorIndex(level, isLeft);
             RegionRequirement req(mCompositePartition, projectionFunctorID, privilege, coherence, mImage);
             addImageFieldsToRequirement(req);
@@ -366,7 +329,7 @@ namespace Legion {
         }
         
         
-        FutureMap RenderSpace::launchTreeLevel(int level, int ordering[]) {
+        FutureMap ImageReduction::launchTreeLevel(int level, int ordering[]) {
             ArgumentMap argMap;
             int increment = powf(2.0f, level);
             int numLayers = mImageSize.depth / (increment * NUM_FRAGMENTS_PER_COMPOSITE_TASK);
@@ -376,8 +339,9 @@ namespace Legion {
                 int taskZ = i;
                 int layer0 = i * NUM_FRAGMENTS_PER_COMPOSITE_TASK;
                 int layer1 = layer0 + increment;
+                layer1 = (layer1 < mImageSize.depth) ? layer1 : -1;
                 //ordering[layer0], ordering[layer1]
-                args[taskZ] = (CompositeArguments){ mImageSize, layer0, layer1, 0, 0 };
+                args[taskZ] = (CompositeArguments){ mImageSize, layer0, layer1, mDepthFunction, mBlendFunctionSource, mBlendFunctionDestination };
                 addCompositeArgumentsToArgmap(args + taskZ, taskZ, argMap);
             }
             
@@ -393,33 +357,29 @@ namespace Legion {
         
         
         
-        FutureMap RenderSpace::launchCompositeTaskTree(int ordering[]) {
-            // load ordering into projection functors here
+        FutureMap ImageReduction::launchCompositeTaskTree(int ordering[]) {
             int numTreeLevels = (int)log2f((float)mImageSize.depth);
             FutureMap futures;
             for(int level = 0; level < numTreeLevels; ++level) {
                 futures = launchTreeLevel(level, ordering);
-                
-                futures.wait_all_results();////
-                
             }
             return futures;
         }
         
         
-        FutureMap RenderSpace::reduceAssociative(int ordering[]) {
+        FutureMap ImageReduction::reduceAssociative(int ordering[]) {
             return launchCompositeTaskTree(ordering);
         }
         
-        FutureMap RenderSpace::reduceAssociativeCommutative(){
+        FutureMap ImageReduction::reduceAssociativeCommutative(){
             return reduceAssociative(defaultPermutation());
         }
         
-        FutureMap RenderSpace::reduceAssociativeNoncommutative(int ordering[]){
+        FutureMap ImageReduction::reduceAssociativeNoncommutative(int ordering[]){
             return reduceAssociative(ordering);
         }
         
-        FutureMap RenderSpace::launchCompositeTaskPipeline(int ordering[]) {
+        FutureMap ImageReduction::launchCompositeTaskPipeline(int ordering[]) {
             ArgumentMap argMap;
             int taskDepth = mImageSize.depth / NUM_FRAGMENTS_PER_COMPOSITE_TASK;
             CompositeArguments args[taskDepth];
@@ -443,23 +403,23 @@ namespace Legion {
             return futures;
         }
         
-        FutureMap RenderSpace::reduceNonassociative(int ordering[]) {
+        FutureMap ImageReduction::reduceNonassociative(int ordering[]) {
             return launchCompositeTaskPipeline(ordering);
         }
         
-        FutureMap RenderSpace::reduceNonassociativeCommutative(){
+        FutureMap ImageReduction::reduceNonassociativeCommutative(){
             return reduceNonassociative(defaultPermutation());
         }
         
-        FutureMap RenderSpace::reduceNonassociativeNoncommutative(int ordering[]){
+        FutureMap ImageReduction::reduceNonassociativeNoncommutative(int ordering[]){
             return reduceNonassociative(ordering);
         }
         
         
         
-        void RenderSpace::display_task(const Task *task,
-                                       const std::vector<PhysicalRegion> &regions,
-                                       Context ctx, HighLevelRuntime *runtime) {
+        void ImageReduction::display_task(const Task *task,
+                                          const std::vector<PhysicalRegion> &regions,
+                                          Context ctx, HighLevelRuntime *runtime) {
             
             DisplayArguments args = ((DisplayArguments*)task->args)[0];
             char fileName[1024];
@@ -481,21 +441,12 @@ namespace Legion {
         }
         
         
-        LogicalRegion RenderSpace::createDisplayPlane() {
-            DomainPoint point;
-            point.dim = DIMENSIONS;
-            point[0] = 0;
-            point[1] = 0;
-            point[2] = mImageSize.depth - 1;
-            LogicalRegion displayPlane = mRuntime->get_logical_subregion_by_color(mDepthPartition, point);
-            return displayPlane;
-        }
         
-        
-        Future RenderSpace::display(int t) {
+        Future ImageReduction::display(int t) {
             DisplayArguments args = { mImageSize, t };
             TaskLauncher taskLauncher(mDisplayTaskID, TaskArgument(&args, sizeof(args)));
-            LogicalRegion displayPlane = createDisplayPlane();
+            DomainPoint origin = DomainPoint::from_point<DIMENSIONS>(Point<DIMENSIONS>::ZEROES());
+            LogicalRegion displayPlane = mRuntime->get_logical_subregion_by_color(mDepthPartition, origin);
             RegionRequirement req(displayPlane, READ_ONLY, EXCLUSIVE, mImage);
             addImageFieldsToRequirement(req);
             taskLauncher.add_region_requirement(req);

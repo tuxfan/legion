@@ -19,8 +19,8 @@
 #include "legion.h"
 #include "legion_visualization.h"
 
-#include "RenderSpace.h"
-#include "UsecTimer.h"
+#include "image_reduction.h"
+#include "usec_timer.h"
 
 #ifndef TIME_PER_FRAME
 #define TIME_PER_FRAME 0
@@ -34,7 +34,6 @@
 #define TREE_REDUCTION 1
 #endif
 
-#define ACCESSOR_TYPE AccessorType::Generic
 
 using namespace std;
 using namespace LegionRuntime::HighLevel;
@@ -87,7 +86,7 @@ void render_task(const Task *task,
                  const std::vector<PhysicalRegion> &regions,
                  Context ctx, HighLevelRuntime *runtime) {
     
-    UsecTimer render(RenderSpace::describeTask(task) + ":");
+    UsecTimer render(ImageReduction::describeTask(task) + ":");
     render.start();
     PhysicalRegion image = regions[0];
     ImageSize imageSize = ((ImageSize *)task->args)[0];
@@ -95,7 +94,7 @@ void render_task(const Task *task,
     PixelField *r, *g, *b, *a, *z, *userdata;
     ByteOffset stride[DIMENSIONS];
     int layer = task->get_unique_id() % imageSize.depth;
-    RenderSpace::createImageFieldPointers(imageSize, image, layer, r, g, b, a, z, userdata, stride);
+    ImageReduction::createImageFieldPointers(imageSize, image, layer, r, g, b, a, z, userdata, stride);
     paintRegion(imageSize, r, g, b, a, z, userdata, stride, task->get_unique_id());
     render.stop();
     cout << render.to_string() << endl;
@@ -110,10 +109,10 @@ void top_level_task(const Task *task,
     const int numSimulationTasks = 4;
     const int numTimeSteps = 3;
     
-#if 0
+#if 1
     const int width = 3840;
     const int height = 2160;
-#elif 1
+#elif 0
     const int width = 2048;
     const int height = 1024;
 #elif 0
@@ -132,7 +131,8 @@ void top_level_task(const Task *task,
 #endif
     
     ImageSize imageSize = (ImageSize){ width, height, numSimulationTasks, numFragmentsPerLayer };
-    RenderSpace *renderSpace = new RenderSpace(imageSize, ctx, runtime);
+    ImageReduction imageReduction(imageSize, ctx, runtime);
+    imageReduction.setDepthFunc(GL_LESS);
     
     {
         
@@ -145,13 +145,13 @@ void top_level_task(const Task *task,
         for(int t = 0; t < numTimeSteps; ++t) {
             frame.start();
             simulateTimeStep(t);
-            FutureMap renderFutures = renderSpace->launchTaskByDepth(RENDER_TASK_ID);
+            FutureMap renderFutures = imageReduction.launchTaskByDepth(RENDER_TASK_ID);
             reduce.start();
             
 #if TREE_REDUCTION
-            FutureMap reduceFutures = renderSpace->reduceAssociativeCommutative();
+            FutureMap reduceFutures = imageReduction.reduceAssociativeCommutative();
 #else
-            FutureMap reduceFutures = renderSpace->reduceNonassociativeCommutative();
+            FutureMap reduceFutures = imageReduction.reduceNonassociativeCommutative();
 #endif
             
             
@@ -161,7 +161,7 @@ void top_level_task(const Task *task,
 #endif
             reduce.stop();
             
-            displayFuture = renderSpace->display(t);
+            displayFuture = imageReduction.display(t);
             
 #if TIME_PER_FRAME
             std::cout << "waiting for display" << std::endl;
@@ -184,8 +184,6 @@ void top_level_task(const Task *task,
         cout << overall.to_string() << endl;
 #endif
     }
-    
-    delete renderSpace;
 }
 
 

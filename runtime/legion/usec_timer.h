@@ -17,10 +17,9 @@
 #ifndef UsecTimer_h
 #define UsecTimer_h
 
-//#include <chrono>
+#include <time.h>
 
 using namespace std;
-//using std::chrono::high_resolution_clock;
 
 class UsecTimer {
 public:
@@ -32,15 +31,25 @@ public:
     }
     ~UsecTimer(){}
     void start(){
-        //mStart = high_resolution_clock::now();
+        if(clock_gettime(CLOCK_MONOTONIC, &mStart)) {
+            cerr << "error from clock_gettime" << endl;
+            return;
+        }
         mStarted = true;
+    }
+    static double timespecToSeconds(timespec *t) {
+        const double nsecToS = 1.0 / 1000000000.0;
+        return (double)t->tv_sec + (double)t->tv_nsec * nsecToS;
     }
     void stop(){
         if(mStarted) {
-            //std::chrono::time_point<std::chrono::high_resolution_clock> end = high_resolution_clock::now();
-            //double elapsedSeconds = ((end - mStart).count()) * high_resolution_clock::period::num /
-            //static_cast<double>(high_resolution_clock::period::den);
-            //mCumulativeElapsedSeconds += elapsedSeconds;
+            timespec end;
+            if(clock_gettime(CLOCK_MONOTONIC, &end)) {
+                cerr << "error from clock_gettime" << endl;
+                return;
+            }
+            double elapsedSeconds = timespecToSeconds(&end) - timespecToSeconds(&mStart);
+            mCumulativeElapsedSeconds += elapsedSeconds;
             mNumSamples++;
             mStarted = false;
         }
@@ -50,18 +59,20 @@ public:
         if(mNumSamples > 0) {
             meanSampleElapsedSeconds = mCumulativeElapsedSeconds / mNumSamples;
         }
-        //double sToUs = 1000000.0;
-        return mDescription
-        //+ " " + std::to_string(mCumulativeElapsedSeconds) + " sec"
-        //+ " " + std::to_string(mCumulativeElapsedSeconds * sToUs)
-        //+ " usec = " + std::to_string(meanSampleElapsedSeconds * sToUs)
-        //+ " usec * " + std::to_string(mNumSamples)
-        + (mNumSamples == 1 ? " sample" : " samples");
+        double sToUs = 1000000.0;
+        std::ostringstream output;
+        output << mDescription
+        << " " << (mCumulativeElapsedSeconds) << " sec"
+        << " " << (mCumulativeElapsedSeconds * sToUs)
+        << " usec = " << (meanSampleElapsedSeconds * sToUs)
+        << " usec * " << (mNumSamples)
+        << (mNumSamples == 1 ? " sample" : " samples");
+        return output.str();
     }
     
 private:
     bool mStarted;
-    //high_resolution_clock::time_point mStart;
+    struct timespec mStart;
     string mDescription;
     double mCumulativeElapsedSeconds;
     int mNumSamples;
