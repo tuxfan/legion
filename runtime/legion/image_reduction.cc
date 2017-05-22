@@ -58,7 +58,7 @@ namespace Legion {
             mCompositeTaskID = mRuntime->generate_dynamic_task_id();
             TaskVariantRegistrar compositeRegistrar(mCompositeTaskID, "compositeTask");
             compositeRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
-            .add_layout_constraint_set(0/*index*/, layoutConstraintID);
+            .add_layout_constraint_set(1/*index*/, layoutConstraintID);
             mRuntime->register_task_variant<composite_task>(compositeRegistrar);
             mRuntime->attach_name(mCompositeTaskID, "compositeTask");
             
@@ -307,16 +307,15 @@ namespace Legion {
         FutureMap ImageReduction::launchTreeLevel(int level, int ordering[]) {
             ArgumentMap argMap;
             int increment = powf(2.0f, level);
-            int numLayers = mImageSize.depth / (increment * NUM_FRAGMENTS_PER_COMPOSITE_TASK);
-            CompositeArguments args[numLayers];
+            int numTasks = mImageSize.depth / (increment * NUM_FRAGMENTS_PER_COMPOSITE_TASK);
+            CompositeArguments args[numTasks];
             
-            for(int i = 0; i < numLayers; i++) {
+            for(int i = 0; i < numTasks; i++) {
                 int taskZ = i;
                 int layer0 = i * NUM_FRAGMENTS_PER_COMPOSITE_TASK;
                 int layer1 = layer0 + increment;
                 layer1 = (layer1 < mImageSize.depth) ? layer1 : -1;
-                //ordering[layer0], ordering[layer1]
-                args[taskZ] = (CompositeArguments){ mImageSize, layer0, layer1, mDepthFunction, mBlendFunctionSource, mBlendFunctionDestination };
+                args[taskZ] = (CompositeArguments){ mImageSize, ordering[layer0], ordering[layer1], mDepthFunction, mBlendFunctionSource, mBlendFunctionDestination };
                 addCompositeArgumentsToArgmap(args + taskZ, taskZ, argMap);
             }
             
@@ -336,6 +335,8 @@ namespace Legion {
             FutureMap futures;
             for(int level = 0; level < numTreeLevels(); ++level) {
                 futures = launchTreeLevel(level, ordering);
+                
+                futures.wait_all_results();///
             }
             return futures;
         }
@@ -363,8 +364,7 @@ namespace Legion {
                 int layer0 = i - NUM_FRAGMENTS_PER_COMPOSITE_TASK;
                 int layer1 = layer0 + 1;
                 int taskZ = layer0;
-                //ordering[layer0], ordering[layer1]
-                args[taskZ] = (CompositeArguments){ mImageSize, layer0, layer1, GL_LESS, 0, 0 };
+                args[taskZ] = (CompositeArguments){ mImageSize, ordering[layer0], ordering[layer1], GL_LESS, 0, 0 };
                 addCompositeArgumentsToArgmap(args + taskZ, taskZ, argMap);
             }
             
