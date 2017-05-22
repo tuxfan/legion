@@ -94,7 +94,7 @@ void render_task(const Task *task,
     PixelField *r, *g, *b, *a, *z, *userdata;
     ByteOffset stride[DIMENSIONS];
     int layer = task->get_unique_id() % imageSize.depth;
-    ImageReduction::create_image_field_points(imageSize, image, layer, r, g, b, a, z, userdata, stride);
+    ImageReduction::create_image_field_pointers(imageSize, image, layer, r, g, b, a, z, userdata, stride);
     paintRegion(imageSize, r, g, b, a, z, userdata, stride, task->get_unique_id());
     render.stop();
     cout << render.to_string() << endl;

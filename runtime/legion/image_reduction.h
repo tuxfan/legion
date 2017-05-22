@@ -39,7 +39,7 @@ namespace Legion {
         
         
         class ImageReduction {
-        
+            
         private:
             
             typedef struct {
@@ -55,45 +55,37 @@ namespace Legion {
                 ImageSize imageSize;
                 int t;
             } DisplayArguments;
-
-
+            
+            
+            template<int layerID>
             class CompositeProjectionFunctor : public ProjectionFunctor {
             public:
-                CompositeProjectionFunctor(void);
+                CompositeProjectionFunctor(void){
+                    mFunctorID = -1;
+                }
+                CompositeProjectionFunctor(int functorID){
+                    mFunctorID = functorID;
+                }
                 
                 virtual LogicalRegion project(Context context, Task *task,
                                               unsigned index,
                                               LogicalPartition upperBound,
                                               const DomainPoint &point) {
-                    LogicalRegion result = Legion::Runtime::get_runtime()->get_logical_subregion_by_color(context, upperBound, newPoint(point));
+                    CompositeArguments args = ((CompositeArguments*)(task->local_args))[0];
+                    DomainPoint newPoint = point;
+                    newPoint[2] = (layerID == 0) ? args.layer0 : args.layer1;
+                    LogicalRegion result = Legion::Runtime::get_runtime()->get_logical_subregion_by_color(context, upperBound, newPoint);
                     return result;
                 }
                 
                 virtual bool is_exclusive(void) const{ return true; }
                 virtual unsigned get_depth(void) const{ return 0; }
+                int functorID() const{ return mFunctorID; }
                 
-            protected:
-                virtual DomainPoint newPoint(DomainPoint point) = 0;
-            };
-            
-            // ProjectionFunctor has to be a pure function (currently)
-            // So make this a template that depends on increment
-            // In the future this also has to depend on ordering which is a dynamic int array
-            
-            template<int increment>
-            class CompositeProjectionFunctorClass : public CompositeProjectionFunctor {
-            public:
-                CompositeProjectionFunctorClass(void);
             private:
-                virtual DomainPoint newPoint(DomainPoint point) {
-                    Point<DIMENSIONS> p = point.get_point<DIMENSIONS>();
-                    int layer = p.x[2] * NUM_FRAGMENTS_PER_COMPOSITE_TASK + increment;
-                    //p.x[2] = mOrdering[layer];//no ordering yet, commutative only
-                    p.x[2] = layer;
-                    DomainPoint result = DomainPoint::from_point<DIMENSIONS>(p);
-                    return result;
-                }
+                int mFunctorID;
             };
+            
             
             
         public:
@@ -116,16 +108,16 @@ namespace Legion {
             
             void set_depth_func(GLenum func){ mDepthFunction = func; }
             
-            static void create_image_field_points(ImageSize imageSize,
-                                                 PhysicalRegion region,
-                                                 int layer,
-                                                 PixelField *&r,
-                                                 PixelField *&g,
-                                                 PixelField *&b,
-                                                 PixelField *&a,
-                                                 PixelField *&z,
-                                                 PixelField *&userdata,
-                                                 ByteOffset stride[3]);
+            static void create_image_field_pointers(ImageSize imageSize,
+                                                    PhysicalRegion region,
+                                                    int layer,
+                                                    PixelField *&r,
+                                                    PixelField *&g,
+                                                    PixelField *&b,
+                                                    PixelField *&a,
+                                                    PixelField *&z,
+                                                    PixelField *&userdata,
+                                                    ByteOffset stride[3]);
             
             static std::string describe_task(const Task *task) {
                 std::ostringstream output;
@@ -137,47 +129,40 @@ namespace Legion {
                 ;
                 return output.str();
             }
-
+            
         private:
-
+            
             static void display_task(const Task *task,
                                      const std::vector<PhysicalRegion> &regions,
                                      Context ctx, Runtime *runtime);
-
+            
             static PhysicalRegion compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1);
             
             static void composite_task(const Task *task,
                                        const std::vector<PhysicalRegion> &regions,
                                        Context ctx, Runtime *runtime);
             
-            typedef struct {
-                CompositeProjectionFunctor* functor0;
-                CompositeProjectionFunctor* functor1;
-                int functorID0;
-                int functorID1;
-                Domain domain;
-            } CompositeLaunchDescriptor;
             
             FieldSpace imageFields();
             void createImage();
             void partitionImageByDepth();
             void prepareCompositePartition();
+            void prepareCompositeDomains();
             void prepareCompositeLaunchDomains();
-            CompositeProjectionFunctor* newProjectionFunctor(int increment);
             Domain compositeDomain(int level);
-            void partitionImageForComposite();
             void prepareProjectionFunctors();
+            void prepareImageForComposite();
             FutureMap reduceAssociative(int permutation[]);
             FutureMap reduceNonassociative(int permutation[]);
             FutureMap launchCompositeTaskTree(int permutation[]);
             FutureMap launchCompositeTaskPipeline(int permutation[]);
             FutureMap launchTreeLevel(int level, int permutation[]);
             void addCompositeArgumentsToArgmap(CompositeArguments *args, int taskZ, ArgumentMap &argMap);
-            void addRegionRequirementToCompositeLauncher(IndexTaskLauncher &launcher, int level, bool isLeft, PrivilegeMode privilege, CoherenceProperty coherence);
+            void addRegionRequirementToCompositeLauncher(IndexTaskLauncher &launcher, int projectionFunctorID, PrivilegeMode privilege, CoherenceProperty coherence);
             int *defaultPermutation();
             void addImageFieldsToRequirement(RegionRequirement &req);
             void registerTasks();
-            
+            int numTreeLevels();
             
             static void createImageFieldPointer(RegionAccessor<AccessorType::Generic, PixelField> &acc, int fieldID, PixelField *&field,
                                                 Rect<DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]);
@@ -195,10 +180,12 @@ namespace Legion {
             int *mDefaultPermutation;
             TaskID mCompositeTaskID;
             TaskID mDisplayTaskID;
-            vector<CompositeLaunchDescriptor> mCompositeLaunchDescriptor;
+            vector<Domain> mCompositeTreeDomain;
             GLenum mDepthFunction;
             GLenum mBlendFunctionSource;
             GLenum mBlendFunctionDestination;
+            CompositeProjectionFunctor<0> *mFunctor0;
+            CompositeProjectionFunctor<1> *mFunctor1;
         };
         
     }

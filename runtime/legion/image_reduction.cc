@@ -37,7 +37,7 @@ namespace Legion {
             mBlendFunctionDestination = 0;
             createImage();
             partitionImageByDepth();
-            partitionImageForComposite();
+            prepareImageForComposite();
             registerTasks();
         }
         
@@ -126,15 +126,6 @@ namespace Legion {
         
         
         
-        int projectionFunctorIndex(int level, bool isLeft) {
-            int result = 1 + level * NUM_FRAGMENTS_PER_COMPOSITE_TASK + (isLeft ? 0 : 1);
-            return result;
-        }
-        
-        
-        
-        
-        
         Domain ImageReduction::compositeDomain(int increment) {
             Point<DIMENSIONS> numTreeComposites = mImageSize.numFragments();
             numTreeComposites.x[2] /= (NUM_FRAGMENTS_PER_COMPOSITE_TASK * increment);
@@ -144,32 +135,40 @@ namespace Legion {
         }
         
         
-        void ImageReduction::partitionImageForComposite() {
-            prepareCompositePartition();
-            mCompositeLaunchDescriptor = vector<CompositeLaunchDescriptor>();
-            
-            int increment = 1;
+        int ImageReduction::numTreeLevels() {
             int numTreeLevels = log2f(mImageSize.depth);
             if(powf(2.0f, numTreeLevels) < mImageSize.depth) {
                 numTreeLevels++;
             }
+            return numTreeLevels;
+        }
+        
+        
+        void ImageReduction::prepareCompositeDomains() {
+            int increment = 1;
             
-            for(int level = 0; level < numTreeLevels; ++level) {
-                CompositeLaunchDescriptor launch = {
-                    newProjectionFunctor(0),
-                    newProjectionFunctor(increment),
-                    projectionFunctorIndex(level, true),
-                    projectionFunctorIndex(level, false),
-                    compositeDomain(increment)
-                };
-                mRuntime->register_projection_functor(launch.functorID0, launch.functor0);
-                mRuntime->register_projection_functor(launch.functorID1, launch.functor1);
-                mCompositeLaunchDescriptor.push_back(launch);
-                increment *= 2;
+            mCompositeTreeDomain = vector<Domain>();
+            for(int level = 0; level < numTreeLevels(); ++level) {
+                mCompositeTreeDomain.push_back(compositeDomain(increment));
             }
             
             Rect<DIMENSIONS> compositePipelineBounds(mImageSize.origin(), mImageSize.numFragments() - Point<DIMENSIONS>::ONES());
             mCompositePipelineDomain = Domain::from_rect<DIMENSIONS>(compositePipelineBounds);
+        }
+        
+        
+        
+        void ImageReduction::prepareProjectionFunctors() {
+            mFunctor0 = new CompositeProjectionFunctor<0>(1);
+            mRuntime->register_projection_functor(mFunctor0->functorID(), mFunctor0);
+            mFunctor1 = new CompositeProjectionFunctor<1>(2);
+            mRuntime->register_projection_functor(mFunctor1->functorID(), mFunctor1);
+        }
+        
+        void ImageReduction::prepareImageForComposite() {
+            prepareCompositePartition();
+            prepareCompositeDomains();
+            prepareProjectionFunctors();
         }
         
         
@@ -192,16 +191,16 @@ namespace Legion {
         }
         
         
-        void ImageReduction::create_image_field_points(ImageSize imageSize,
-                                                      PhysicalRegion region,
-                                                      int layer,
-                                                      PixelField *&r,
-                                                      PixelField *&g,
-                                                      PixelField *&b,
-                                                      PixelField *&a,
-                                                      PixelField *&z,
-                                                      PixelField *&userdata,
-                                                      ByteOffset stride[3]) {
+        void ImageReduction::create_image_field_pointers(ImageSize imageSize,
+                                                         PhysicalRegion region,
+                                                         int layer,
+                                                         PixelField *&r,
+                                                         PixelField *&g,
+                                                         PixelField *&b,
+                                                         PixelField *&a,
+                                                         PixelField *&z,
+                                                         PixelField *&userdata,
+                                                         ByteOffset stride[3]) {
             
             Rect<DIMENSIONS> tempBounds;
             Point<DIMENSIONS> origin = imageSize.origin();
@@ -252,8 +251,8 @@ namespace Legion {
             PixelField *r1, *g1, *b1, *a1, *z1, *userdata1;
             ImageReductionComposite::CompositeFunction* compositeFunction;
             
-            create_image_field_points(args.imageSize, region0, args.layer0, r0, g0, b0, a0, z0, userdata0, stride);
-            create_image_field_points(args.imageSize, region1, args.layer1, r1, g1, b1, a1, z1, userdata1, stride);
+            create_image_field_pointers(args.imageSize, region0, args.layer0, r0, g0, b0, a0, z0, userdata0, stride);
+            create_image_field_pointers(args.imageSize, region1, args.layer1, r1, g1, b1, a1, z1, userdata1, stride);
             compositeFunction = ImageReductionComposite::compositeFunctionPointer(args.depthFunction, args.blendFunctionSource, args.blendFunctionDestination);
             compositeFunction(r0, g0, b0, a0, z0, userdata0, r1, g1, b1, a1, z1, userdata1, r0, g0, b0, a0, z0, userdata0, args.imageSize.numPixelsPerFragment());
             
@@ -298,8 +297,7 @@ namespace Legion {
         }
         
         
-        void ImageReduction::addRegionRequirementToCompositeLauncher(Legion::IndexTaskLauncher &launcher, int level, bool isLeft, PrivilegeMode privilege, CoherenceProperty coherence) {
-            int projectionFunctorID = projectionFunctorIndex(level, isLeft);
+        void ImageReduction::addRegionRequirementToCompositeLauncher(Legion::IndexTaskLauncher &launcher, int projectionFunctorID, PrivilegeMode privilege, CoherenceProperty coherence) {
             RegionRequirement req(mCompositePartition, projectionFunctorID, privilege, coherence, mImage);
             addImageFieldsToRequirement(req);
             launcher.add_region_requirement(req);
@@ -322,10 +320,10 @@ namespace Legion {
                 addCompositeArgumentsToArgmap(args + taskZ, taskZ, argMap);
             }
             
-            Domain launchDomain = mCompositeLaunchDescriptor[level].domain;
+            Domain launchDomain = mCompositeTreeDomain[level];
             IndexTaskLauncher treeLauncher(mCompositeTaskID, launchDomain, TaskArgument(NULL, 0), argMap);
-            addRegionRequirementToCompositeLauncher(treeLauncher, level, true, READ_WRITE, EXCLUSIVE);
-            addRegionRequirementToCompositeLauncher(treeLauncher, level, false, READ_ONLY, SIMULTANEOUS);
+            addRegionRequirementToCompositeLauncher(treeLauncher, mFunctor0->functorID(), READ_WRITE, EXCLUSIVE);
+            addRegionRequirementToCompositeLauncher(treeLauncher, mFunctor1->functorID(), READ_ONLY, SIMULTANEOUS);
             assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
             
             FutureMap futures = mRuntime->execute_index_space(mContext, treeLauncher);
@@ -335,9 +333,8 @@ namespace Legion {
         
         
         FutureMap ImageReduction::launchCompositeTaskTree(int ordering[]) {
-            int numTreeLevels = (int)log2f((float)mImageSize.depth);
             FutureMap futures;
-            for(int level = 0; level < numTreeLevels; ++level) {
+            for(int level = 0; level < numTreeLevels(); ++level) {
                 futures = launchTreeLevel(level, ordering);
             }
             return futures;
@@ -367,13 +364,13 @@ namespace Legion {
                 int layer1 = layer0 + 1;
                 int taskZ = layer0;
                 //ordering[layer0], ordering[layer1]
-                args[taskZ] = (CompositeArguments){ mImageSize, layer0, layer1, 0, 0 };
+                args[taskZ] = (CompositeArguments){ mImageSize, layer0, layer1, GL_LESS, 0, 0 };
                 addCompositeArgumentsToArgmap(args + taskZ, taskZ, argMap);
             }
             
             IndexTaskLauncher pipelineLauncher(mCompositeTaskID, mCompositePipelineDomain, TaskArgument(NULL, 0), argMap);
-            addRegionRequirementToCompositeLauncher(pipelineLauncher, 0, true, READ_WRITE, EXCLUSIVE);
-            addRegionRequirementToCompositeLauncher(pipelineLauncher, 0, false, READ_ONLY, SIMULTANEOUS);
+            addRegionRequirementToCompositeLauncher(pipelineLauncher, mFunctor0->functorID(), READ_WRITE, EXCLUSIVE);
+            addRegionRequirementToCompositeLauncher(pipelineLauncher, mFunctor1->functorID(), READ_ONLY, SIMULTANEOUS);
             assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
             
             FutureMap futures = mRuntime->execute_index_space(mContext, pipelineLauncher);
@@ -407,7 +404,7 @@ namespace Legion {
             PhysicalRegion displayPlane = regions[0];
             ByteOffset stride[DIMENSIONS];
             PixelField *r, *g, *b, *a, *z, *userdata;
-            create_image_field_points(args.imageSize, displayPlane, args.imageSize.depth - 1, r, g, b, a, z, userdata, stride);
+            create_image_field_pointers(args.imageSize, displayPlane, args.imageSize.depth - 1, r, g, b, a, z, userdata, stride);
             
             FILE *outputFile = fopen(outputFileName.c_str(), "wb");
             fwrite(r, 6 * sizeof(*r), args.imageSize.pixelsPerLayer(), outputFile);
