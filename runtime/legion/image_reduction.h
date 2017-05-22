@@ -14,11 +14,9 @@
  */
 
 
-#ifndef ImageReduction_h
-#define ImageReduction_h
+#ifndef image_reduction_h
+#define image_reduction_h
 
-
-#include "legion.h"
 #include "legion_visualization.h"
 #include "image_reduction_composite.h"
 
@@ -74,7 +72,7 @@ namespace Legion {
                     CompositeArguments args = ((CompositeArguments*)(task->local_args))[0];
                     DomainPoint newPoint = point;
                     newPoint[2] = (layerID == 0) ? args.layer0 : args.layer1;
-                    LogicalRegion result = Legion::Runtime::get_runtime()->get_logical_subregion_by_color(context, upperBound, newPoint);
+                    LogicalRegion result = Runtime::get_runtime()->get_logical_subregion_by_color(context, upperBound, newPoint);
                     return result;
                 }
                 
@@ -91,23 +89,79 @@ namespace Legion {
         public:
             
             ImageReduction(){}
+            /**
+             * Construct an image reduction framework.
+             *
+             * @param imageSize defines dimensions of current image
+             * @param context Legion context
+             * @param runtime  Legion runtime
+             */
             ImageReduction(ImageSize imageSize, Context ctx, HighLevelRuntime *runtime);
+            /**
+             * Destroy an instance of an image reduction framework.
+             */
             virtual ~ImageReduction();
             
+            /**
+             * Launch a set of tasks that each recieve one layer in Z of the image space.
+             * Use this for example to render to the individual layers.
+             *
+             * @param taskID ID of task that has previously been registered with the Legion runtime
+             */
             FutureMap launch_task_by_depth(unsigned taskID);
+            /**
+             * Perform a tree reduction using an associative commutative operator.
+             * Be sure to call either set_blend_func or set_depth_func first.
+             */
             FutureMap reduce_associative_commutative();
+            /**
+             * Perform a tree reduction using an associative noncommutative operator.
+             * Be sure to call either set_blend_func or set_depth_func first.
+             *
+             * @param ordering integer permutation that defines ordering by depth index
+             */
             FutureMap reduce_associative_noncommutative(int ordering[]);
+            /**
+             * Perform a pipeline reduction using an nonassociative commutative operator.
+             * Be sure to call either set_blend_func or set_depth_func first.
+             */
             FutureMap reduce_nonassociative_commutative();
+            /**
+             * Perform a pipeline reduction using an nonassociative noncommutative operator.
+             * Be sure to call either set_blend_func or set_depth_func first.
+             *
+             * @param ordering integer permutation that defines ordering by depth index
+             */
             FutureMap reduce_nonassociative_noncommutative(int ordering[]);
+            /**
+             * Move reduced image result to a display.
+             *
+             * @param t integer timestep
+             */
             Future display(int t);
             
+            /**
+             * Define a blend operator to use in subsequent reductions.
+             * For definition of blend factors see glBlendFunc (OpenGL).
+             *
+             * @param sfactor source blend factor
+             * @param dfactor destination blend factor
+             */
             void set_blend_func(GLenum sfactor, GLenum dfactor) {
                 mBlendFunctionSource = sfactor;
                 mBlendFunctionDestination = dfactor;
             }
             
+            /**
+             * Define a depth operator to use in subsequent reductions.
+             * For definition of depth factors see glDepthFunc (OpenGL).
+             * @param func depth comparison factor
+             */
             void set_depth_func(GLenum func){ mDepthFunction = func; }
             
+            /**
+             *
+             */
             static void create_image_field_pointers(ImageSize imageSize,
                                                     PhysicalRegion region,
                                                     int layer,
@@ -119,6 +173,11 @@ namespace Legion {
                                                     PixelField *&userdata,
                                                     ByteOffset stride[3]);
             
+            /**
+             * Utility function to provide descriptive output for messages.
+             *
+             * @param task Legion task pointer
+             */
             static std::string describe_task(const Task *task) {
                 std::ostringstream output;
                 output << task->get_task_name() << " " << task->get_unique_id()
@@ -165,7 +224,7 @@ namespace Legion {
             int numTreeLevels();
             
             static void createImageFieldPointer(RegionAccessor<AccessorType::Generic, PixelField> &acc, int fieldID, PixelField *&field,
-                                                Rect<DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]);
+                                                Rect<IMAGE_REDUCTION_DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]);
             
             ImageSize mImageSize;
             Context mContext;
@@ -191,4 +250,4 @@ namespace Legion {
     }
 }
 
-#endif /* ImageReduction_h */
+#endif /* image_reduction_h */

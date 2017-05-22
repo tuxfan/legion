@@ -19,7 +19,6 @@
 #include "legion.h"
 #include "legion_visualization.h"
 
-#include "image_reduction.h"
 #include "usec_timer.h"
 
 #ifndef TIME_PER_FRAME
@@ -36,8 +35,7 @@
 
 
 using namespace std;
-using namespace LegionRuntime::HighLevel;
-using namespace LegionRuntime::Accessor;
+using namespace Legion;
 using namespace Legion::Visualization;
 
 
@@ -61,7 +59,7 @@ static void paintRegion(ImageSize imageSize,
                         PixelField *a,
                         PixelField *z,
                         PixelField *userdata,
-                        ByteOffset stride[DIMENSIONS],
+                        ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS],
                         int taskID) {
     
     PixelField zValue = taskID % imageSize.depth;
@@ -92,7 +90,7 @@ void render_task(const Task *task,
     ImageSize imageSize = ((ImageSize *)task->args)[0];
     
     PixelField *r, *g, *b, *a, *z, *userdata;
-    ByteOffset stride[DIMENSIONS];
+    ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS];
     int layer = task->get_unique_id() % imageSize.depth;
     ImageReduction::create_image_field_pointers(imageSize, image, layer, r, g, b, a, z, userdata, stride);
     paintRegion(imageSize, r, g, b, a, z, userdata, stride, task->get_unique_id());

@@ -25,7 +25,7 @@ namespace Legion {
     namespace Visualization {
         
         const int NUM_FRAGMENTS_PER_COMPOSITE_TASK = 2;
-        const int DIMENSIONS = 3;
+        const int IMAGE_REDUCTION_DIMENSIONS = 3;
         
         typedef struct {
             int width;
@@ -35,9 +35,9 @@ namespace Legion {
             
             int pixelsPerLayer() const{ return width * height; }
             
-            Point<DIMENSIONS> origin() const{ return Point<DIMENSIONS>::ZEROES(); }
-            Point<DIMENSIONS> upperBound() const{
-                Point<DIMENSIONS> result;
+            Point<IMAGE_REDUCTION_DIMENSIONS> origin() const{ return Point<IMAGE_REDUCTION_DIMENSIONS>::ZEROES(); }
+            Point<IMAGE_REDUCTION_DIMENSIONS> upperBound() const{
+                Point<IMAGE_REDUCTION_DIMENSIONS> result;
                 result.x[0] = width;
                 result.x[1] = height;
                 result.x[2] = depth;
@@ -45,15 +45,15 @@ namespace Legion {
             }
             
             // launch by depth plane, each depth point is one image
-            Point<DIMENSIONS> layerSize() const{
-                Point<DIMENSIONS> result;
+            Point<IMAGE_REDUCTION_DIMENSIONS> layerSize() const{
+                Point<IMAGE_REDUCTION_DIMENSIONS> result;
                 result.x[0] = width;
                 result.x[1] = height;
                 result.x[2] = 1;
                 return result;
             }
-            Point<DIMENSIONS> numLayers() const{
-                Point<DIMENSIONS> result;
+            Point<IMAGE_REDUCTION_DIMENSIONS> numLayers() const{
+                Point<IMAGE_REDUCTION_DIMENSIONS> result;
                 result.x[0] = 1;
                 result.x[1] = 1;
                 result.x[2] = depth;
@@ -61,8 +61,8 @@ namespace Legion {
             }
             
             // launch by composite fragment,
-            Point<DIMENSIONS> fragmentSize() const{
-                Point<DIMENSIONS> result;
+            Point<IMAGE_REDUCTION_DIMENSIONS> fragmentSize() const{
+                Point<IMAGE_REDUCTION_DIMENSIONS> result;
                 if(numFragmentsPerLayer > height) {
                     assert(width % numFragmentsPerLayer == 0);
                     result.x[0] = width / numFragmentsPerLayer;
@@ -76,16 +76,16 @@ namespace Legion {
                 }
                 return result;
             }
-            Point<DIMENSIONS> numFragments() const{
-                Point<DIMENSIONS> result;
-                Point<DIMENSIONS> size = fragmentSize();
+            Point<IMAGE_REDUCTION_DIMENSIONS> numFragments() const{
+                Point<IMAGE_REDUCTION_DIMENSIONS> result;
+                Point<IMAGE_REDUCTION_DIMENSIONS> size = fragmentSize();
                 result.x[0] = width / size.x[0];
                 result.x[1] = height / size.x[1];
                 result.x[2] = depth;
                 return result;
             }
                         
-            Point<DIMENSIONS> incrementFragment(Point<DIMENSIONS> point) const {
+            Point<IMAGE_REDUCTION_DIMENSIONS> incrementFragment(Point<IMAGE_REDUCTION_DIMENSIONS> point) const {
                 point.x[0] += 1;
                 if(point.x[0] >= numFragments().x[0]) {
                     point.x[0] = 0;
@@ -102,9 +102,9 @@ namespace Legion {
             }
             
             int numPixelsPerFragment() const {
-                Point<DIMENSIONS> size = fragmentSize();
+                Point<IMAGE_REDUCTION_DIMENSIONS> size = fragmentSize();
                 int result = 1;
-                for(int i = 0; i < DIMENSIONS; ++i) {
+                for(int i = 0; i < IMAGE_REDUCTION_DIMENSIONS; ++i) {
                     result *= size.x[i];
                 }
                 return result;
@@ -125,5 +125,8 @@ namespace Legion {
         
     }
 }
+
+#include "image_reduction.h"
+
 
 #endif /* legion_visualization_h */

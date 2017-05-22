@@ -27,9 +27,9 @@ using namespace LegionRuntime::Accessor;
 namespace Legion {
     namespace Visualization {
         
-        ImageReduction::ImageReduction(ImageSize imageSize, Context ctx, HighLevelRuntime *runtime) {
+        ImageReduction::ImageReduction(ImageSize imageSize, Context context, HighLevelRuntime *runtime) {
             mImageSize = imageSize;
-            mContext = ctx;
+            mContext = context;
             mRuntime = runtime;
             mDefaultPermutation = NULL;
             mDepthFunction = 0;
@@ -94,8 +94,8 @@ namespace Legion {
         
         
         void ImageReduction::createImage() {
-            Rect<DIMENSIONS> imageBounds(mImageSize.origin(), mImageSize.upperBound() - Point<DIMENSIONS>::ONES());
-            mImageDomain = Domain::from_rect<DIMENSIONS>(imageBounds);
+            Rect<IMAGE_REDUCTION_DIMENSIONS> imageBounds(mImageSize.origin(), mImageSize.upperBound() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES());
+            mImageDomain = Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(imageBounds);
             //TODO mRuntime->attach_name(mImageDomain, "image domain");
             IndexSpace pixels = mRuntime->create_index_space(mContext, mImageDomain);
             mRuntime->attach_name(pixels, "image index space");
@@ -106,19 +106,19 @@ namespace Legion {
         
         
         void ImageReduction::partitionImageByDepth() {
-            Blockify<DIMENSIONS> coloring(mImageSize.layerSize());
+            Blockify<IMAGE_REDUCTION_DIMENSIONS> coloring(mImageSize.layerSize());
             IndexPartition imageDepthIndexPartition = mRuntime->create_index_partition(mContext, mImage.get_index_space(), coloring);
             mRuntime->attach_name(imageDepthIndexPartition, "image depth index partition");
             mDepthPartition = mRuntime->get_logical_partition(mContext, mImage, imageDepthIndexPartition);
             
-            Rect<DIMENSIONS> depthBounds(mImageSize.origin(), mImageSize.numLayers() - Point<DIMENSIONS>::ONES());
-            mDepthDomain = Domain::from_rect<DIMENSIONS>(depthBounds);
+            Rect<IMAGE_REDUCTION_DIMENSIONS> depthBounds(mImageSize.origin(), mImageSize.numLayers() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES());
+            mDepthDomain = Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(depthBounds);
             //TODO mRuntime->attach_name(mDepthDomain, "depth domain");
         }
         
         
         void ImageReduction::prepareCompositePartition() {
-            Blockify<DIMENSIONS> coloring(mImageSize.fragmentSize());
+            Blockify<IMAGE_REDUCTION_DIMENSIONS> coloring(mImageSize.fragmentSize());
             IndexPartition imageCompositeIndexPartition = mRuntime->create_index_partition(mContext, mImage.get_index_space(), coloring);
             mRuntime->attach_name(imageCompositeIndexPartition, "image composite index partition");
             mCompositePartition = mRuntime->get_logical_partition(mContext, mImage, imageCompositeIndexPartition);
@@ -127,10 +127,10 @@ namespace Legion {
         
         
         Domain ImageReduction::compositeDomain(int increment) {
-            Point<DIMENSIONS> numTreeComposites = mImageSize.numFragments();
+            Point<IMAGE_REDUCTION_DIMENSIONS> numTreeComposites = mImageSize.numFragments();
             numTreeComposites.x[2] /= (NUM_FRAGMENTS_PER_COMPOSITE_TASK * increment);
-            Rect<DIMENSIONS> compositeTreeBounds(mImageSize.origin(), numTreeComposites - Point<DIMENSIONS>::ONES());
-            return Domain::from_rect<DIMENSIONS>(compositeTreeBounds);
+            Rect<IMAGE_REDUCTION_DIMENSIONS> compositeTreeBounds(mImageSize.origin(), numTreeComposites - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES());
+            return Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(compositeTreeBounds);
             
         }
         
@@ -152,8 +152,8 @@ namespace Legion {
                 mCompositeTreeDomain.push_back(compositeDomain(increment));
             }
             
-            Rect<DIMENSIONS> compositePipelineBounds(mImageSize.origin(), mImageSize.numFragments() - Point<DIMENSIONS>::ONES());
-            mCompositePipelineDomain = Domain::from_rect<DIMENSIONS>(compositePipelineBounds);
+            Rect<IMAGE_REDUCTION_DIMENSIONS> compositePipelineBounds(mImageSize.origin(), mImageSize.numFragments() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES());
+            mCompositePipelineDomain = Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(compositePipelineBounds);
         }
         
         
@@ -183,10 +183,10 @@ namespace Legion {
         
         
         void ImageReduction::createImageFieldPointer(RegionAccessor<AccessorType::Generic, PixelField> &acc, int fieldID, PixelField *&field,
-                                                     Rect<DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]) {
+                                                     Rect<IMAGE_REDUCTION_DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]) {
             acc = region.get_field_accessor(fieldID).typeify<PixelField>();
-            Rect<DIMENSIONS> tempBounds;
-            field = acc.raw_rect_ptr<DIMENSIONS>(imageBounds, tempBounds, offset);
+            Rect<IMAGE_REDUCTION_DIMENSIONS> tempBounds;
+            field = acc.raw_rect_ptr<IMAGE_REDUCTION_DIMENSIONS>(imageBounds, tempBounds, offset);
             assert(imageBounds == tempBounds);
         }
         
@@ -202,12 +202,12 @@ namespace Legion {
                                                          PixelField *&userdata,
                                                          ByteOffset stride[3]) {
             
-            Rect<DIMENSIONS> tempBounds;
-            Point<DIMENSIONS> origin = imageSize.origin();
+            Rect<IMAGE_REDUCTION_DIMENSIONS> tempBounds;
+            Point<IMAGE_REDUCTION_DIMENSIONS> origin = imageSize.origin();
             origin.x[2] = layer;
-            Point<DIMENSIONS> upperBound = imageSize.upperBound() - Point<DIMENSIONS>::ONES();
+            Point<IMAGE_REDUCTION_DIMENSIONS> upperBound = imageSize.upperBound() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES();
             upperBound.x[2] = layer;
-            Rect<DIMENSIONS> imageBounds = Rect<DIMENSIONS>(origin, upperBound);
+            Rect<IMAGE_REDUCTION_DIMENSIONS> imageBounds = Rect<IMAGE_REDUCTION_DIMENSIONS>(origin, upperBound);
             
             RegionAccessor<AccessorType::Generic, PixelField> acc_r, acc_g, acc_b, acc_a, acc_z, acc_userdata;
             
@@ -246,7 +246,7 @@ namespace Legion {
         
         inline PhysicalRegion ImageReduction::compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1) {
             
-            ByteOffset stride[DIMENSIONS];
+            ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS];
             PixelField *r0, *g0, *b0, *a0, *z0, *userdata0;
             PixelField *r1, *g1, *b1, *a1, *z1, *userdata1;
             ImageReductionComposite::CompositeFunction* compositeFunction;
@@ -286,11 +286,11 @@ namespace Legion {
         
         void ImageReduction::addCompositeArgumentsToArgmap(CompositeArguments *args, int taskZ, Legion::ArgumentMap &argMap) {
             assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
-            Point<DIMENSIONS> point = Point<DIMENSIONS>::ZEROES();
+            Point<IMAGE_REDUCTION_DIMENSIONS> point = Point<IMAGE_REDUCTION_DIMENSIONS>::ZEROES();
             point.x[2] = taskZ;
             
             for(int fragment = 0; fragment < mImageSize.numFragmentsPerLayer; ++fragment) {
-                DomainPoint domainPoint = DomainPoint::from_point<DIMENSIONS>(point);
+                DomainPoint domainPoint = DomainPoint::from_point<IMAGE_REDUCTION_DIMENSIONS>(point);
                 argMap.set_point(domainPoint, TaskArgument(args, sizeof(*args)));
                 point = mImageSize.incrementFragment(point);
             }
@@ -402,7 +402,7 @@ namespace Legion {
             UsecTimer display(describe_task(task) + " write to " + outputFileName + ":");
             display.start();
             PhysicalRegion displayPlane = regions[0];
-            ByteOffset stride[DIMENSIONS];
+            ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS];
             PixelField *r, *g, *b, *a, *z, *userdata;
             create_image_field_pointers(args.imageSize, displayPlane, args.imageSize.depth - 1, r, g, b, a, z, userdata, stride);
             
@@ -419,7 +419,7 @@ namespace Legion {
         Future ImageReduction::display(int t) {
             DisplayArguments args = { mImageSize, t };
             TaskLauncher taskLauncher(mDisplayTaskID, TaskArgument(&args, sizeof(args)));
-            DomainPoint origin = DomainPoint::from_point<DIMENSIONS>(Point<DIMENSIONS>::ZEROES());
+            DomainPoint origin = DomainPoint::from_point<IMAGE_REDUCTION_DIMENSIONS>(Point<IMAGE_REDUCTION_DIMENSIONS>::ZEROES());
             LogicalRegion displayPlane = mRuntime->get_logical_subregion_by_color(mDepthPartition, origin);
             RegionRequirement req(displayPlane, READ_ONLY, EXCLUSIVE, mImage);
             addImageFieldsToRequirement(req);
