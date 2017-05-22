@@ -86,7 +86,7 @@ void render_task(const Task *task,
                  const std::vector<PhysicalRegion> &regions,
                  Context ctx, HighLevelRuntime *runtime) {
     
-    UsecTimer render(ImageReduction::describeTask(task) + ":");
+    UsecTimer render(ImageReduction::describe_task(task) + ":");
     render.start();
     PhysicalRegion image = regions[0];
     ImageSize imageSize = ((ImageSize *)task->args)[0];
@@ -94,7 +94,7 @@ void render_task(const Task *task,
     PixelField *r, *g, *b, *a, *z, *userdata;
     ByteOffset stride[DIMENSIONS];
     int layer = task->get_unique_id() % imageSize.depth;
-    ImageReduction::createImageFieldPointers(imageSize, image, layer, r, g, b, a, z, userdata, stride);
+    ImageReduction::create_image_field_points(imageSize, image, layer, r, g, b, a, z, userdata, stride);
     paintRegion(imageSize, r, g, b, a, z, userdata, stride, task->get_unique_id());
     render.stop();
     cout << render.to_string() << endl;
@@ -132,7 +132,7 @@ void top_level_task(const Task *task,
     
     ImageSize imageSize = (ImageSize){ width, height, numSimulationTasks, numFragmentsPerLayer };
     ImageReduction imageReduction(imageSize, ctx, runtime);
-    imageReduction.setDepthFunc(GL_LESS);
+    imageReduction.set_depth_func(GL_LESS);
     
     {
         
@@ -145,13 +145,13 @@ void top_level_task(const Task *task,
         for(int t = 0; t < numTimeSteps; ++t) {
             frame.start();
             simulateTimeStep(t);
-            FutureMap renderFutures = imageReduction.launchTaskByDepth(RENDER_TASK_ID);
+            FutureMap renderFutures = imageReduction.launch_task_by_depth(RENDER_TASK_ID);
             reduce.start();
             
 #if TREE_REDUCTION
-            FutureMap reduceFutures = imageReduction.reduceAssociativeCommutative();
+            FutureMap reduceFutures = imageReduction.reduce_associative_commutative();
 #else
-            FutureMap reduceFutures = imageReduction.reduceNonassociativeCommutative();
+            FutureMap reduceFutures = imageReduction.reduce_nonassociative_commutative();
 #endif
             
             

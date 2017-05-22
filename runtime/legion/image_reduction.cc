@@ -133,29 +133,6 @@ namespace Legion {
         
         
         
-        ImageReduction::CompositeProjectionFunctor* ImageReduction::newProjectionFunctor(int increment) {
-            switch(increment){
-                case 0: return new CompositeProjectionFunctorClass<0>;
-                case 1: return new CompositeProjectionFunctorClass<1>;
-                case 2: return new CompositeProjectionFunctorClass<2>;
-                case 4: return new CompositeProjectionFunctorClass<4>;
-                case 8: return new CompositeProjectionFunctorClass<8>;
-                case 16: return new CompositeProjectionFunctorClass<16>;
-                case 32: return new CompositeProjectionFunctorClass<32>;
-                case 64: return new CompositeProjectionFunctorClass<64>;
-                case 128: return new CompositeProjectionFunctorClass<128>;
-                case 256: return new CompositeProjectionFunctorClass<256>;
-                case 512: return new CompositeProjectionFunctorClass<512>;
-                case 1024: return new CompositeProjectionFunctorClass<1024>;
-                case 2048: return new CompositeProjectionFunctorClass<2048>;
-                case 4096: return new CompositeProjectionFunctorClass<4096>;
-                case 8192: return new CompositeProjectionFunctorClass<8192>;
-                case 16384: return new CompositeProjectionFunctorClass<16384>;
-                case 32768: return new CompositeProjectionFunctorClass<32768>;
-                default:
-                    assert(false);
-            }
-        }
         
         
         Domain ImageReduction::compositeDomain(int increment) {
@@ -215,7 +192,7 @@ namespace Legion {
         }
         
         
-        void ImageReduction::createImageFieldPointers(ImageSize imageSize,
+        void ImageReduction::create_image_field_points(ImageSize imageSize,
                                                       PhysicalRegion region,
                                                       int layer,
                                                       PixelField *&r,
@@ -244,7 +221,7 @@ namespace Legion {
         }
         
         
-        FutureMap ImageReduction::launchTaskByDepth(unsigned taskID){
+        FutureMap ImageReduction::launch_task_by_depth(unsigned taskID){
             ArgumentMap argMap;
             IndexTaskLauncher depthLauncher(taskID, mDepthDomain, TaskArgument(&mImageSize, sizeof(ImageSize)), argMap);
             //TODO mRuntime->attach_name(depthLauncher, "depth task launcher");
@@ -275,8 +252,8 @@ namespace Legion {
             PixelField *r1, *g1, *b1, *a1, *z1, *userdata1;
             ImageReductionComposite::CompositeFunction* compositeFunction;
             
-            createImageFieldPointers(args.imageSize, region0, args.layer0, r0, g0, b0, a0, z0, userdata0, stride);
-            createImageFieldPointers(args.imageSize, region1, args.layer1, r1, g1, b1, a1, z1, userdata1, stride);
+            create_image_field_points(args.imageSize, region0, args.layer0, r0, g0, b0, a0, z0, userdata0, stride);
+            create_image_field_points(args.imageSize, region1, args.layer1, r1, g1, b1, a1, z1, userdata1, stride);
             compositeFunction = ImageReductionComposite::compositeFunctionPointer(args.depthFunction, args.blendFunctionSource, args.blendFunctionDestination);
             compositeFunction(r0, g0, b0, a0, z0, userdata0, r1, g1, b1, a1, z1, userdata1, r0, g0, b0, a0, z0, userdata0, args.imageSize.numPixelsPerFragment());
             
@@ -289,7 +266,7 @@ namespace Legion {
         void ImageReduction::composite_task(const Task *task,
                                             const std::vector<PhysicalRegion> &regions,
                                             Context ctx, HighLevelRuntime *runtime) {
-            UsecTimer composite(describeTask(task) + " leaf:");
+            UsecTimer composite(describe_task(task) + " leaf:");
             composite.start();
             CompositeArguments args = ((CompositeArguments*)task->local_args)[0];
             if(args.layer1 >= 0) {
@@ -371,11 +348,11 @@ namespace Legion {
             return launchCompositeTaskTree(ordering);
         }
         
-        FutureMap ImageReduction::reduceAssociativeCommutative(){
+        FutureMap ImageReduction::reduce_associative_commutative(){
             return reduceAssociative(defaultPermutation());
         }
         
-        FutureMap ImageReduction::reduceAssociativeNoncommutative(int ordering[]){
+        FutureMap ImageReduction::reduce_associative_noncommutative(int ordering[]){
             return reduceAssociative(ordering);
         }
         
@@ -407,11 +384,11 @@ namespace Legion {
             return launchCompositeTaskPipeline(ordering);
         }
         
-        FutureMap ImageReduction::reduceNonassociativeCommutative(){
+        FutureMap ImageReduction::reduce_nonassociative_commutative(){
             return reduceNonassociative(defaultPermutation());
         }
         
-        FutureMap ImageReduction::reduceNonassociativeNoncommutative(int ordering[]){
+        FutureMap ImageReduction::reduce_nonassociative_noncommutative(int ordering[]){
             return reduceNonassociative(ordering);
         }
         
@@ -425,12 +402,12 @@ namespace Legion {
             char fileName[1024];
             sprintf(fileName, "display.%d.txt", args.t);
             string outputFileName = string(fileName);
-            UsecTimer display(describeTask(task) + " write to " + outputFileName + ":");
+            UsecTimer display(describe_task(task) + " write to " + outputFileName + ":");
             display.start();
             PhysicalRegion displayPlane = regions[0];
             ByteOffset stride[DIMENSIONS];
             PixelField *r, *g, *b, *a, *z, *userdata;
-            createImageFieldPointers(args.imageSize, displayPlane, args.imageSize.depth - 1, r, g, b, a, z, userdata, stride);
+            create_image_field_points(args.imageSize, displayPlane, args.imageSize.depth - 1, r, g, b, a, z, userdata, stride);
             
             FILE *outputFile = fopen(outputFileName.c_str(), "wb");
             fwrite(r, 6 * sizeof(*r), args.imageSize.pixelsPerLayer(), outputFile);

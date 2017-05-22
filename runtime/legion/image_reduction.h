@@ -36,29 +36,30 @@ using namespace LegionRuntime::Accessor;
 namespace Legion {
     namespace Visualization {
         
-        typedef struct {
-            ImageSize imageSize;
-            int layer0;
-            int layer1;
-            GLenum depthFunction;
-            GLenum blendFunctionSource;
-            GLenum blendFunctionDestination;
-        } CompositeArguments;
-        
-        
-        
-        typedef struct {
-            ImageSize imageSize;
-            int t;
-        } DisplayArguments;
         
         
         class ImageReduction {
+        
+        private:
             
-        public:
+            typedef struct {
+                ImageSize imageSize;
+                int layer0;
+                int layer1;
+                GLenum depthFunction;
+                GLenum blendFunctionSource;
+                GLenum blendFunctionDestination;
+            } CompositeArguments;
+            
+            typedef struct {
+                ImageSize imageSize;
+                int t;
+            } DisplayArguments;
+
+
             class CompositeProjectionFunctor : public ProjectionFunctor {
             public:
-                CompositeProjectionFunctor(Runtime *runtime){ mRuntime = runtime; }
+                CompositeProjectionFunctor(void);
                 
                 virtual LogicalRegion project(Context context, Task *task,
                                               unsigned index,
@@ -73,7 +74,6 @@ namespace Legion {
                 
             protected:
                 virtual DomainPoint newPoint(DomainPoint point) = 0;
-                Runtime *mRuntime;
             };
             
             // ProjectionFunctor has to be a pure function (currently)
@@ -83,7 +83,7 @@ namespace Legion {
             template<int increment>
             class CompositeProjectionFunctorClass : public CompositeProjectionFunctor {
             public:
-                CompositeProjectionFunctorClass(void){}
+                CompositeProjectionFunctorClass(void);
             private:
                 virtual DomainPoint newPoint(DomainPoint point) {
                     Point<DIMENSIONS> p = point.get_point<DIMENSIONS>();
@@ -96,25 +96,27 @@ namespace Legion {
             };
             
             
-            
+        public:
             
             ImageReduction(){}
             ImageReduction(ImageSize imageSize, Context ctx, HighLevelRuntime *runtime);
             virtual ~ImageReduction();
             
-            FutureMap launchTaskByDepth(unsigned taskID);
-            FutureMap reduceAssociativeCommutative();
-            FutureMap reduceAssociativeNoncommutative(int ordering[]);
-            FutureMap reduceNonassociativeCommutative();
-            FutureMap reduceNonassociativeNoncommutative(int ordering[]);
+            FutureMap launch_task_by_depth(unsigned taskID);
+            FutureMap reduce_associative_commutative();
+            FutureMap reduce_associative_noncommutative(int ordering[]);
+            FutureMap reduce_nonassociative_commutative();
+            FutureMap reduce_nonassociative_noncommutative(int ordering[]);
             Future display(int t);
-            void setBlendFunc(GLenum sfactor, GLenum dfactor) {
+            
+            void set_blend_func(GLenum sfactor, GLenum dfactor) {
                 mBlendFunctionSource = sfactor;
                 mBlendFunctionDestination = dfactor;
             }
-            void setDepthFunc(GLenum func){ mDepthFunction = func; }
             
-            static void createImageFieldPointers(ImageSize imageSize,
+            void set_depth_func(GLenum func){ mDepthFunction = func; }
+            
+            static void create_image_field_points(ImageSize imageSize,
                                                  PhysicalRegion region,
                                                  int layer,
                                                  PixelField *&r,
@@ -125,19 +127,7 @@ namespace Legion {
                                                  PixelField *&userdata,
                                                  ByteOffset stride[3]);
             
-            
-            static void display_task(const Task *task,
-                                     const std::vector<PhysicalRegion> &regions,
-                                     Context ctx, Runtime *runtime);
-            
-            static PhysicalRegion compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1);
-            
-            static void composite_task(const Task *task,
-                                       const std::vector<PhysicalRegion> &regions,
-                                       Context ctx, Runtime *runtime);
-            
-            
-            static std::string describeTask(const Task *task) {
+            static std::string describe_task(const Task *task) {
                 std::ostringstream output;
                 output << task->get_task_name() << " " << task->get_unique_id()
                 << " (" << task->index_point.point_data[0]
@@ -147,10 +137,19 @@ namespace Legion {
                 ;
                 return output.str();
             }
-            
-            
-            
+
         private:
+
+            static void display_task(const Task *task,
+                                     const std::vector<PhysicalRegion> &regions,
+                                     Context ctx, Runtime *runtime);
+
+            static PhysicalRegion compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1);
+            
+            static void composite_task(const Task *task,
+                                       const std::vector<PhysicalRegion> &regions,
+                                       Context ctx, Runtime *runtime);
+            
             typedef struct {
                 CompositeProjectionFunctor* functor0;
                 CompositeProjectionFunctor* functor1;
