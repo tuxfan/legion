@@ -26,8 +26,7 @@
 #include <OpenGL/OpenGL.h>
 #include <OpenGL/gl.h>
 #else
-//#include <GL/gl.h>
-#include "/usr/include/GL/gl.h"
+#include <GL/gl.h>
 #endif
 
 #include <iostream>
@@ -59,7 +58,9 @@ namespace Legion {
                 int t;
             } DisplayArguments;
             
-            
+#ifndef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
+        public:
+#endif
             template<int layerID>
             class CompositeProjectionFunctor : public ProjectionFunctor {
             public:
@@ -202,11 +203,12 @@ namespace Legion {
             static void display_task(const Task *task,
                                      const std::vector<PhysicalRegion> &regions,
                                      Context ctx, Runtime *runtime);
-
+            
             static void composite_task(const Task *task,
                                        const std::vector<PhysicalRegion> &regions,
                                        Context ctx, Runtime *runtime);
-
+            
+            
         private:
             
             FieldSpace imageFields();
@@ -216,7 +218,14 @@ namespace Legion {
             void prepareCompositeDomains();
             void prepareCompositeLaunchDomains();
             Domain compositeDomain(int level);
+#ifndef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
+        public:
+            static
+#endif
             void prepareProjectionFunctors();
+#ifndef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
+        private:
+#endif
             void prepareImageForComposite();
             FutureMap reduceAssociative(int permutation[]);
             FutureMap reduceNonassociative(int permutation[]);
@@ -234,7 +243,7 @@ namespace Legion {
                                                 Rect<IMAGE_REDUCTION_DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]);
             
             static PhysicalRegion compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1);
-
+            
             ImageSize mImageSize;
             Context mContext;
             Runtime *mRuntime;
@@ -252,8 +261,8 @@ namespace Legion {
             GLenum mDepthFunction;
             GLenum mBlendFunctionSource;
             GLenum mBlendFunctionDestination;
-            CompositeProjectionFunctor<0> *mFunctor0;
-            CompositeProjectionFunctor<1> *mFunctor1;
+            static CompositeProjectionFunctor<0> *mFunctor0;
+            static CompositeProjectionFunctor<1> *mFunctor1;
         };
         
     }

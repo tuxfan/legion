@@ -27,6 +27,11 @@ using namespace LegionRuntime::Accessor;
 namespace Legion {
     namespace Visualization {
         
+#ifndef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
+        ImageReduction::CompositeProjectionFunctor<0>* ImageReduction::mFunctor0;
+        ImageReduction::CompositeProjectionFunctor<1>* ImageReduction::mFunctor1;
+#endif
+        
         ImageReduction::ImageReduction(ImageSize imageSize, Context context, HighLevelRuntime *runtime) {
             mImageSize = imageSize;
             mContext = context;
@@ -161,15 +166,25 @@ namespace Legion {
         
         void ImageReduction::prepareProjectionFunctors() {
             mFunctor0 = new CompositeProjectionFunctor<0>(1);
+#ifdef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
             mRuntime->register_projection_functor(mFunctor0->functorID(), mFunctor0);
+#else
+            Legion::Runtime::preregister_projection_functor(mFunctor0->functorID(), mFunctor0);
+#endif
             mFunctor1 = new CompositeProjectionFunctor<1>(2);
+#ifdef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
             mRuntime->register_projection_functor(mFunctor1->functorID(), mFunctor1);
+#else
+            Legion::Runtime::preregister_projection_functor(mFunctor1->functorID(), mFunctor1);
+#endif
         }
         
         void ImageReduction::prepareImageForComposite() {
             prepareCompositePartition();
             prepareCompositeDomains();
+#ifdef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
             prepareProjectionFunctors();
+#endif
         }
         
         
@@ -266,8 +281,8 @@ namespace Legion {
         void ImageReduction::composite_task(const Task *task,
                                             const std::vector<PhysicalRegion> &regions,
                                             Context ctx, HighLevelRuntime *runtime) {
-//            UsecTimer composite(describe_task(task) + " leaf:");
-//            composite.start();
+            //            UsecTimer composite(describe_task(task) + " leaf:");
+            //            composite.start();
             CompositeArguments args = ((CompositeArguments*)task->local_args)[0];
             if(args.layer1 >= 0) {
                 PhysicalRegion fragment0 = regions[0];
@@ -279,8 +294,8 @@ namespace Legion {
                 
                 PhysicalRegion compositedResult = compositeTwoFragments(args, fragment0, fragment1);
             }
-//            composite.stop();
-//            cout << composite.to_string() << endl;
+            //            composite.stop();
+            //            cout << composite.to_string() << endl;
         }
         
         

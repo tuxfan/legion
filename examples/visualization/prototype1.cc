@@ -197,6 +197,10 @@ int main(const int argc, char *argv[]) {
     HighLevelRuntime::register_legion_task<render_task>(RENDER_TASK_ID,
                                                         Processor::LOC_PROC, false/*single*/, true/*index*/,
                                                         AUTO_GENERATE_ID, TaskConfigOptions(true/*leaf*/), "renderTask");
-    
+  
+#ifndef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
+  ImageReduction::prepareProjectionFunctors();
+#endif
+  
     return HighLevelRuntime::start(argc, argv);
 }
