@@ -42,6 +42,7 @@ before_install:
       # OpenMPI packages: openmpi-bin libopenmpi-dev
       # MPICH packages: mpich2 libmpich-dev
       sudo apt-get install -qq g++-4.9 clang-3.5 libclang-3.5-dev llvm-3.5-dev mpich2 libmpich-dev libblas-dev liblapack-dev libhdf5-dev nvidia-375-dev pypy
+      sudo ln -s `find /usr/include -name GL` /usr/include/GL/
     fi
   - |
     if [[ "$(uname)" = "Darwin" ]]; then
