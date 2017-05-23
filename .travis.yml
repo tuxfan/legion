@@ -37,7 +37,7 @@ before_install:
     if [[ "$(uname)" = "Linux" ]]; then
       sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
       sudo add-apt-repository ppa:pypy/ppa -y
-      sudo add-apt-repository ppa:graphics-drivers
+      sudo add-apt-repository ppa:graphics-drivers -y
       sudo apt-get update -qq
       # OpenMPI packages: openmpi-bin libopenmpi-dev
       # MPICH packages: mpich2 libmpich-dev
