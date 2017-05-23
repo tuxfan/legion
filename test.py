@@ -683,7 +683,5 @@ def driver():
     run_tests(**vars(args))
 
 if __name__ == '__main__':
-    subprocess.call(["sudo", "apt-cache", "show", "nvidia-375-dev"])
-    subprocess.call(["find", "/usr", "-name", "GL"])
     driver()
 
