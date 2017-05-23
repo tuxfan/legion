@@ -266,8 +266,8 @@ namespace Legion {
         void ImageReduction::composite_task(const Task *task,
                                             const std::vector<PhysicalRegion> &regions,
                                             Context ctx, HighLevelRuntime *runtime) {
-            UsecTimer composite(describe_task(task) + " leaf:");
-            composite.start();
+//            UsecTimer composite(describe_task(task) + " leaf:");
+//            composite.start();
             CompositeArguments args = ((CompositeArguments*)task->local_args)[0];
             if(args.layer1 >= 0) {
                 PhysicalRegion fragment0 = regions[0];
@@ -279,8 +279,8 @@ namespace Legion {
                 
                 PhysicalRegion compositedResult = compositeTwoFragments(args, fragment0, fragment1);
             }
-            composite.stop();
-            cout << composite.to_string() << endl;
+//            composite.stop();
+//            cout << composite.to_string() << endl;
         }
         
         
@@ -313,10 +313,11 @@ namespace Legion {
             
             for(int i = 0; i < numTasks; i++) {
                 int taskZ = i;
-                int layer0 = i * NUM_FRAGMENTS_PER_COMPOSITE_TASK;
-                int layer1 = layer0 + increment;
-                layer1 = (layer1 < mImageSize.depth) ? layer1 : -1;
-                args[taskZ] = (CompositeArguments){ mImageSize, ordering[layer0], ordering[layer1], mDepthFunction, mBlendFunctionSource, mBlendFunctionDestination };
+                int order0 = i * NUM_FRAGMENTS_PER_COMPOSITE_TASK;
+                int layer0 = ordering[order0];
+                int order1 = order0 + increment;
+                int layer1 = (order1 < mImageSize.depth) ? ordering[order1] : -1;
+                args[taskZ] = (CompositeArguments){ mImageSize, layer0, layer1, mDepthFunction, mBlendFunctionSource, mBlendFunctionDestination };
                 addCompositeArgumentsToArgmap(args + taskZ, taskZ, argMap);
             }
             

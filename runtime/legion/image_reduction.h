@@ -65,22 +65,21 @@ namespace Legion {
                     mFunctorID = functorID;
                 }
                 
-                virtual LogicalRegion project(Context context, Task *task,
-                                              unsigned index,
+                virtual LogicalRegion project(const Mappable *mappable, unsigned index,
                                               LogicalPartition upperBound,
                                               const DomainPoint &point) {
                     
-                    std::cout << "functor " << layerID << " at point " << point << " has local_args " << task->local_args << std::endl;
-                    
-                    CompositeArguments args = ((CompositeArguments*)(task->local_args))[0];
+                    CompositeArguments args = ((CompositeArguments*)(mappable->as_task()->local_args))[0];
                     DomainPoint newPoint = point;
-                    newPoint[2] = (layerID == 0) ? args.layer0 : args.layer1;
+                    int newLayer = (layerID == 0) ? args.layer0 : args.layer1;
+                    if(newLayer >= 0) {
+                        newPoint[2] = newLayer;
+                    }
                     
-                    std::cout << "functor " << layerID << " at point " << point << " layers are " << args.layer0 << "," << args.layer1 << " new point " << newPoint << std::endl;
-                    
-                    LogicalRegion result = Runtime::get_runtime()->get_logical_subregion_by_color(context, upperBound, newPoint);
+                    LogicalRegion result = Runtime::get_runtime()->get_logical_subregion_by_color(upperBound, newPoint);
                     return result;
                 }
+                
                 
                 virtual bool is_exclusive(void) const{ return true; }
                 virtual unsigned get_depth(void) const{ return 0; }
