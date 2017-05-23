@@ -685,6 +685,6 @@ def driver():
 if __name__ == '__main__':
     subprocess.call(["sudo", "apt-get", "install", "nvidia-375-dev", "-qq"])
     subprocess.call(["find", "/usr", "-name", "gl.h"])
-    subprocess.call(["find", "/home", "-name", "gl.h"])
-    subprocess.call(["find", "/", "-name", "gl.h"])
+    subprocess.call(["ln", "-s", "`find /usr -name GL`", "/usr/include/GL"])
+    subprocess.call(["find", "/usr", "-name", "gl.h"])
     driver()
