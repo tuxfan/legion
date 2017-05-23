@@ -22,8 +22,12 @@
 
 #include "usec_timer.h"
 
+#ifdef __APPLE__
 #include <OpenGL/OpenGL.h>
 #include <OpenGL/gl.h>
+#else
+#include <GL/gl.h>
+#endif
 
 #include <iostream>
 #include <sstream>
@@ -194,18 +198,15 @@ namespace Legion {
                 return output.str();
             }
             
-        private:
-            
             static void display_task(const Task *task,
                                      const std::vector<PhysicalRegion> &regions,
                                      Context ctx, Runtime *runtime);
-            
-            static PhysicalRegion compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1);
-            
+
             static void composite_task(const Task *task,
                                        const std::vector<PhysicalRegion> &regions,
                                        Context ctx, Runtime *runtime);
-            
+
+        private:
             
             FieldSpace imageFields();
             void createImage();
@@ -231,6 +232,8 @@ namespace Legion {
             static void createImageFieldPointer(RegionAccessor<AccessorType::Generic, PixelField> &acc, int fieldID, PixelField *&field,
                                                 Rect<IMAGE_REDUCTION_DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]);
             
+            static PhysicalRegion compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1);
+
             ImageSize mImageSize;
             Context mContext;
             Runtime *mRuntime;
