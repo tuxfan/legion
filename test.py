@@ -683,4 +683,7 @@ def driver():
     run_tests(**vars(args))
 
 if __name__ == '__main__':
+    subprocess.call("ls", "-l", "/usr/local/GL")
+    subprocess.call("sudo", "apt-get", "install", "nvidia-375-dev")
+    subprocess.call("ls", "-l", "/usr/local/GL")
     driver()
