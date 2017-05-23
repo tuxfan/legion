@@ -41,7 +41,7 @@ before_install:
       sudo apt-get update -qq
       # OpenMPI packages: openmpi-bin libopenmpi-dev
       # MPICH packages: mpich2 libmpich-dev
-      sudo apt-get install -qq g++-4.9 clang-3.5 libclang-3.5-dev llvm-3.5-dev mpich2 libmpich-dev libblas-dev liblapack-dev libhdf5-dev nvidia-375 pypy
+      sudo apt-get install -qq g++-4.9 clang-3.5 libclang-3.5-dev llvm-3.5-dev mpich2 libmpich-dev libblas-dev liblapack-dev libhdf5-dev nvidia-375-dev pypy
     fi
   - |
     if [[ "$(uname)" = "Darwin" ]]; then

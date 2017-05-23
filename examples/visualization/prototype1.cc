@@ -65,7 +65,6 @@ static void paintRegion(ImageSize imageSize,
     PixelField zValue = taskID % imageSize.depth;
     
     for(int row = 0; row < imageSize.height; ++row) {
-#pragma unroll
         for(int column = 0; column < imageSize.width; ++column) {
             *r = taskID;
             *g = taskID;
