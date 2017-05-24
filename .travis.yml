@@ -25,12 +25,13 @@ matrix:
       compiler: gcc
     - os: osx
       env: CC_FLAGS="-std=c++98" USE_GASNET=1 USE_HDF=1 USE_CMAKE=1 TEST_REGENT=0
-# blacklist some branches
+# safelist some branches
 branches:
   only:
     - stable
     - master
     - dma
+    - visualization
 before_install:
   - export THREADS=2
   - |
