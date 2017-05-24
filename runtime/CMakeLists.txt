@@ -232,8 +232,9 @@ list(APPEND HIGH_RUNTIME_SRC
   legion/region_tree.h         legion/region_tree.cc
   legion/runtime.h             legion/runtime.cc
   legion/legion_visualization.h
-  legion/ImageReduction.h         legion/ImageReduction.cc
-  legion/UsecTimer.h
+  legion/image_reduction.h     legion/image_reduction.cc
+  legion/image_reduction_composite.h     legion/image_reduction_composite.cc
+  legion/usec_timer.h
 )
 
 add_library(HighLevelRuntime ${MAPPER_SRC} ${HIGH_RUNTIME_SRC})
