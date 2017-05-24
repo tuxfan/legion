@@ -48,6 +48,7 @@ before_install:
       brew update
       brew install pypy llvm@3.9 homebrew/science/hdf5
       export CLANG="$(brew --prefix)/opt/llvm@3.9/bin/clang"
+      echo CLANG is $(CLANG) CXX is $(CXX)
       export LLVM_CONFIG="$(brew --prefix)/opt/llvm@3.9/bin/llvm-config"
     fi
   - if [[ "$(uname)" = "Linux" && "$CXX" = "g++" ]]; then export CXX="g++-4.9" CC="gcc-4.9"; fi

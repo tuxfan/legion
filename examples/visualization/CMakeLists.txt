@@ -22,10 +22,8 @@ if(NOT Legion_SOURCE_DIR)
   find_package(Legion REQUIRED)
 endif()
 
-add_executable(prototype1
-  prototype1.cc
-)
+add_executable(prototype1 prototype1.cc)
 target_link_libraries(prototype1 Legion::Legion)
 if(Legion_ENABLE_TESTING)
-  add_test(NAME prototype1 COMMAND $<TARGET_FILE:prototype1>) 
+  add_test(NAME prototype1 COMMAND $<TARGET_FILE:prototype1> -ll:cpu 4 -ll:csize 2048) 
 endif()
