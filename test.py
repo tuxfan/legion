@@ -54,7 +54,7 @@ legion_cxx_tests = [
     ['examples/realm_saxpy/realm_saxpy', []],
     ['examples/spmd_cgsolver/spmd_cgsolver', ['-ll:cpu', '4', '-perproc']],
     ['examples/virtual_map/virtual_map', []],
-    ['examples/visualization/prototype1', []],
+    ['examples/visualization/prototype1', ['-ll:csize', '2048']],
 
     # Tests
 ]

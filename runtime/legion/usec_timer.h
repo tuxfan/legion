@@ -24,6 +24,7 @@ using namespace std;
 class UsecTimer {
 public:
     typedef struct timespec Time;
+    // would prefer to use CLOCK_MONOTONIC but this does not pass some builds
     static const clockid_t CLOCK = CLOCK_REALTIME;
     
     UsecTimer(string description){
