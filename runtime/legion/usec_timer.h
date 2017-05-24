@@ -21,6 +21,22 @@
 
 using namespace std;
 
+#ifdef __APPLE__ ///////////////////////////////////////////////
+
+class UsecTimer {
+public:
+    UsecTimer(string description){ mDescription = description; }
+    ~UsecTimer(){}
+    void start(){}
+    void stop(){}
+    string to_string(){ return mDescription; }
+private:
+    string mDescription;
+};
+
+
+#else ///////////////////////////////////////////////
+
 class UsecTimer {
 public:
     typedef struct timespec Time;
@@ -40,10 +56,6 @@ public:
             return;
         }
         mStarted = true;
-    }
-    static double timespecToSeconds(timespec *t) {
-        const double nsecToS = 1.0 / 1000000000.0;
-        return (double)t->tv_sec + (double)t->tv_nsec * nsecToS;
     }
     void stop(){
         if(mStarted) {
@@ -75,12 +87,19 @@ public:
     }
     
 private:
+    static double timespecToSeconds(timespec *t) {
+        const double nsecToS = 1.0 / 1000000000.0;
+        return (double)t->tv_sec + (double)t->tv_nsec * nsecToS;
+    }
+    
     bool mStarted;
     Time mStart;
     string mDescription;
     double mCumulativeElapsedSeconds;
     int mNumSamples;
 };
+
+#endif ///////////////////////////////////////////////
 
 
 #endif /* UsecTimer_h */
