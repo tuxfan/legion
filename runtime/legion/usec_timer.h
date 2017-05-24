@@ -25,8 +25,8 @@ using namespace std;
 
 class UsecTimer {
 public:
-    typedef struct timespec Time;
-    static const clockid_t CLOCK = CLOCK_MONOTONIC;
+//    typedef struct timespec Time;
+//    static const clockid_t CLOCK = CLOCK_MONOTONIC;
     
     UsecTimer(string description){
         mDescription = description;
@@ -36,25 +36,21 @@ public:
     }
     ~UsecTimer(){}
     void start(){
-        if(clock_gettime(CLOCK, &mStart)) {
-            cerr << "error from clock_gettime" << endl;
-            return;
-        }
+//        if(clock_gettime(CLOCK, &mStart)) {
+//            cerr << "error from clock_gettime" << endl;
+//            return;
+//        }
         mStarted = true;
-    }
-    static double timespecToSeconds(timespec *t) {
-        const double nsecToS = 1.0 / 1000000000.0;
-        return (double)t->tv_sec + (double)t->tv_nsec * nsecToS;
     }
     void stop(){
         if(mStarted) {
-            Time end;
-            if(clock_gettime(CLOCK, &end)) {
-                cerr << "error from clock_gettime" << endl;
-                return;
-            }
-            double elapsedSeconds = timespecToSeconds(&end) - timespecToSeconds(&mStart);
-            mCumulativeElapsedSeconds += elapsedSeconds;
+//            Time end;
+//            if(clock_gettime(CLOCK, &end)) {
+//                cerr << "error from clock_gettime" << endl;
+//                return;
+//            }
+//            double elapsedSeconds = timespecToSeconds(&end) - timespecToSeconds(&mStart);
+//            mCumulativeElapsedSeconds += elapsedSeconds;
             mNumSamples++;
             mStarted = false;
         }
@@ -76,8 +72,13 @@ public:
     }
     
 private:
+    static double timespecToSeconds(timespec *t) {
+        const double nsecToS = 1.0 / 1000000000.0;
+        return (double)t->tv_sec + (double)t->tv_nsec * nsecToS;
+    }
+    
     bool mStarted;
-    Time mStart;
+//    Time mStart;
     string mDescription;
     double mCumulativeElapsedSeconds;
     int mNumSamples;
@@ -89,8 +90,7 @@ private:
 class UsecTimer {
 public:
     typedef struct timespec Time;
-    // would prefer to use CLOCK_MONOTONIC but this does not pass some builds
-    static const clockid_t CLOCK = CLOCK_REALTIME;
+    static const clockid_t CLOCK = CLOCK_MONOTONIC;
     
     UsecTimer(string description){
         mDescription = description;
