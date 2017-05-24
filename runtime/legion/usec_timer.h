@@ -23,6 +23,9 @@ using namespace std;
 
 class UsecTimer {
 public:
+    typedef struct timespec Time;
+    const clockid_t CLOCK = CLOCK_REALTIME;
+    
     UsecTimer(string description){
         mDescription = description;
         mCumulativeElapsedSeconds = 0.0;
@@ -31,7 +34,7 @@ public:
     }
     ~UsecTimer(){}
     void start(){
-        if(clock_gettime(CLOCK_MONOTONIC, &mStart)) {
+        if(clock_gettime(CLOCK, &mStart)) {
             cerr << "error from clock_gettime" << endl;
             return;
         }
@@ -43,8 +46,8 @@ public:
     }
     void stop(){
         if(mStarted) {
-            timespec end;
-            if(clock_gettime(CLOCK_MONOTONIC, &end)) {
+            Time end;
+            if(clock_gettime(CLOCK, &end)) {
                 cerr << "error from clock_gettime" << endl;
                 return;
             }
@@ -72,7 +75,7 @@ public:
     
 private:
     bool mStarted;
-    struct timespec mStart;
+    Time mStart;
     string mDescription;
     double mCumulativeElapsedSeconds;
     int mNumSamples;
