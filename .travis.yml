@@ -38,11 +38,10 @@ before_install:
     if [[ "$(uname)" = "Linux" ]]; then
       sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
       sudo add-apt-repository ppa:pypy/ppa -y
-      sudo add-apt-repository ppa:graphics-drivers -y
       sudo apt-get update -qq
       # OpenMPI packages: openmpi-bin libopenmpi-dev
       # MPICH packages: mpich2 libmpich-dev
-      sudo apt-get install -qq g++-4.9 clang-3.5 libclang-3.5-dev llvm-3.5-dev mpich2 libmpich-dev libblas-dev liblapack-dev libhdf5-dev nvidia-375-dev pypy
+      sudo apt-get install -qq g++-4.9 clang-3.5 libclang-3.5-dev llvm-3.5-dev mpich2 libmpich-dev libblas-dev liblapack-dev libhdf5-dev mesa-common-dev pypy
     fi
   - |
     if [[ "$(uname)" = "Darwin" ]]; then
