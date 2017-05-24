@@ -34,6 +34,7 @@ branches:
 before_install:
   - export THREADS=2
   - |
+    echo uname is $(uname)
     if [[ "$(uname)" = "Linux" ]]; then
       sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
       sudo add-apt-repository ppa:pypy/ppa -y

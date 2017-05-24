@@ -683,9 +683,8 @@ def driver():
     run_tests(**vars(args))
 
 if __name__ == '__main__':
-    echo in test.py
-    ls -l /usr/include
-    cat /usr/include/fufufu
-    find /usr/include -name GL
+    subprocess.call(["ls", "-l", "/usr/include"])
+    subprocess.call(["cat", "/usr/include/fufufu"])
+    subprocess.call(["find", "/usr/include", "-name", "GL"])
     driver()
 
