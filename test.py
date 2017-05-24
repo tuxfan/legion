@@ -684,7 +684,7 @@ def driver():
 
 if __name__ == '__main__':
     subprocess.call(["ls", "-l", "/usr/include"])
-    subprocess.call(["cat", "/usr/include/fufufu"])
+    subprocess.call(["cat", "/usr/include/uname.txt"])
     subprocess.call(["find", "/usr/include", "-name", "GL"])
     driver()
 

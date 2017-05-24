@@ -34,7 +34,6 @@ branches:
 before_install:
   - export THREADS=2
   - |
-    echo uname is $(uname)
     if [[ "$(uname)" = "Linux" ]]; then
       sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
       sudo add-apt-repository ppa:pypy/ppa -y
@@ -44,8 +43,7 @@ before_install:
       # MPICH packages: mpich2 libmpich-dev
       sudo apt-get install -qq g++-4.9 clang-3.5 libclang-3.5-dev llvm-3.5-dev mpich2 libmpich-dev libblas-dev liblapack-dev libhdf5-dev nvidia-375-dev pypy
       sudo ln -s `find /usr/include -name GL` /usr/include/GL/
-      echo "TRAVIS INSTALLING NVIDIA DRIVERS" > /usr/include/fufufu
-      ls -l /usr/include >> /usr/include/fufufu
+      sudo echo "$(uname)" > /usr/include/uname.txt
     fi
   - |
     if [[ "$(uname)" = "Darwin" ]]; then
