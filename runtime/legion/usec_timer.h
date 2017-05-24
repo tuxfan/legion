@@ -24,7 +24,7 @@ using namespace std;
 class UsecTimer {
 public:
     typedef struct timespec Time;
-    const clockid_t CLOCK = CLOCK_REALTIME;
+    static const clockid_t CLOCK = CLOCK_REALTIME;
     
     UsecTimer(string description){
         mDescription = description;
