@@ -46,6 +46,8 @@ namespace Legion {
             
             typedef struct {
                 ImageSize imageSize;
+                int x;
+                int y;
                 int layer0;
                 int layer1;
                 GLenum depthFunction;
@@ -114,7 +116,7 @@ namespace Legion {
             virtual ~ImageReduction();
             
             /**
-             * Launch a set of tasks that each recieve one layer in Z of the image space.
+             * Launch a set of tasks that each receive one layer in Z of the image space.
              * Use this for example to render to the individual layers.
              *
              * @param taskID ID of task that has previously been registered with the Legion runtime
@@ -133,12 +135,12 @@ namespace Legion {
              */
             FutureMap reduce_associative_noncommutative(int ordering[]);
             /**
-             * Perform a pipeline reduction using an nonassociative commutative operator.
+             * Perform a pipeline reduction using a nonassociative commutative operator.
              * Be sure to call either set_blend_func or set_depth_func first.
              */
             FutureMap reduce_nonassociative_commutative();
             /**
-             * Perform a pipeline reduction using an nonassociative noncommutative operator.
+             * Perform a pipeline reduction using a nonassociative noncommutative operator.
              * Be sure to call either set_blend_func or set_depth_func first.
              *
              * @param ordering integer permutation that defines ordering by depth index
@@ -171,18 +173,24 @@ namespace Legion {
             void set_depth_func(GLenum func){ mDepthFunction = func; }
             
             /**
+             * obtain raw pointers to image data
              *
+             * @param imageSize see legion_visualization.h
+             * @param region physical region of image fragment
+             * @param point origin of image fragment
+             * @param r,g,b,z,userdata return raw pointers to pixel fields
+             * @param stride returns stride between successive pixels
              */
             static void create_image_field_pointers(ImageSize imageSize,
                                                     PhysicalRegion region,
-                                                    int layer,
+                                                    Point<IMAGE_REDUCTION_DIMENSIONS> origin,
                                                     PixelField *&r,
                                                     PixelField *&g,
                                                     PixelField *&b,
                                                     PixelField *&a,
                                                     PixelField *&z,
                                                     PixelField *&userdata,
-                                                    ByteOffset stride[3]);
+                                                    ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS]);
             
             /**
              * Utility function to provide descriptive output for messages.
@@ -232,7 +240,7 @@ namespace Legion {
             FutureMap launchCompositeTaskTree(int permutation[]);
             FutureMap launchCompositeTaskPipeline(int permutation[]);
             FutureMap launchTreeLevel(int level, int permutation[]);
-            void addCompositeArgumentsToArgmap(CompositeArguments *args, int taskZ, ArgumentMap &argMap);
+            void addCompositeArgumentsToArgmap(CompositeArguments *&argsPtr, int taskZ, ArgumentMap &argMap, int layer0, int layer1);
             void addRegionRequirementToCompositeLauncher(IndexTaskLauncher &launcher, int projectionFunctorID, PrivilegeMode privilege, CoherenceProperty coherence);
             int *defaultPermutation();
             void addImageFieldsToRequirement(RegionRequirement &req);
@@ -242,7 +250,8 @@ namespace Legion {
             static void createImageFieldPointer(RegionAccessor<AccessorType::Generic, PixelField> &acc, int fieldID, PixelField *&field,
                                                 Rect<IMAGE_REDUCTION_DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]);
             
-            static PhysicalRegion compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1);
+            static PhysicalRegion compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, Point<IMAGE_REDUCTION_DIMENSIONS> origin0,
+                                                        PhysicalRegion region1, Point<IMAGE_REDUCTION_DIMENSIONS> origin1);
             
             ImageSize mImageSize;
             Context mContext;
@@ -261,8 +270,14 @@ namespace Legion {
             GLenum mDepthFunction;
             GLenum mBlendFunctionSource;
             GLenum mBlendFunctionDestination;
-            static CompositeProjectionFunctor<0> *mFunctor0;
-            static CompositeProjectionFunctor<1> *mFunctor1;
+#ifndef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
+            static
+#endif
+            CompositeProjectionFunctor<0> *mFunctor0;
+#ifndef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
+            static
+#endif
+            CompositeProjectionFunctor<1> *mFunctor1;
         };
         
     }

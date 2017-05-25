@@ -209,20 +209,17 @@ namespace Legion {
         
         void ImageReduction::create_image_field_pointers(ImageSize imageSize,
                                                          PhysicalRegion region,
-                                                         int layer,
+                                                         Point<IMAGE_REDUCTION_DIMENSIONS> origin,
                                                          PixelField *&r,
                                                          PixelField *&g,
                                                          PixelField *&b,
                                                          PixelField *&a,
                                                          PixelField *&z,
                                                          PixelField *&userdata,
-                                                         ByteOffset stride[3]) {
+                                                         ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS]) {
             
             Rect<IMAGE_REDUCTION_DIMENSIONS> tempBounds;
-            Point<IMAGE_REDUCTION_DIMENSIONS> origin = imageSize.origin();
-            origin.x[2] = layer;
-            Point<IMAGE_REDUCTION_DIMENSIONS> upperBound = imageSize.upperBound() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES();
-            upperBound.x[2] = layer;
+            Point<IMAGE_REDUCTION_DIMENSIONS> upperBound = origin + imageSize.fragmentSize() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES();
             Rect<IMAGE_REDUCTION_DIMENSIONS> imageBounds = Rect<IMAGE_REDUCTION_DIMENSIONS>(origin, upperBound);
             
             RegionAccessor<AccessorType::Generic, PixelField> acc_r, acc_g, acc_b, acc_a, acc_z, acc_userdata;
@@ -260,15 +257,16 @@ namespace Legion {
         }
         
         
-        inline PhysicalRegion ImageReduction::compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, PhysicalRegion region1) {
+        inline PhysicalRegion ImageReduction::compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, Point<IMAGE_REDUCTION_DIMENSIONS> origin0,
+                                                                    PhysicalRegion region1, Point<IMAGE_REDUCTION_DIMENSIONS> origin1) {
             
             ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS];
             PixelField *r0, *g0, *b0, *a0, *z0, *userdata0;
             PixelField *r1, *g1, *b1, *a1, *z1, *userdata1;
             ImageReductionComposite::CompositeFunction* compositeFunction;
             
-            create_image_field_pointers(args.imageSize, region0, args.layer0, r0, g0, b0, a0, z0, userdata0, stride);
-            create_image_field_pointers(args.imageSize, region1, args.layer1, r1, g1, b1, a1, z1, userdata1, stride);
+            create_image_field_pointers(args.imageSize, region0, origin0, r0, g0, b0, a0, z0, userdata0, stride);
+            create_image_field_pointers(args.imageSize, region1, origin1, r1, g1, b1, a1, z1, userdata1, stride);
             compositeFunction = ImageReductionComposite::compositeFunctionPointer(args.depthFunction, args.blendFunctionSource, args.blendFunctionDestination);
             compositeFunction(r0, g0, b0, a0, z0, userdata0, r1, g1, b1, a1, z1, userdata1, r0, g0, b0, a0, z0, userdata0, args.imageSize.numPixelsPerFragment());
             
@@ -287,12 +285,21 @@ namespace Legion {
             if(args.layer1 >= 0) {
                 PhysicalRegion fragment0 = regions[0];
                 PhysicalRegion fragment1 = regions[1];
+                Point<IMAGE_REDUCTION_DIMENSIONS> origin0;
+                origin0.x[0] = args.x;
+                origin0.x[1] = args.y;
+                origin0.x[2] = args.layer0;
+                Point<IMAGE_REDUCTION_DIMENSIONS> origin1;
+                origin1.x[0] = args.x;
+                origin1.x[1] = args.y;
+                origin1.x[2] = args.layer1;
+                
                 
 #if NULL_COMPOSITE_TASKS
                 return;//performance testing
 #endif
                 
-                PhysicalRegion compositedResult = compositeTwoFragments(args, fragment0, fragment1);
+                PhysicalRegion compositedResult = compositeTwoFragments(args, fragment0, origin0, fragment1, origin1);
             }
             //            composite.stop();
             //            cout << composite.to_string() << endl;
@@ -300,14 +307,15 @@ namespace Legion {
         
         
         
-        void ImageReduction::addCompositeArgumentsToArgmap(CompositeArguments *args, int taskZ, Legion::ArgumentMap &argMap) {
+        void ImageReduction::addCompositeArgumentsToArgmap(CompositeArguments *&argsPtr, int taskZ, Legion::ArgumentMap &argMap, int layer0, int layer1) {
             assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
             Point<IMAGE_REDUCTION_DIMENSIONS> point = Point<IMAGE_REDUCTION_DIMENSIONS>::ZEROES();
             point.x[2] = taskZ;
             
             for(int fragment = 0; fragment < mImageSize.numFragmentsPerLayer; ++fragment) {
                 DomainPoint domainPoint = DomainPoint::from_point<IMAGE_REDUCTION_DIMENSIONS>(point);
-                argMap.set_point(domainPoint, TaskArgument(args, sizeof(*args)));
+                *argsPtr = (CompositeArguments){ mImageSize, point.x[0], point.x[1], layer0, layer1, mDepthFunction, mBlendFunctionSource, mBlendFunctionDestination };
+                argMap.set_point(domainPoint, TaskArgument(argsPtr, sizeof(CompositeArguments)));
                 point = mImageSize.incrementFragment(point);
             }
         }
@@ -324,7 +332,8 @@ namespace Legion {
             ArgumentMap argMap;
             int increment = powf(2.0f, level);
             int numTasks = mImageSize.depth / (increment * NUM_FRAGMENTS_PER_COMPOSITE_TASK);
-            CompositeArguments args[numTasks];
+            CompositeArguments args[numTasks * mImageSize.numFragmentsPerLayer];
+            CompositeArguments *argsPtr = args;
             
             for(int i = 0; i < numTasks; i++) {
                 int taskZ = i;
@@ -332,8 +341,7 @@ namespace Legion {
                 int layer0 = ordering[order0];
                 int order1 = order0 + increment;
                 int layer1 = (order1 < mImageSize.depth) ? ordering[order1] : -1;
-                args[taskZ] = (CompositeArguments){ mImageSize, layer0, layer1, mDepthFunction, mBlendFunctionSource, mBlendFunctionDestination };
-                addCompositeArgumentsToArgmap(args + taskZ, taskZ, argMap);
+                addCompositeArgumentsToArgmap(argsPtr, taskZ, argMap, layer0, layer1);
             }
             
             Domain launchDomain = mCompositeTreeDomain[level];
@@ -372,15 +380,15 @@ namespace Legion {
         FutureMap ImageReduction::launchCompositeTaskPipeline(int ordering[]) {
             ArgumentMap argMap;
             int taskDepth = mImageSize.depth / NUM_FRAGMENTS_PER_COMPOSITE_TASK;
-            CompositeArguments args[taskDepth];
+            CompositeArguments args[taskDepth * mImageSize.numFragmentsPerLayer];
+            CompositeArguments *argsPtr = args;
             
             for(int i = mImageSize.depth; i > 1; i--) {
                 assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
                 int layer0 = i - NUM_FRAGMENTS_PER_COMPOSITE_TASK;
                 int layer1 = layer0 + 1;
                 int taskZ = layer0;
-                args[taskZ] = (CompositeArguments){ mImageSize, ordering[layer0], ordering[layer1], GL_LESS, 0, 0 };
-                addCompositeArgumentsToArgmap(args + taskZ, taskZ, argMap);
+                addCompositeArgumentsToArgmap(argsPtr, taskZ, argMap, layer0, layer1);
             }
             
             IndexTaskLauncher pipelineLauncher(mCompositeTaskID, mCompositePipelineDomain, TaskArgument(NULL, 0), argMap);
@@ -419,7 +427,8 @@ namespace Legion {
             PhysicalRegion displayPlane = regions[0];
             ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS];
             PixelField *r, *g, *b, *a, *z, *userdata;
-            create_image_field_pointers(args.imageSize, displayPlane, args.imageSize.depth - 1, r, g, b, a, z, userdata, stride);
+            Point<IMAGE_REDUCTION_DIMENSIONS> origin = Point<IMAGE_REDUCTION_DIMENSIONS>::ZEROES();
+            create_image_field_pointers(args.imageSize, displayPlane, origin, r, g, b, a, z, userdata, stride);
             
             FILE *outputFile = fopen(outputFileName.c_str(), "wb");
             fwrite(r, 6 * sizeof(*r), args.imageSize.pixelsPerLayer(), outputFile);
