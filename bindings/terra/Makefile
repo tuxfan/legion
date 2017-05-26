@@ -20,7 +20,6 @@ endif
 # Flags for directing the runtime makefile what to include
 DEBUG           ?= 1		# Include debugging symbols
 OUTPUT_LEVEL    ?= LEVEL_DEBUG	# Compile time logging level
-SHARED_LOWLEVEL ?= 0		# Use shared-memory runtime (not recommended)
 USE_CUDA        ?= 0		# Include CUDA support (requires CUDA)
 USE_GASNET      ?= 0		# Include GASNet support (requires GASNet)
 USE_HDF         ?= 0		# Include HDF5 support (requires HDF5)
@@ -45,10 +44,6 @@ OUTFILE		?= liblegion_terra.so
 GEN_SRC		?= legion_terra.cc legion_terra_partitions.cc bishop_mapper.cc bishop_c.cc # .cc files
 GEN_GPU_SRC	?=		# .cu files
 
-ifeq ($(strip $(BINDINGS_USE_TERRA)),1)
-GEN_SRC += lua_mapper_wrapper.cc legion_terra_tasks.cc
-endif
-
 ifeq ($(strip $(USE_CUDA)),1)
 GEN_SRC += legion_terra_cudart_hijack.cc
 endif
@@ -72,7 +67,7 @@ endif
 ifeq ($(shell uname), Darwin)
 	LD_FLAGS += -Wl,-force_load,liblegion.a
 else
-	LD_FLAGS += -Wl,--whole-archive -llegion -Wl,--no-whole-archive
+	LD_FLAGS += -Wl,--whole-archive -llegion -lrealm -Wl,--no-whole-archive
 endif
 
 ifeq ($(strip $(USE_SPY)),1)

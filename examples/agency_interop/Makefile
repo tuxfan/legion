@@ -1,4 +1,4 @@
-# Copyright 2015 Stanford University
+# Copyright 2017 Stanford University, NVIDIA Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,42 +13,38 @@
 # limitations under the License.
 #
 
+
 ifndef LG_RT_DIR
 $(error LG_RT_DIR variable is not defined, aborting build)
 endif
 
+# Flags for directing the runtime makefile what to include
+DEBUG           ?= 1		# Include debugging symbols
+OUTPUT_LEVEL    ?= LEVEL_DEBUG	# Compile time logging level
+USE_OPENMP	?= 1		# Include OpenMP support
+USE_CUDA        ?= 0		# Include CUDA support (requires CUDA)
+USE_GASNET      ?= 0		# Include GASNet support (requires GASNet)
+USE_HDF         ?= 0		# Include HDF5 support (requires HDF5)
+ALT_MAPPERS     ?= 0		# Include alternative mappers (not recommended)
 
-#Flags for directing the runtime makefile what to include
-DEBUG=1                   # Include debugging symbols
-OUTPUT_LEVEL=LEVEL_DEBUG  # Compile time print level
-SHARED_LOWLEVEL=0	  # Use the shared low level
-USE_GASNET=1
-
-#ALT_MAPPERS=1		  # Compile the alternative mappers
-USE_CUDA	=0 # no cuda thank you
-
-GASNET		:= /opt/local
-CONDUIT		:= udp
 # Put the binary file name here
-OUTFILE		:= reproducer_io
+OUTFILE		?= agency_interop
 # List all the application source files here
-GEN_SRC		:= reproducer_io.cc	# .cc files
-GEN_GPU_SRC	:=				# .cu files
-USE_HDF 	= 1
+GEN_SRC		?= agency_interop.cc		# .cc files
+GEN_GPU_SRC	?= 				# .cu files
 
 # You can modify these variables, some will be appended to by the runtime makefile
-INC_FLAGS	:= -I/opt/local/include/ 
-CC_FLAGS	?= -g
-NVCC_FLAGS	:=
-GASNET_FLAGS	:=
-LD_FLAGS	:= -L/opt/local/lib -lhdf5
+INC_FLAGS	?=
+CC_FLAGS	?= -I ~/agency -std=c++1y
+NVCC_FLAGS	?=
+GASNET_FLAGS	?=
+LD_FLAGS	?=
 
 ###########################################################################
 #
 #   Don't change anything below here
 #   
 ###########################################################################
-
 
 include $(LG_RT_DIR)/runtime.mk
 

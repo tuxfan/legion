@@ -79,8 +79,8 @@ ast.annotation:leaf("Forbid", {"value"}, true)
 ast.annotation:leaf("Unroll", {"value"}, true)
 
 -- Annotation: Sets
-ast.annotation:leaf("Set", {"cuda", "external", "inline", "parallel", "spmd", "trace",
-                            "vectorize"},
+ast.annotation:leaf("Set", {"cuda", "external", "inline", "openmp", "parallel", "spmd",
+                            "trace", "vectorize"},
                     false, true)
 
 function ast.default_annotations()
@@ -89,6 +89,7 @@ function ast.default_annotations()
     cuda = allow,
     external = allow,
     inline = allow,
+    openmp = allow,
     parallel = allow,
     spmd = allow,
     trace = allow,
@@ -202,6 +203,7 @@ ast.unspecialized.expr:leaf("ListPhaseBarriers", {"product"})
 ast.unspecialized.expr:leaf("ListInvert", {"rhs", "product", "barriers"})
 ast.unspecialized.expr:leaf("ListRange", {"start", "stop"})
 ast.unspecialized.expr:leaf("ListIspace", {"ispace"})
+ast.unspecialized.expr:leaf("ListFromElement", {"list", "value"})
 ast.unspecialized.expr:leaf("PhaseBarrier", {"value"})
 ast.unspecialized.expr:leaf("DynamicCollective", {"value_type_expr", "op", "arrivals"})
 ast.unspecialized.expr:leaf("DynamicCollectiveGetResult", {"value"})
@@ -318,6 +320,7 @@ ast.specialized.expr:leaf("ListPhaseBarriers", {"product"})
 ast.specialized.expr:leaf("ListInvert", {"rhs", "product", "barriers"})
 ast.specialized.expr:leaf("ListRange", {"start", "stop"})
 ast.specialized.expr:leaf("ListIspace", {"ispace"})
+ast.specialized.expr:leaf("ListFromElement", {"list", "value"})
 ast.specialized.expr:leaf("PhaseBarrier", {"value"})
 ast.specialized.expr:leaf("DynamicCollective", {"value_type", "op", "arrivals"})
 ast.specialized.expr:leaf("DynamicCollectiveGetResult", {"value"})
@@ -421,6 +424,7 @@ ast.typed.expr:leaf("ListPhaseBarriers", {"product"})
 ast.typed.expr:leaf("ListInvert", {"rhs", "product", "barriers"})
 ast.typed.expr:leaf("ListRange", {"start", "stop"})
 ast.typed.expr:leaf("ListIspace", {"ispace"})
+ast.typed.expr:leaf("ListFromElement", {"list", "value"})
 ast.typed.expr:leaf("PhaseBarrier", {"value"})
 ast.typed.expr:leaf("DynamicCollective", {"value_type", "op", "arrivals"})
 ast.typed.expr:leaf("DynamicCollectiveGetResult", {"value"})

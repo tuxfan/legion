@@ -27,6 +27,11 @@ add_subdirectory(ghost)
 add_subdirectory(ghost_pull)
 add_subdirectory(realm_saxpy)
 add_subdirectory(spmd_cgsolver)
+add_subdirectory(virtual_map)
+
+if(Legion_USE_GASNet)
+  add_subdirectory(mpi_interop)
+endif()
 
 if(Legion_USE_CUDA)
   add_subdirectory(thrust_interop)

@@ -1,3 +1,19 @@
+/* Copyright 2017 Stanford University
+ * Copyright 2017 Los Alamos National Laboratory
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "legion_io.h"
 #include "hdf5.h"
 #include <time.h>
@@ -37,38 +53,42 @@ struct task_args_t{
 
 void copy_values_task(const Task *task,
                        const std::vector<PhysicalRegion> &regions,
-                       Context ctx, HighLevelRuntime *runtime);
+                       Context ctx, Runtime *runtime);
 
 #ifdef TESTERIO_PHASER_TIMERS
 void timer_task(const Task *task,
                 const std::vector<PhysicalRegion> &regions,
-                Context ctx, HighLevelRuntime *runtime);
+                Context ctx, Runtime *runtime);
 #endif
 
 void split_path_file(char** p, char** f, const char *pf);
 
 
 void PersistentRegion_init() {
-  HighLevelRuntime::register_legion_task<copy_values_task>(COPY_VALUES_TASK_ID,
-                                                           Processor::LOC_PROC,
-                                                           true /*single*/, true /*index*/);
+  {
+    TaskVariantRegistrar registrar(COPY_VALUES_TASK_ID, "copy_values");
+    registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
+    Runtime::preregister_task_variant<copy_values_task>(registrar, "copy_values");
+  }
   
 #ifdef TESTERIO_PHASER_TIMERS
-  HighLevelRuntime::register_legion_task<timer_task>(TIMER_TASK_ID,
-                                                     Processor::LOC_PROC,
-                                                     true /*single*/, false /*index*/);
+  {
+    TaskVariantRegistrar registrar(TIMER_TASK_ID, "timer");
+    registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
+    Runtime::preregister_task_variant<timer_task>(registrar, "timer");
+  }
 #endif
     
 }
         
-PersistentRegion::PersistentRegion(HighLevelRuntime * runtime) {
+PersistentRegion::PersistentRegion(Runtime * runtime) {
     this->runtime = runtime; 
 }
 
 #ifdef TESTERIO_PHASER_TIMERS
 void timer_task(const Task *task,
                 const std::vector<PhysicalRegion> &regions,
-                Context ctx, HighLevelRuntime *runtime)
+                Context ctx, Runtime *runtime)
 {
   struct timespec ts;
   current_utc_time(&ts);   
@@ -79,7 +99,7 @@ void timer_task(const Task *task,
 
 void copy_values_task(const Task *task,
                       const std::vector<PhysicalRegion> &regions,
-                      Context ctx, HighLevelRuntime *runtime)
+                      Context ctx, Runtime *runtime)
 {
   Piece piece = * ((Piece*) task->local_args);
   struct task_args_t task_args = *(struct task_args_t*) task->args;
@@ -441,6 +461,7 @@ void PersistentRegion::create_persistent_subregions(Context ctx,
 
       size_t field_size = runtime->get_field_size(ctx, fs, fid);
       status = H5Tset_size(dtype_id, field_size);
+      assert(status >= 0);
 
       if(H5Lexists(shard_file_id, gp, H5P_DEFAULT)) { 
         shard_group_id = H5Gopen2(shard_file_id, gp, H5P_DEFAULT);
@@ -468,6 +489,7 @@ void PersistentRegion::create_persistent_subregions(Context ctx,
           H5P_DEFAULT, H5P_DEFAULT);
 
       status = H5Awrite(attr_id, H5T_NATIVE_INT, shard_dims);
+      assert(status >= 0);
       H5Aclose(attr_id);
 
       H5Dclose(shard_ds_id);
@@ -477,6 +499,7 @@ void PersistentRegion::create_persistent_subregions(Context ctx,
       status = H5Lcreate_external(pieces[i].shard_name, iterator->second.c_str(),
           link_group_2_id, ds_name_stream.str().c_str(),
           H5P_DEFAULT, H5P_DEFAULT);
+      assert(status >= 0);
 
       shard_file_id = H5Fopen(pieces[i].shard_name, H5F_ACC_RDWR, H5P_DEFAULT);      
       H5Gclose(link_group_2_id);

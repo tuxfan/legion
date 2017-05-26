@@ -1517,8 +1517,8 @@ namespace Realm {
 	    // any future waiters?
 	    if(!future_local_waiters.empty()) {
 	      std::map<gen_t, std::vector<EventWaiter *> >::iterator it = future_local_waiters.begin();
-	      log_event.debug() << "future waiters non-empty: first=" << it->first << " (= " << (generation + 1) << "?)";
-	      if(it->first == (generation + 1)) {
+	      log_event.debug() << "future waiters non-empty: first=" << it->first << " (= " << (gen_triggered + 1) << "?)";
+	      if(it->first == (gen_triggered + 1)) {
 		current_local_waiters.swap(it->second);
 		future_local_waiters.erase(it);
 	      }
@@ -1533,8 +1533,8 @@ namespace Realm {
 
 	    // update generation last, with a synchronization to make sure poisoned generation
 	    // list is valid to any observer of this update
-	    generation = gen_triggered;
 	    __sync_synchronize();
+	    generation = gen_triggered;
 	  } else 
 	    if(gen_triggered > (generation + 1)) {
 	      // we can't update the main state because there are generations that we know

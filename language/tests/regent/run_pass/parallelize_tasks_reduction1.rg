@@ -13,10 +13,11 @@
 -- limitations under the License.
 
 -- runs-with:
--- [["-ll:cpu", "4", "-fbounds-checks", "1", "-fdebug", "1",
---   "-fparallelize-dop", "9"]]
-
--- FIXME: Breaks RDIR
+-- [
+--   ["-ll:cpu", "4", "-fbounds-checks", "1", "-fdebug", "1",
+--    "-fparallelize-dop", "9"],
+--   ["-ll:cpu", "4", "-fopenmp", "1", "-fparallelize-dop", "4"]
+-- ]
 
 import "regent"
 
@@ -35,6 +36,7 @@ where reads(r)
 do
   var sum : double = 0.03
   var ts_start = c.legion_get_current_time_in_micros()
+  __demand(__openmp)
   for e in r do
     sum += 0.5 * (@e +
                   r[(e - {0, 1}) % r.bounds] +
@@ -42,6 +44,21 @@ do
   end
   var ts_end = c.legion_get_current_time_in_micros()
   c.printf("parallel version: %lu us\n", ts_end - ts_start)
+  return sum
+end
+
+task stencil_serial(r : region(ispace(int2d), double))
+where reads(r)
+do
+  var sum : double = 0.03
+  var ts_start = c.legion_get_current_time_in_micros()
+  for e in r do
+    sum += 0.5 * (@e +
+                  r[(e - {0, 1}) % r.bounds] +
+                  r[(e + {1, 0}) % r.bounds])
+  end
+  var ts_end = c.legion_get_current_time_in_micros()
+  c.printf("serial version: %lu us\n", ts_end - ts_start)
   return sum
 end
 
@@ -64,9 +81,9 @@ task test(size : int)
   end
   wait_for(result1)
   var result2 : double = 0
-  result2 = __forbid(__parallel, stencil(primary_region))
+  result2 = stencil_serial(primary_region)
   wait_for(result2)
-  regentlib.assert(cmath.fabs(result1 - result2) < 0.000001, "test failed")
+  regentlib.assert(cmath.fabs(result1 - result2) < 1e-3, "test failed")
   return 1
 end
 

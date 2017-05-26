@@ -700,7 +700,8 @@ namespace Legion {
       virtual void send_semantic_request(AddressSpaceID target, 
         SemanticTag tag, bool can_fail, bool wait_until, RtUserEvent ready) = 0;
       virtual void send_semantic_info(AddressSpaceID target, SemanticTag tag,
-                        const void *buffer, size_t size, bool is_mutable) = 0;
+                        const void *buffer, size_t size, bool is_mutable,
+                        RtUserEvent ready = RtUserEvent::NO_RT_USER_EVENT) = 0;
     public:
       static bool compute_intersections(const std::set<Domain> &left,
                                         const std::set<Domain> &right,
@@ -738,7 +739,8 @@ namespace Legion {
      * \class IndexSpaceNode
      * A class for representing a generic index space node.
      */
-    class IndexSpaceNode : public IndexTreeNode {
+    class IndexSpaceNode : public IndexTreeNode,
+                           public LegionHeapify<IndexSpaceNode> {
     public:
       struct DynamicIndependenceArgs : 
         public LgTaskArgs<DynamicIndependenceArgs> {
@@ -784,8 +786,6 @@ namespace Legion {
       virtual ~IndexSpaceNode(void);
     public:
       IndexSpaceNode& operator=(const IndexSpaceNode &rhs);
-      void* operator new(size_t count);
-      void operator delete(void *ptr);
     public:
       virtual bool is_index_space_node(void) const;
 #ifdef DEBUG_LEGION
@@ -802,7 +802,8 @@ namespace Legion {
       virtual void send_semantic_request(AddressSpaceID target, 
            SemanticTag tag, bool can_fail, bool wait_until, RtUserEvent ready);
       virtual void send_semantic_info(AddressSpaceID target, SemanticTag tag,
-                           const void *buffer, size_t size, bool is_mutable);
+                           const void *buffer, size_t size, bool is_mutable,
+                           RtUserEvent ready = RtUserEvent::NO_RT_USER_EVENT);
       void process_semantic_request(SemanticTag tag, AddressSpaceID source,
                             bool can_fail, bool wait_until, RtUserEvent ready);
       static void handle_semantic_request(RegionTreeForest *forest,
@@ -916,7 +917,8 @@ namespace Legion {
      * \class IndexPartNode
      * A node for representing a generic index partition.
      */
-    class IndexPartNode : public IndexTreeNode { 
+    class IndexPartNode : public IndexTreeNode,
+                          public LegionHeapify<IndexPartNode> { 
     public:
       struct DynamicIndependenceArgs : 
         public LgTaskArgs<DynamicIndependenceArgs> {
@@ -964,8 +966,6 @@ namespace Legion {
       virtual ~IndexPartNode(void);
     public:
       IndexPartNode& operator=(const IndexPartNode &rhs);
-      void* operator new(size_t count);
-      void operator delete(void *ptr);
     public:
       virtual bool is_index_space_node(void) const;
 #ifdef DEBUG_LEGION
@@ -982,7 +982,8 @@ namespace Legion {
       virtual void send_semantic_request(AddressSpaceID target, 
            SemanticTag tag, bool can_fail, bool wait_until, RtUserEvent ready);
       virtual void send_semantic_info(AddressSpaceID target, SemanticTag tag,
-                             const void *buffer, size_t size, bool is_mutable);
+                             const void *buffer, size_t size, bool is_mutable,
+                             RtUserEvent ready = RtUserEvent::NO_RT_USER_EVENT);
       void process_semantic_request(SemanticTag tag, AddressSpaceID source,
                             bool can_fail, bool wait_until, RtUserEvent ready);
       static void handle_semantic_request(RegionTreeForest *forest,
@@ -1086,7 +1087,7 @@ namespace Legion {
      * Represent a generic field space that can be
      * pointed at by nodes in the region trees.
      */
-    class FieldSpaceNode {
+    class FieldSpaceNode : public LegionHeapify<FieldSpaceNode> {
     public:
       struct FieldInfo {
       public:
@@ -1157,8 +1158,6 @@ namespace Legion {
       ~FieldSpaceNode(void);
     public:
       FieldSpaceNode& operator=(const FieldSpaceNode &rhs);
-      void* operator new(size_t count);
-      void operator delete(void *ptr);
       AddressSpaceID get_owner_space(void) const; 
       static AddressSpaceID get_owner_space(FieldSpace handle, Runtime *rt);
     public:
@@ -1173,9 +1172,11 @@ namespace Legion {
       bool retrieve_semantic_information(FieldID fid, SemanticTag tag,
              const void *&result, size_t &size, bool can_fail, bool wait_until);
       void send_semantic_info(AddressSpaceID target, SemanticTag tag,
-                             const void *result, size_t size, bool is_mutable);
+                             const void *result, size_t size, bool is_mutable,
+                             RtUserEvent ready = RtUserEvent::NO_RT_USER_EVENT);
       void send_semantic_field_info(AddressSpaceID target, FieldID fid,
-            SemanticTag tag, const void *result, size_t size, bool is_mutable);
+            SemanticTag tag, const void *result, size_t size, bool is_mutable,
+            RtUserEvent ready = RtUserEvent::NO_RT_USER_EVENT);
       void process_semantic_request(SemanticTag tag, AddressSpaceID source,
                              bool can_fail, bool wait_until, RtUserEvent ready);
       void process_semantic_field_request(FieldID fid, SemanticTag tag, 
@@ -1374,7 +1375,8 @@ namespace Legion {
       virtual void send_semantic_request(AddressSpaceID target, 
         SemanticTag tag, bool can_fail, bool wait_until, RtUserEvent ready) = 0;
       virtual void send_semantic_info(AddressSpaceID target, SemanticTag tag,
-                          const void *buffer, size_t size, bool is_mutable) = 0;
+                         const void *buffer, size_t size, bool is_mutable,
+                         RtUserEvent ready = RtUserEvent::NO_RT_USER_EVENT) = 0;
     public:
       // Logical traversal operations
       void initialize_logical_state(ContextID ctx,
@@ -1520,7 +1522,7 @@ namespace Legion {
       void invalidate_current_state(ContextID ctx, bool users_only);
       void invalidate_deleted_state(ContextID ctx, 
                                     const FieldMask &deleted_mask);
-      void invalidate_version_state(ContextID ctx);
+      bool invalidate_version_state(ContextID ctx);
       void invalidate_version_managers(void);
     public:
       // Physical traversal operations
@@ -1755,7 +1757,7 @@ namespace Legion {
      * \class RegionNode
      * Represent a region in a region tree
      */
-    class RegionNode : public RegionTreeNode {
+    class RegionNode : public RegionTreeNode, public LegionHeapify<RegionNode> {
     public:
       struct SemanticRequestArgs : public LgTaskArgs<SemanticRequestArgs> {
       public:
@@ -1782,8 +1784,6 @@ namespace Legion {
       virtual ~RegionNode(void);
     public:
       RegionNode& operator=(const RegionNode &rhs);
-      void* operator new(size_t count);
-      void operator delete(void *ptr);
     public:
       bool has_child(const ColorPoint &p);
       bool has_color(const ColorPoint &p);
@@ -1843,7 +1843,8 @@ namespace Legion {
       virtual void send_semantic_request(AddressSpaceID target, 
            SemanticTag tag, bool can_fail, bool wait_until, RtUserEvent ready);
       virtual void send_semantic_info(AddressSpaceID target, SemanticTag tag,
-                             const void *buffer, size_t size, bool is_mutable);
+                             const void *buffer, size_t size, bool is_mutable,
+                             RtUserEvent ready = RtUserEvent::NO_RT_USER_EVENT);
       void process_semantic_request(SemanticTag tag, AddressSpaceID source,
                             bool can_fail, bool wait_until, RtUserEvent ready);
       static void handle_semantic_request(RegionTreeForest *forest,
@@ -1956,7 +1957,8 @@ namespace Legion {
      * \class PartitionNode
      * Represent an instance of a partition in a region tree.
      */
-    class PartitionNode : public RegionTreeNode {
+    class PartitionNode : public RegionTreeNode, 
+                          public LegionHeapify<PartitionNode> {
     public:
       struct SemanticRequestArgs : public LgTaskArgs<SemanticRequestArgs> {
       public:
@@ -1981,11 +1983,9 @@ namespace Legion {
                     IndexPartNode *row_src, FieldSpaceNode *col_src,
                     RegionTreeForest *ctx);
       PartitionNode(const PartitionNode &rhs);
-      ~PartitionNode(void);
+      virtual ~PartitionNode(void);
     public:
       PartitionNode& operator=(const PartitionNode &rhs);
-      void* operator new(size_t count);
-      void operator delete(void *ptr);
     public:
       bool has_child(const ColorPoint &c);
       bool has_color(const ColorPoint &c);
@@ -2058,7 +2058,8 @@ namespace Legion {
       virtual void send_semantic_request(AddressSpaceID target, 
            SemanticTag tag, bool can_fail, bool wait_until, RtUserEvent ready);
       virtual void send_semantic_info(AddressSpaceID target, SemanticTag tag,
-                             const void *buffer, size_t size, bool is_mutable);
+                             const void *buffer, size_t size, bool is_mutable,
+                             RtUserEvent ready = RtUserEvent::NO_RT_USER_EVENT);
       void process_semantic_request(SemanticTag tag, AddressSpaceID source,
                             bool can_fail, bool wait_until, RtUserEvent ready);
       static void handle_semantic_request(RegionTreeForest *forest,

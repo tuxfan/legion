@@ -24,66 +24,68 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
   FILES_MATCHING PATTERN "*.inl"
 )
 
-# Lowlevel runtime
-if(Legion_USE_SHARED_LOWLEVEL)
-  list(APPEND LOW_RUNTIME_SRC shared_lowlevel.cc)
-else()
+# Realm runtime
+list(APPEND LOW_RUNTIME_SRC
+  lowlevel_config.h
+  lowlevel_disk.cc
+  channel.h                 channel.cc
+  channel_disk.h            channel_disk.cc
+  lowlevel_dma.h            lowlevel_dma.cc
+  lowlevel_dma.inl
+  lowlevel.h                lowlevel.cc
+  lowlevel_impl.h
+  realm/event_impl.h        realm/event_impl.cc
+  realm/event_impl.inl
+  realm/faults.h            realm/faults.cc
+  realm/faults.inl
+  realm/idx_impl.h          realm/idx_impl.cc
+  realm/inst_impl.h         realm/inst_impl.cc
+  realm/machine_impl.h      realm/machine_impl.cc
+  realm/mem_impl.h          realm/mem_impl.cc
+  realm/metadata.h          realm/metadata.cc
+  realm/module.h            realm/module.cc
+  realm/nodeset.h
+  realm/numa/numa_module.h  realm/numa/numa_module.cc
+  realm/numa/numasysif.h    realm/numa/numasysif.cc
+  realm/operation.h         realm/operation.cc
+  realm/operation.inl
+  realm/proc_impl.h         realm/proc_impl.cc
+  realm/procset/procset_module.h realm/procset/procset_module.cc
+  realm/rsrv_impl.h         realm/rsrv_impl.cc
+  realm/runtime_impl.h      realm/runtime_impl.cc
+  realm/sampling_impl.h     realm/sampling_impl.cc
+  realm/tasks.h             realm/tasks.cc
+  realm/threads.h           realm/threads.cc
+  realm/threads.inl
+)
+if(Legion_USE_CUDA)
   list(APPEND LOW_RUNTIME_SRC
-    lowlevel_config.h
-    lowlevel_disk.cc
-    channel.h                 channel.cc
-    channel_disk.h            channel_disk.cc
-    lowlevel_dma.h            lowlevel_dma.cc
-    lowlevel_dma.inl
-    lowlevel.h                lowlevel.cc
-    lowlevel_impl.h
-    realm/event_impl.h        realm/event_impl.cc
-    realm/event_impl.inl
-    realm/faults.h            realm/faults.cc
-    realm/faults.inl
-    realm/idx_impl.h          realm/idx_impl.cc
-    realm/inst_impl.h         realm/inst_impl.cc
-    realm/machine_impl.h      realm/machine_impl.cc
-    realm/mem_impl.h          realm/mem_impl.cc
-    realm/metadata.h          realm/metadata.cc
-    realm/module.h            realm/module.cc
-    realm/nodeset.h
-    realm/numa/numa_module.h  realm/numa/numa_module.cc
-    realm/numa/numasysif.h    realm/numa/numasysif.cc
-    realm/operation.h         realm/operation.cc
-    realm/operation.inl
-    realm/proc_impl.h         realm/proc_impl.cc
-    realm/procset/procset_module.h realm/procset/procset_module.cc
-    realm/rsrv_impl.h         realm/rsrv_impl.cc
-    realm/runtime_impl.h      realm/runtime_impl.cc
-    realm/sampling_impl.h     realm/sampling_impl.cc
-    realm/tasks.h             realm/tasks.cc
-    realm/threads.h           realm/threads.cc
-    realm/threads.inl
+    realm/cuda/cuda_module.h    realm/cuda/cuda_module.cc
+    realm/cuda/cudart_hijack.h  realm/cuda/cudart_hijack.cc
   )
-  if(Legion_USE_CUDA)
-    list(APPEND LOW_RUNTIME_SRC
-      realm/cuda/cuda_module.h    realm/cuda/cuda_module.cc
-      realm/cuda/cudart_hijack.h  realm/cuda/cudart_hijack.cc
-    )
-  endif()
-  if(Legion_USE_LLVM)
-    list(APPEND LOW_RUNTIME_SRC
-      realm/llvmjit/llvmjit.h
-      realm/llvmjit/llvmjit.inl
-      realm/llvmjit/llvmjit_internal.h  realm/llvmjit/llvmjit_internal.cc
-      realm/llvmjit/llvmjit_module.h    realm/llvmjit/llvmjit_module.cc
-  )
-  endif()
-  if(Legion_USE_GASNet)
-    list(APPEND LOW_RUNTIME_SRC activemsg.h activemsg.cc)
-  endif()
 endif()
+if(Legion_USE_LLVM)
+  list(APPEND LOW_RUNTIME_SRC
+    realm/llvmjit/llvmjit.h
+    realm/llvmjit/llvmjit.inl
+    realm/llvmjit/llvmjit_internal.h  realm/llvmjit/llvmjit_internal.cc
+    realm/llvmjit/llvmjit_module.h    realm/llvmjit/llvmjit_module.cc
+  )
+endif()
+if(Legion_USE_HDF5)
+  list(APPEND LOW_RUNTIME_SRC
+    realm/hdf5/hdf5_module.h realm/hdf5/hdf5_module.cc
+    realm/hdf5/hdf5_internal.h realm/hdf5/hdf5_internal.cc
+  )
+endif()
+if(Legion_USE_GASNet)
+  list(APPEND LOW_RUNTIME_SRC activemsg.h activemsg.cc)
+endif()
+
 list(APPEND LOW_RUNTIME_SRC
   accessor.h
   arrays.h
   atomics.h
-  common.h
   realm/bytearray.h
   realm/bytearray.inl
   realm/circ_queue.h
@@ -139,7 +141,7 @@ set_target_properties(LowLevelRuntime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(LowLevelRuntime PROPERTIES SOVERSION ${SOVERSION})
 target_compile_definitions(LowLevelRuntime
   PRIVATE
-    $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:DEBUG_LOW_LEVEL>
+    $<$<CONFIG:Debug>:DEBUG_REALM>
   PUBLIC
     COMPILE_TIME_MIN_LEVEL=LEVEL_${Legion_OUTPUT_LEVEL}
 )
@@ -165,11 +167,13 @@ if(Legion_USE_CUDA)
   target_link_libraries(LowLevelRuntime PRIVATE ${CUDA_CUDA_LIBRARY})
 endif()
 
-if(Legion_USE_SHARED_LOWLEVEL)
-  set_target_properties(LowLevelRuntime PROPERTIES OUTPUT_NAME sharedllr)
-else()
-  set_target_properties(LowLevelRuntime PROPERTIES OUTPUT_NAME realm)
+if(Legion_USE_HDF5)
+  target_compile_definitions(LowLevelRuntime PUBLIC USE_HDF)
+  target_include_directories(LowLevelRuntime PRIVATE ${HDF5_INCLUDE_DIRS})
+  target_link_libraries(LowLevelRuntime PRIVATE ${HDF5_LIBRARIES})
 endif()
+
+set_target_properties(LowLevelRuntime PROPERTIES OUTPUT_NAME realm)
 
 target_include_directories(LowLevelRuntime
   INTERFACE
@@ -198,7 +202,7 @@ list(APPEND MAPPER_SRC
   mappers/test_mapper.h        mappers/test_mapper.cc
 )
 
-# High level runtime
+# Legion runtime
 list(APPEND HIGH_RUNTIME_SRC
   legion/field_tree.h
   legion/garbage_collection.h  legion/garbage_collection.cc
@@ -237,7 +241,7 @@ set_target_properties(HighLevelRuntime PROPERTIES SOVERSION ${SOVERSION})
 target_compile_definitions(HighLevelRuntime
   PRIVATE
     ASSUME_UNALLOCABLE
-    $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:DEBUG_HIGH_LEVEL>
+    $<$<CONFIG:Debug>:DEBUG_LEGION>
   PUBLIC
     MAX_FIELDS=${Legion_MAX_FIELDS}
 )

@@ -78,7 +78,7 @@ bool generate_hdf_file(const char *file_name, const char *dataset_name, int num_
 {
   hid_t file_id = H5Fcreate(file_name, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
   if(file_id < 0) {
-    printf("H5Fcreate failed: %d\n", file_id);
+    printf("H5Fcreate failed: %lld\n", (long long)file_id);
     return false;
   }
 
@@ -86,7 +86,7 @@ bool generate_hdf_file(const char *file_name, const char *dataset_name, int num_
   dims[0] = num_elements;
   hid_t dataspace_id = H5Screate_simple(1, dims, NULL);
   if(dataspace_id < 0) {
-    printf("H5Screate_simple failed: %d\n", dataspace_id);
+    printf("H5Screate_simple failed: %lld\n", (long long)dataspace_id);
     H5Fclose(file_id);
     return false;
   }
@@ -95,7 +95,7 @@ bool generate_hdf_file(const char *file_name, const char *dataset_name, int num_
 			     H5T_IEEE_F64LE, dataspace_id,
 			     H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
   if(dataset < 0) {
-    printf("H5Dcreate2 failed: %d\n", dataset);
+    printf("H5Dcreate2 failed: %lld\n", (long long)dataset);
     H5Sclose(dataspace_id);
     H5Fclose(file_id);
     return false;
@@ -543,14 +543,30 @@ void check_task(const Task *task,
 int main(int argc, char **argv)
 {
   Runtime::set_top_level_task_id(TOP_LEVEL_TASK_ID);
-  Runtime::register_legion_task<top_level_task>(TOP_LEVEL_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, false/*index*/);
-  Runtime::register_legion_task<init_field_task>(INIT_FIELD_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, true/*index*/);
-  Runtime::register_legion_task<stencil_task>(STENCIL_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, true/*index*/);
-  Runtime::register_legion_task<check_task>(CHECK_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, true/*index*/);
+
+  {
+    TaskVariantRegistrar registrar(TOP_LEVEL_TASK_ID, "top_level");
+    registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
+    Runtime::preregister_task_variant<top_level_task>(registrar, "top_level");
+  }
+
+  {
+    TaskVariantRegistrar registrar(INIT_FIELD_TASK_ID, "init_field");
+    registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
+    Runtime::preregister_task_variant<init_field_task>(registrar, "init_field");
+  }
+
+  {
+    TaskVariantRegistrar registrar(STENCIL_TASK_ID, "stencil");
+    registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
+    Runtime::preregister_task_variant<stencil_task>(registrar, "stencil");
+  }
+
+  {
+    TaskVariantRegistrar registrar(CHECK_TASK_ID, "check");
+    registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
+    Runtime::preregister_task_variant<check_task>(registrar, "check");
+  }
 
   return Runtime::start(argc, argv);
 }

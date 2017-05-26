@@ -1185,7 +1185,7 @@ namespace LegionRuntime {
                 req->dst_node, req->dst_base, req->src_base, req->nbytes,
                 req->src_str, req->nlines, req);
           }
-          capacity--;
+          __sync_fetch_and_sub(&capacity, 1);
         /*RemoteWriteRequest* req = (RemoteWriteRequest*) requests[i];
           req->complete_event = GenEventImpl::create_genevent()->current_event();
           Realm::RemoteWriteMessage::RequestArgs args;
@@ -1485,6 +1485,13 @@ namespace LegionRuntime {
               // We flush all changes into destination before mark this XferDes as completed
               xd->flush();
               log_new_dma.info("Finish XferDes : id(" IDFMT ")", xd->guid);
+              // We eagerly free intermediate buffers here for better performance
+              if(xd->src_buf.is_ib) {
+                free_intermediate_buffer(xd->dma_request,
+                                         xd->src_buf.memory,
+                                         xd->src_buf.alloc_offset,
+                                         xd->src_buf.buf_size);
+              }
               xd->mark_completed();
               /*bool need_to_delete_dma_request = xd->mark_completed();
               if (need_to_delete_dma_request) {
@@ -1807,10 +1814,14 @@ namespace LegionRuntime {
         log_new_dma.info("Create remote XferDes: id(" IDFMT "),"
                          " pre(" IDFMT "), next(" IDFMT "), type(%d)",
                          _guid, _pre_xd_guid, _next_xd_guid, _kind);
+        // If the remote XD is the first one on the path, we mark start on the source
+        // node. This is sort of a hack, but this case only happens with GASNet Memory
+        if (mark_started)
+          _dma_request->mark_started();
         XferDesCreateMessage::send_request(ID(_src_buf.memory).memory.owner_node,
                                            _dma_request, _launch_node,
                                            _guid, _pre_xd_guid, _next_xd_guid,
-                                           mark_started,
+                                           false,
                                            _src_buf, _dst_buf, _domain, _oas_vec,
                                            _max_req_size, max_nr, _priority,
                                            _order, _kind, _complete_fence, inst);

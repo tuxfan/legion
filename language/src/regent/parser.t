@@ -61,6 +61,8 @@ function parser.annotation_name(p, required)
     return "external"
   elseif p:nextif("__inline") then
     return "inline"
+  elseif p:nextif("__openmp") then
+    return "openmp"
   elseif p:nextif("__parallel") then
     return "parallel"
   elseif p:nextif("__spmd") then
@@ -864,6 +866,19 @@ function parser.expr_prefix(p)
     p:expect(")")
     return ast.unspecialized.expr.ListIspace {
       ispace = ispace,
+      annotations = ast.default_annotations(),
+      span = ast.span(start, p),
+    }
+
+  elseif p:nextif("list_from_element") then
+    p:expect("(")
+    local list = p:expr()
+    p:expect(",")
+    local value = p:expr()
+    p:expect(")")
+    return ast.unspecialized.expr.ListFromElement {
+      list = list,
+      value = value,
       annotations = ast.default_annotations(),
       span = ast.span(start, p),
     }

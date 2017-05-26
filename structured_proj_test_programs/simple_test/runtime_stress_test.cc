@@ -87,7 +87,7 @@ class IDProjectionFunctor : public StructuredProjectionFunctor
       return ret_region;
     }
 
-    virtual StructuredProjection project_structured(Context ctx, Task *task)
+    virtual StructuredProjection project_structured(Context ctx)
     {
       StructuredProjectionStep first_step =
         StructuredProjectionStep::make_step(1, 0 , 0, 1, 1, 0);
@@ -127,7 +127,7 @@ class XDiffProjectionFunctor : public StructuredProjectionFunctor
       return ret_region;
     }
 
-    virtual StructuredProjection project_structured(Context ctx, Task *task)
+    virtual StructuredProjection project_structured(Context ctx)
     {
       StructuredProjectionStep first_step =
         StructuredProjectionStep::make_step(1, 0 , 1, 1, 1, 0);
@@ -167,7 +167,7 @@ class YDiffProjectionFunctor : public StructuredProjectionFunctor
       return ret_region;
     }
 
-    virtual StructuredProjection project_structured(Context ctx, Task *task)
+    virtual StructuredProjection project_structured(Context ctx)
     {
       StructuredProjectionStep first_step =
         StructuredProjectionStep::make_step(1, 0 , 0, 1, 1, 1);

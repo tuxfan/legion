@@ -356,7 +356,7 @@ namespace Legion {
     ArgumentMap::ArgumentMap(void)
     //--------------------------------------------------------------------------
     {
-      impl = Internal::legion_new<Internal::ArgumentMapImpl>();
+      impl = new Internal::ArgumentMapImpl();
 #ifdef DEBUG_LEGION
       assert(impl != NULL);
 #endif
@@ -367,7 +367,7 @@ namespace Legion {
     ArgumentMap::ArgumentMap(const FutureMap &rhs)
     //--------------------------------------------------------------------------
     {
-      impl = Internal::legion_new<Internal::ArgumentMapImpl>(rhs);
+      impl = new Internal::ArgumentMapImpl(rhs);
 #ifdef DEBUG_LEGION
       assert(impl != NULL);
 #endif
@@ -402,7 +402,7 @@ namespace Legion {
         // last reference holder, then delete it
         if (impl->remove_reference())
         {
-          Internal::legion_delete(impl);
+          delete impl;
         }
         impl = NULL;
       }
@@ -418,10 +418,10 @@ namespace Legion {
       {
         if (impl->remove_reference())
         {
-          Internal::legion_delete(impl);
+          delete impl;
         }
       }
-      impl = Internal::legion_new<Internal::ArgumentMapImpl>(rhs);
+      impl = new Internal::ArgumentMapImpl(rhs);
       impl->add_reference();
       return *this;
     }
@@ -436,7 +436,7 @@ namespace Legion {
       {
         if (impl->remove_reference())
         {
-          Internal::legion_delete(impl);
+          delete impl;
         }
       }
       impl = rhs.impl;
@@ -593,8 +593,7 @@ namespace Legion {
       assert(reservation_lock.exists());
 #endif
       ApEvent lock_event(reservation_lock.acquire(mode,exclusive));
-      if (!lock_event.has_triggered())
-        lock_event.wait();
+      lock_event.lg_wait();
     }
 
     //--------------------------------------------------------------------------
@@ -643,7 +642,7 @@ namespace Legion {
       if (impl != NULL)
       {
         if (impl->remove_reference())
-          Internal::legion_delete(impl);
+          delete impl;
         impl = NULL;
       }
     }
@@ -655,7 +654,7 @@ namespace Legion {
       if (impl != NULL)
       {
         if (impl->remove_reference())
-          Internal::legion_delete(impl);
+          delete impl;
       }
       impl = rhs.impl;
       if (impl != NULL)
@@ -720,8 +719,7 @@ namespace Legion {
       assert(phase_barrier.exists());
 #endif
       ApEvent e = Internal::Runtime::get_previous_phase(*this);
-      if (!e.has_triggered())
-        e.wait();
+      e.lg_wait();
     }
 
     //--------------------------------------------------------------------------
@@ -1697,7 +1695,7 @@ namespace Legion {
       if (impl != NULL)
       {
         if (impl->remove_reference())
-          Internal::legion_delete(impl);
+          delete impl;
         impl = NULL;
       }
     }
@@ -1719,7 +1717,7 @@ namespace Legion {
       if (impl != NULL)
       {
         if (impl->remove_reference())
-          Internal::legion_delete(impl);
+          delete impl;
       }
       impl = rhs.impl;
       if (impl != NULL)
@@ -1824,7 +1822,7 @@ namespace Legion {
       if (impl != NULL)
       {
         if (impl->remove_base_gc_ref(Internal::FUTURE_HANDLE_REF))
-          Internal::legion_delete(impl);
+          delete impl;
         impl = NULL;
       }
     }
@@ -1845,7 +1843,7 @@ namespace Legion {
       if (impl != NULL)
       {
         if (impl->remove_base_gc_ref(Internal::FUTURE_HANDLE_REF))
-          Internal::legion_delete(impl);
+          delete impl;
       }
       impl = rhs.impl;
       if (impl != NULL)
@@ -1939,7 +1937,7 @@ namespace Legion {
       if (impl != NULL)
       {
         if (impl->remove_base_gc_ref(Internal::FUTURE_HANDLE_REF))
-          Internal::legion_delete(impl);
+          delete impl;
         impl = NULL;
       }
     }
@@ -1951,7 +1949,7 @@ namespace Legion {
       if (impl != NULL)
       {
         if (impl->remove_base_gc_ref(Internal::FUTURE_HANDLE_REF))
-          Internal::legion_delete(impl);
+          delete impl;
       }
       impl = rhs.impl;
       if (impl != NULL)
@@ -2022,7 +2020,7 @@ namespace Legion {
       if (impl != NULL)
       {
         if (impl->remove_reference())
-          Internal::legion_delete(impl);
+          delete impl;
         impl = NULL;
       }
     }
@@ -2034,7 +2032,7 @@ namespace Legion {
       if (impl != NULL)
       {
         if (impl->remove_reference())
-          Internal::legion_delete(impl);
+          delete impl;
       }
       impl = rhs.impl;
       if (impl != NULL)
@@ -2218,6 +2216,10 @@ namespace Legion {
     {
     }
 
+// FIXME: This exists for backwards compatibility but it is tripping
+// over our own deprecation warnings. Turn those off inside this method.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     //--------------------------------------------------------------------------
     LogicalRegion ProjectionFunctor::project(const Mappable *mappable, 
             unsigned index, LogicalRegion upper_bound, const DomainPoint &point)
@@ -2241,7 +2243,12 @@ namespace Legion {
       }
       return LogicalRegion::NO_REGION;
     }
+#pragma GCC diagnostic pop
 
+// FIXME: This exists for backwards compatibility but it is tripping
+// over our own deprecation warnings. Turn those off inside this method.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     //--------------------------------------------------------------------------
     LogicalRegion ProjectionFunctor::project(const Mappable *mappable,
          unsigned index, LogicalPartition upper_bound, const DomainPoint &point)
@@ -2265,6 +2272,7 @@ namespace Legion {
       }
       return LogicalRegion::NO_REGION;
     }
+#pragma GCC diagnostic pop
 
     //--------------------------------------------------------------------------
     LogicalRegion ProjectionFunctor::project(Context ctx, Task *task,
@@ -4061,6 +4069,29 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    const Task* Runtime::get_local_task(Context ctx)
+    //--------------------------------------------------------------------------
+    {
+      return ctx->get_task();
+    }
+
+    //--------------------------------------------------------------------------
+    void* Runtime::get_local_task_variable_untyped(Context ctx,
+                                                   LocalVariableID id)
+    //--------------------------------------------------------------------------
+    {
+      return runtime->get_local_task_variable(ctx, id);
+    }
+
+    //--------------------------------------------------------------------------
+    void Runtime::set_local_task_variable_untyped(Context ctx,
+               LocalVariableID id, const void* value, void (*destructor)(void*))
+    //--------------------------------------------------------------------------
+    {
+      runtime->set_local_task_variable(ctx, id, value, destructor);
+    }
+
+    //--------------------------------------------------------------------------
     Future Runtime::get_current_time(Context ctx, Future precondition)
     //--------------------------------------------------------------------------
     {
@@ -4140,6 +4171,13 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       return runtime->find_reverse_MPI_mapping();
+    }
+
+    //--------------------------------------------------------------------------
+    int Runtime::find_local_MPI_rank(void)
+    //--------------------------------------------------------------------------
+    {
+      return runtime->find_local_MPI_rank();
     }
 
     //--------------------------------------------------------------------------
@@ -4574,7 +4612,7 @@ namespace Legion {
       assert(legion_participants > 0);
 #endif
       MPILegionHandshake result(
-          Internal::legion_new<Internal::MPILegionHandshakeImpl>(init_in_MPI,
+          new Internal::MPILegionHandshakeImpl(init_in_MPI,
                                        mpi_participants, legion_participants));
       Internal::Runtime::register_handshake(result);
       return result;
@@ -4624,6 +4662,15 @@ namespace Legion {
     {
       return Internal::Runtime::get_runtime(p)->external;
     }
+
+#ifdef ENABLE_LEGION_TLS
+    //--------------------------------------------------------------------------
+    /*static*/ Context Runtime::get_context(void)
+    //--------------------------------------------------------------------------
+    {
+      return Internal::implicit_context;
+    }
+#endif
 
     //--------------------------------------------------------------------------
     /*static*/ ReductionOpTable& Runtime::get_reduction_table(void)

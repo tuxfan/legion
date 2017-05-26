@@ -33,6 +33,7 @@
 #include <list>
 #include <deque>
 #include <vector>
+#include <typeinfo>
 
 #include "legion_config.h"
 #include "legion_template_help.h"
@@ -40,6 +41,12 @@
 // Make sure we have the appropriate defines in place for including realm
 #define REALM_USE_LEGION_LAYOUT_CONSTRAINTS
 #include "realm.h"
+
+#if __cplusplus >= 201402L
+#define LEGION_DEPRECATED(x) [[deprecated(x)]]
+#else
+#define LEGION_DEPRECATED(x)
+#endif
 
 namespace BindingLib { class Utility; } // BindingLib namespace
 
@@ -205,7 +212,7 @@ namespace Legion {
     };
   };
   
-  namespace Internal {
+  namespace Internal { 
 
     enum OpenState {
       NOT_OPEN                = 0,
@@ -1194,7 +1201,6 @@ namespace Legion {
     class IndexTask;
     class SliceTask;
     class RemoteTask;
-    class MinimalPoint;
 
     // legion_context.h
     /**
@@ -1223,6 +1229,11 @@ namespace Legion {
       inline TaskContext* as_context(void) 
         { return reinterpret_cast<TaskContext*>(this); }
     };
+    // Nasty global variable for TLS support of figuring out
+    // our context implicitly, this is experimental only
+#ifdef ENABLE_LEGION_TLS
+    extern __thread TaskContext *implicit_context;
+#endif
     
     // legion_trace.h
     class LegionTrace;
@@ -1364,7 +1375,6 @@ namespace Legion {
     friend class Internal::PointTask;                       \
     friend class Internal::IndexTask;                       \
     friend class Internal::SliceTask;                       \
-    friend class Internal::MinimalPoint;                    \
     friend class Internal::RegionTreeForest;                \
     friend class Internal::IndexSpaceNode;                  \
     friend class Internal::IndexPartNode;                   \
@@ -1401,19 +1411,19 @@ namespace Legion {
     friend class BindingLib::Utility;                       \
     friend class CObjectWrapper;                  
 
-#define LEGION_EXTERN_LOGGER_DECLARATIONS                        \
-    extern LegionRuntime::Logger::Category log_run;              \
-    extern LegionRuntime::Logger::Category log_task;             \
-    extern LegionRuntime::Logger::Category log_index;            \
-    extern LegionRuntime::Logger::Category log_field;            \
-    extern LegionRuntime::Logger::Category log_region;           \
-    extern LegionRuntime::Logger::Category log_inst;             \
-    extern LegionRuntime::Logger::Category log_variant;          \
-    extern LegionRuntime::Logger::Category log_allocation;       \
-    extern LegionRuntime::Logger::Category log_prof;             \
-    extern LegionRuntime::Logger::Category log_garbage;          \
-    extern LegionRuntime::Logger::Category log_spy;              \
-    extern LegionRuntime::Logger::Category log_shutdown;
+#define LEGION_EXTERN_LOGGER_DECLARATIONS      \
+    extern Realm::Logger log_run;              \
+    extern Realm::Logger log_task;             \
+    extern Realm::Logger log_index;            \
+    extern Realm::Logger log_field;            \
+    extern Realm::Logger log_region;           \
+    extern Realm::Logger log_inst;             \
+    extern Realm::Logger log_variant;          \
+    extern Realm::Logger log_allocation;       \
+    extern Realm::Logger log_prof;             \
+    extern Realm::Logger log_garbage;          \
+    extern Realm::Logger log_spy;              \
+    extern Realm::Logger log_shutdown;
 
   }; // Internal namespace
 
@@ -1437,6 +1447,7 @@ namespace Legion {
   typedef Realm::ElementMask::Enumerator Enumerator;
   typedef ::legion_lowlevel_coord_t coord_t;
   typedef Realm::IndexSpace::FieldDataDescriptor FieldDataDescriptor;
+  typedef Realm::Logger Logger;
   typedef std::map<CustomSerdezID, 
                    const Realm::CustomSerdezUntyped *> SerdezOpTable;
   typedef std::map<Realm::ReductionOpID, 
@@ -1466,6 +1477,7 @@ namespace Legion {
   typedef ::legion_distributed_id_t DistributedID;
   typedef ::legion_address_space_id_t AddressSpaceID;
   typedef ::legion_tunable_id_t TunableID;
+  typedef ::legion_local_variable_id_t LocalVariableID;
   typedef ::legion_generator_id_t GeneratorID;
   typedef ::legion_mapping_tag_id_t MappingTagID;
   typedef ::legion_semantic_tag_t SemanticTag;
@@ -1661,6 +1673,21 @@ namespace Legion {
   public:
     inline LgEvent& operator=(const LgEvent &rhs)
       { id = rhs.id; return *this; }
+  public:
+    inline void lg_wait(void) const
+      {
+#ifdef ENABLE_LEGION_TLS
+        // Save the context locally
+        TaskContext *local_ctx = Internal::implicit_context; 
+        // Do the wait
+        wait();
+        // Write the context back
+        Internal::implicit_context = local_ctx;
+#else
+        // Just do the normal wait call
+        wait(); 
+#endif
+      }
   };
 
   class PredEvent : public LgEvent {
@@ -1770,6 +1797,16 @@ namespace Legion {
   public:
     Realm::Barrier::timestamp_t timestamp;
   }; 
+  
+  // A class for preventing serialization of Legion objects
+  // which cannot be serialized
+  template<typename T>
+  class Unserializable {
+  public:
+    inline size_t legion_buffer_size(void);
+    inline size_t legion_serialize(void *buffer);
+    inline size_t legion_deserialize(const void *buffer);
+  };
 
 }; // Legion namespace
 

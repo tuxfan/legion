@@ -85,11 +85,38 @@ namespace LegionRuntime {
     };
 
     struct IBInfo {
+      enum Status {
+        INIT,
+        SENT,
+        COMPLETED
+      };
       Memory memory;
       off_t offset;
       size_t size;
-      IBFence* fence;
+      Status status;
+      //IBFence* fence;
+      Event event;
     };
+
+    struct PendingIBInfo {
+      Memory memory;
+      int idx;
+      InstPair ip;
+    };
+
+    class ComparePendingIBInfo {
+    public:
+      bool operator() (const PendingIBInfo& a, const PendingIBInfo& b) {
+        if (a.memory.id == b.memory.id) {
+          assert(a.idx != b.idx);
+          return a.idx < b.idx;
+        }
+        else
+          return a.memory.id < b.memory.id;
+      }
+    };
+
+    typedef std::set<PendingIBInfo, ComparePendingIBInfo> PriorityIBQueue;
     typedef std::vector<IBInfo> IBVec;
     typedef std::map<InstPair, IBVec> IBByInst;
     typedef std::map<MemPair, OASByInst *> OASByMem;
@@ -243,6 +270,7 @@ namespace LegionRuntime {
 
       void handle_ib_response(int idx, InstPair inst_pair, size_t ib_size, off_t ib_offset);
 
+      PriorityIBQueue priority_ib_queue;
       // operations on ib_by_inst are protected by ib_mutex
       IBByInst ib_by_inst;
       GASNetHSL ib_mutex;
@@ -383,15 +411,19 @@ namespace LegionRuntime {
 
         return;
       }
-      log_ib_alloc.info() << "IBAllocRequest (" << req->src_inst_id << "," 
-        << req->dst_inst_id << "): no enough space in memory" << tgt_mem;
+      log_ib_alloc.info("enqueue_request: src_inst(%llx) dst_inst(%llx) "
+                        "no enough space in memory(%llx)", req->src_inst_id, req->dst_inst_id, tgt_mem.id);
+      //log_ib_alloc.info() << " (" << req->src_inst_id << "," 
+      //  << req->dst_inst_id << "): no enough space in memory" << tgt_mem;
       std::map<Memory, std::queue<IBAllocRequest*> *>::iterator it = queues.find(tgt_mem);
       if (it == queues.end()) {
         std::queue<IBAllocRequest*> *q = new std::queue<IBAllocRequest*>;
         q->push(req);
         queues[tgt_mem] = q;
+        //log_ib_alloc.info("enqueue_request: queue_length(%lu)", q->size());
       } else {
         it->second->push(req);
+        //log_ib_alloc.info("enqueue_request: queue_length(%lu)", it->second->size());
       }
     }
 
@@ -548,6 +580,7 @@ namespace LegionRuntime {
       ib_completion = GenEventImpl::create_genevent()->current_event();
       ib_req = new IBAllocOp(ib_completion);
       ib_by_inst.clear();
+      priority_ib_queue.clear();
       // </NEW_DMA>
 
       size_t num_pairs = *idata++;
@@ -623,6 +656,7 @@ namespace LegionRuntime {
       ib_completion = GenEventImpl::create_genevent()->current_event();
       ib_req = new IBAllocOp(ib_completion);
       ib_by_inst.clear();
+      priority_ib_queue.clear();
       // </NEW_DMA>
       log_dma.info() << "dma request " << (void *)this << " created - is="
 		     << domain << " before=" << before_copy << " after=" << get_finish_event();
@@ -648,19 +682,19 @@ namespace LegionRuntime {
       }
       // free intermediate buffers
       {
-        AutoHSLLock al(ib_mutex);
-        for (OASByInst::iterator it = oas_by_inst->begin(); it != oas_by_inst->end(); it++) {
-          IBVec& ib_vec = ib_by_inst[it->first];
-          for (IBVec::iterator it2 = ib_vec.begin(); it2 != ib_vec.end(); it2++) {
-            if(ID(it2->memory).memory.owner_node == gasnet_mynode()) {
-              get_runtime()->get_memory_impl(it2->memory)->free_bytes(it2->offset, it2->size);
-              ib_req_queue->dequeue_request(it2->memory);
-            } else {
-              RemoteIBFreeRequestAsync::send_request(ID(it2->memory).memory.owner_node,
-                  it2->memory, it2->offset, it2->size);
-            }
-          }
-        }
+      //  AutoHSLLock al(ib_mutex);
+      //  for (OASByInst::iterator it = oas_by_inst->begin(); it != oas_by_inst->end(); it++) {
+      //    IBVec& ib_vec = ib_by_inst[it->first];
+      //    for (IBVec::iterator it2 = ib_vec.begin(); it2 != ib_vec.end(); it2++) {
+      //      if(ID(it2->memory).memory.owner_node == gasnet_mynode()) {
+      //        get_runtime()->get_memory_impl(it2->memory)->free_bytes(it2->offset, it2->size);
+      //        ib_req_queue->dequeue_request(it2->memory);
+      //      } else {
+      //        RemoteIBFreeRequestAsync::send_request(ID(it2->memory).memory.owner_node,
+      //            it2->memory, it2->offset, it2->size);
+      //      }
+      //    }
+      //  }
       }
       delete ib_req;
       //</NEWDMA>
@@ -835,7 +869,21 @@ namespace LegionRuntime {
     }
 
 
-#define IB_MAX_SIZE (128 * 1024 * 1024)
+#define IB_MAX_SIZE (64 * 1024 * 1024)
+
+    void free_intermediate_buffer(DmaRequest* req, Memory mem, off_t offset, size_t size)
+    {
+      //CopyRequest* cr = (CopyRequest*) req;
+      //AutoHSLLock al(cr->ib_mutex);
+      if(ID(mem).memory.owner_node == gasnet_mynode()) {
+        get_runtime()->get_memory_impl(mem)->free_bytes(offset, size);
+        ib_req_queue->dequeue_request(mem);
+      } else {
+        RemoteIBFreeRequestAsync::send_request(ID(mem).memory.owner_node,
+            mem, offset, size);
+      }
+    }
+
 
     void CopyRequest::alloc_intermediate_buffer(InstPair inst_pair, Memory tgt_mem, int idx)
     {
@@ -866,7 +914,7 @@ namespace LegionRuntime {
         ib_size = domain_size * ib_elmnt_size;
       else
         ib_size = IB_MAX_SIZE;
-      //printf("alloc_ib: src_inst_id(%llx) dst_inst_id(%llx) idx(%d) size(%lu)\n", inst_pair.first.id, inst_pair.second.id, idx, ib_size);
+      //log_ib_alloc.info("alloc_ib: src_inst_id(%llx) dst_inst_id(%llx) idx(%d) size(%lu) memory(%llx)", inst_pair.first.id, inst_pair.second.id, idx, ib_size, tgt_mem.id);
       if (ID(tgt_mem).memory.owner_node == gasnet_mynode()) {
         // create local intermediate buffer
         IBAllocRequest* ib_req
@@ -881,14 +929,19 @@ namespace LegionRuntime {
 
     void CopyRequest::handle_ib_response(int idx, InstPair inst_pair, size_t ib_size, off_t ib_offset)
     {
-      AutoHSLLock al(ib_mutex);
-      IBByInst::iterator ib_it = ib_by_inst.find(inst_pair);
-      assert(ib_it != ib_by_inst.end());
-      IBVec& ibvec = ib_it->second;
-      assert((int)ibvec.size() > idx);
-      ibvec[idx].size = ib_size;
-      ibvec[idx].offset = ib_offset;
-      ibvec[idx].fence->mark_finished(true);
+      Event event_to_trigger = Event::NO_EVENT;
+      {
+        AutoHSLLock al(ib_mutex);
+        IBByInst::iterator ib_it = ib_by_inst.find(inst_pair);
+        assert(ib_it != ib_by_inst.end());
+        IBVec& ibvec = ib_it->second;
+        assert((int)ibvec.size() > idx);
+        ibvec[idx].size = ib_size;
+        ibvec[idx].offset = ib_offset;
+        event_to_trigger = ibvec[idx].event;
+      }
+      GenEventImpl::trigger(event_to_trigger, false/*!poisoned*/);
+      //ibvec[idx].fence->mark_finished(true);
     }
 
     bool CopyRequest::check_readiness(bool just_check, DmaRequestQueue *rq)
@@ -1005,30 +1058,26 @@ namespace LegionRuntime {
           for (size_t i = 1; i < mem_path.size() - 1; i++) {
             IBInfo ib_info;
             ib_info.memory = mem_path[i];
-            ib_info.fence = new IBFence(ib_req);
-            ib_req->add_async_work_item(ib_info.fence); 
+            //ib_info.fence = new IBFence(ib_req);
+            ib_info.status = IBInfo::INIT;
+            ib_info.event = GenEventImpl::create_genevent()->current_event();
+            //ib_req->add_async_work_item(ib_info.fence); 
             ib_vec.push_back(ib_info);
+            PendingIBInfo pid_info;
+            pid_info.idx = i - 1;
+            pid_info.ip = it->first;
+            pid_info.memory = mem_path[i];
+            priority_ib_queue.insert(pid_info);
           }
         }
         // Pass 2: send ib allocation requests
-        for (OASByInst::iterator it = oas_by_inst->begin(); it != oas_by_inst->end(); it++) {
-          for (size_t i = 1; i < mem_path.size() - 1; i++) {
-            alloc_intermediate_buffer(it->first, mem_path[i], i - 1);
-          }
-        }
+        //for (OASByInst::iterator it = oas_by_inst->begin(); it != oas_by_inst->end(); it++) {
+        //  for (size_t i = 1; i < mem_path.size() - 1; i++) {
+        //    alloc_intermediate_buffer(it->first, mem_path[i], i - 1);
+        //  }
+        //}
         ib_req->mark_finished(true);
-        state = STATE_ALLOC_IB;
-      }
-
-      if(state == STATE_ALLOC_IB) {
-        log_dma.debug("wait for the ib allocations to complete");
-        if (ib_completion.has_triggered()) {
-          state = STATE_BEFORE_EVENT;
-        } else {
-          if (just_check) return false;
-          waiter.sleep_on_event(ib_completion);
-          return false;
-        }
+        state = STATE_BEFORE_EVENT;
       }
 
       // make sure our functional precondition has occurred
@@ -1042,7 +1091,7 @@ namespace LegionRuntime {
 	    return true;  // not enqueued, but never going to be
 	  } else {
 	    log_dma.debug("request %p - before event triggered", this);
-	    state = STATE_READY;
+	    state = STATE_ALLOC_IB;
 	  }
 	} else {
 	  log_dma.debug("request %p - before event not triggered", this);
@@ -1052,6 +1101,40 @@ namespace LegionRuntime {
 	  waiter.sleep_on_event(before_copy);
 	  return false;
 	}
+      }
+
+      if(state == STATE_ALLOC_IB) {
+        // log_dma.debug("wait for the ib allocations to complete");
+        PriorityIBQueue::iterator it;
+        for (it = priority_ib_queue.begin(); it != priority_ib_queue.end(); it++) {
+          IBVec& ibvec = ib_by_inst[(*it).ip];
+          if (ibvec[(*it).idx].status == IBInfo::INIT) {
+            // launch ib allocation requests
+            ibvec[(*it).idx].status = IBInfo::SENT;
+            alloc_intermediate_buffer((*it).ip, (*it).memory, (*it).idx);
+          }
+          if (ibvec[(*it).idx].status == IBInfo::SENT) {
+            Event e = ibvec[(*it).idx].event;
+            if (e.has_triggered()) {
+              ibvec[(*it).idx].status = IBInfo::COMPLETED;
+              //log_ib_alloc.info("alloc complete: copy_request(%llx) src_inst(%lx) dst_inst(%lx) idx(%lx)", this, (*it).ip.first.id, (*it).ip.second.id, (*it).idx);
+            } else {
+              if (just_check) return false;
+              waiter.sleep_on_event(e);
+              return false;
+            }
+          }
+        }
+        //if (priority_ib_queue.size() > 0)
+          //log_ib_alloc.info("alloc complete: copy_request(%llx) all intermediate buffers allocated!", this);
+        state = STATE_READY;
+        //if (ib_completion.has_triggered()) {
+        //  state = STATE_BEFORE_EVENT;
+        //} else {
+        //  if (just_check) return false;
+        //  waiter.sleep_on_event(ib_completion);
+        //  return false;
+        //}
       }
 
       if(state == STATE_READY) {
@@ -5482,62 +5565,68 @@ namespace Realm {
 	  Memory src_mem = it->first.first;
 	  Memory dst_mem = it->first.second;
 	  OASByInst *oas_by_inst = it->second;
-
-	  Event ev = GenEventImpl::create_genevent()->current_event();
+          for (OASByInst::const_iterator it2 = (*oas_by_inst).begin(); it2 != (*oas_by_inst).end(); it2++) {
+	    OASByInst *new_oas_by_inst = new OASByInst;
+            InstPair ip = it2->first;
+            OASVec oasvec(it2->second);
+            (*new_oas_by_inst)[ip] = oasvec;
+            Event ev = GenEventImpl::create_genevent()->current_event();
 #ifdef EVENT_GRAPH_TRACE
-          Event enclosing = find_enclosing_termination_event();
-          log_event_graph.info("Copy Request: (" IDFMT ",%d) (" IDFMT ",%d) "
-                                "(" IDFMT ",%d) " IDFMT " " IDFMT "",
-                                ev.id, ev.gen, wait_on.id, wait_on.gen,
-                                enclosing.id, enclosing.gen,
-                                src_mem.id, dst_mem.id);
+            Event enclosing = find_enclosing_termination_event();
+            log_event_graph.info("Copy Request: (" IDFMT ",%d) (" IDFMT ",%d) "
+                                  "(" IDFMT ",%d) " IDFMT " " IDFMT "",
+                                  ev.id, ev.gen, wait_on.id, wait_on.gen,
+                                  enclosing.id, enclosing.gen,
+                                  src_mem.id, dst_mem.id);
 #endif
 
-	  int priority = 0;
-	  if (get_runtime()->get_memory_impl(src_mem)->kind == MemoryImpl::MKIND_GPUFB)
-	    priority = 1;
-	  else if (get_runtime()->get_memory_impl(dst_mem)->kind == MemoryImpl::MKIND_GPUFB)
-	    priority = 1;
+	    int priority = 0;
+	    if (get_runtime()->get_memory_impl(src_mem)->kind == MemoryImpl::MKIND_GPUFB)
+	      priority = 1;
+	    else if (get_runtime()->get_memory_impl(dst_mem)->kind == MemoryImpl::MKIND_GPUFB)
+	      priority = 1;
 
-	  CopyRequest *r = new CopyRequest(*this, oas_by_inst, 
-					   wait_on, ev, priority, requests);
+	    CopyRequest *r = new CopyRequest(*this, new_oas_by_inst, 
+	  				   wait_on, ev, priority, requests);
 
-	  // ask which node should perform the copy
-	  int dma_node = select_dma_node(src_mem, dst_mem, redop_id, red_fold);
-	  log_dma.debug("copy: srcmem=" IDFMT " dstmem=" IDFMT " node=%d", src_mem.id, dst_mem.id, dma_node);
-	  
-	  if(((unsigned)dma_node) == gasnet_mynode()) {
-	    log_dma.debug("performing copy on local node");
+	    // ask which node should perform the copy
+	    int dma_node = select_dma_node(src_mem, dst_mem, redop_id, red_fold);
+	    log_dma.debug("copy: srcmem=" IDFMT " dstmem=" IDFMT " node=%d", src_mem.id, dst_mem.id, dma_node);
 
-	    get_runtime()->optable.add_local_operation(ev, r);
-	  
-	    r->check_readiness(false, dma_queue);
+	    if(((unsigned)dma_node) == gasnet_mynode()) {
+	      log_dma.debug("performing copy on local node");
 
-	    finish_events.insert(ev);
-	  } else {
-	    RemoteCopyArgs args;
-	    args.redop_id = 0;
-	    args.red_fold = false;
-	    args.before_copy = wait_on;
-	    args.after_copy = ev;
-	    args.priority = priority;
+	      get_runtime()->optable.add_local_operation(ev, r);
 
-            size_t msglen = r->compute_size();
-            void *msgdata = malloc(msglen);
+	      r->check_readiness(false, dma_queue);
 
-            r->serialize(msgdata);
+	      finish_events.insert(ev);
+	    } else {
+	      RemoteCopyArgs args;
+	      args.redop_id = 0;
+	      args.red_fold = false;
+	      args.before_copy = wait_on;
+	      args.after_copy = ev;
+	      args.priority = priority;
 
-	    log_dma.debug("performing copy on remote node (%d), event=" IDFMT, dma_node, args.after_copy.id);
-	    get_runtime()->optable.add_remote_operation(ev, dma_node);
-	    RemoteCopyMessage::request(dma_node, args, msgdata, msglen, PAYLOAD_FREE);
-	  
-	    finish_events.insert(ev);
+              size_t msglen = r->compute_size();
+              void *msgdata = malloc(msglen);
 
-	    // done with the local copy of the request
-	    r->remove_reference();
-	  }
-	}
+              r->serialize(msgdata);
 
+	      log_dma.debug("performing copy on remote node (%d), event=" IDFMT, dma_node, args.after_copy.id);
+	      get_runtime()->optable.add_remote_operation(ev, dma_node);
+	      RemoteCopyMessage::request(dma_node, args, msgdata, msglen, PAYLOAD_FREE);
+
+	      finish_events.insert(ev);
+
+	      // done with the local copy of the request
+	      r->remove_reference();
+	    }
+	  } // for OASByInst::iterator
+          // avoid memory leakage
+          delete oas_by_inst;
+        } // for OASByMem::iterator
 	// final event is merge of all individual copies' events
 	return GenEventImpl::merge_events(finish_events, false /*!ignore faults*/);
       } else {

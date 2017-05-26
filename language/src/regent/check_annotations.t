@@ -109,6 +109,7 @@ local function check_annotations_node(cx)
       node:is(ast.typed.expr.ListInvert) or
       node:is(ast.typed.expr.ListRange) or
       node:is(ast.typed.expr.ListIspace) or
+      node:is(ast.typed.expr.ListFromElement) or
       node:is(ast.typed.expr.PhaseBarrier) or
       node:is(ast.typed.expr.DynamicCollective) or
       node:is(ast.typed.expr.DynamicCollectiveGetResult) or
@@ -150,7 +151,7 @@ local function check_annotations_node(cx)
       check(cx, node, data.set(annotations))
 
     elseif node:is(ast.typed.stat.ForList) then
-      check(cx, node, data.set({"parallel", "spmd", "trace", "vectorize"}))
+      check(cx, node, data.set({"openmp", "parallel", "spmd", "trace", "vectorize"}))
 
     elseif node:is(ast.typed.stat.Repeat) then
       check(cx, node, data.set({"spmd", "trace"}))

@@ -76,7 +76,8 @@ namespace Legion {
       inline IndexTreeID get_tree_id(void) const { return tid; }
       inline bool exists(void) const { return (id != 0); }
     private:
-      friend std::ostream& operator<<(std::ostream& os, const IndexSpace& is);
+      friend std::ostream& operator<<(std::ostream& os, 
+                                      const IndexSpace& is);
       IndexSpaceID id;
       IndexTreeID tid;
     };
@@ -107,7 +108,8 @@ namespace Legion {
       inline IndexTreeID get_tree_id(void) const { return tid; }
       inline bool exists(void) const { return (id != 0); }
     public:
-      friend std::ostream& operator<<(std::ostream& os, const IndexPartition& ip);
+      friend std::ostream& operator<<(std::ostream& os, 
+                                      const IndexPartition& ip);
       IndexPartitionID id;
       IndexTreeID tid;
     };
@@ -179,8 +181,8 @@ namespace Legion {
       inline RegionTreeID get_tree_id(void) const { return tree_id; }
       inline bool exists(void) const { return (tree_id != 0); } 
     private:
-      friend std::ostream& operator<<(
-          std::ostream& os, const LogicalRegion& lr);
+      friend std::ostream& operator<<(std::ostream& os, 
+                                      const LogicalRegion& lr);
       // These are private so the user can't just arbitrarily change them
       RegionTreeID tree_id;
       IndexSpace index_space;
@@ -224,7 +226,8 @@ namespace Legion {
       inline RegionTreeID get_tree_id(void) const { return tree_id; }
       inline bool exists(void) const { return (tree_id != 0); }
     private:
-      friend std::ostream& operator<<(std::ostream& os, const LogicalPartition& lp);
+      friend std::ostream& operator<<(std::ostream& os, 
+                                      const LogicalPartition& lp);
       // These are private so the user can't just arbitrary change them
       RegionTreeID tree_id;
       IndexPartition index_partition;
@@ -251,7 +254,7 @@ namespace Legion {
      *
      * @see Runtime
      */
-    class IndexAllocator {
+    class IndexAllocator : public Unserializable<IndexAllocator> {
     public:
       IndexAllocator(void);
       IndexAllocator(const IndexAllocator &allocator);
@@ -300,7 +303,7 @@ namespace Legion {
      * @see FieldSpace
      * @see Runtime
      */
-    class FieldAllocator {
+    class FieldAllocator : public Unserializable<FieldAllocator> {
     public:
       FieldAllocator(void);
       FieldAllocator(const FieldAllocator &allocator);
@@ -403,7 +406,7 @@ namespace Legion {
      * It is up to the user to make sure that the the data described by
      * a task argument is valid throughout the duration of its lifetime.
      */
-    class TaskArgument {
+    class TaskArgument : public Unserializable<TaskArgument> {
       public:
       TaskArgument(void) : args(NULL), arglen(0) { }
       TaskArgument(const void *arg, size_t argsize)
@@ -435,7 +438,7 @@ namespace Legion {
      * calls, especially if there are very few changes applied to
      * the map between task call launches.
      */
-    class ArgumentMap {
+    class ArgumentMap : public Unserializable<ArgumentMap> {
     public:
       ArgumentMap(void);
       ArgumentMap(const FutureMap &rhs);
@@ -517,7 +520,7 @@ namespace Legion {
      * collected by the runtime.  Except for predicates with constant
      * value, all other predicates should be created by the runtime.
      */
-    class Predicate {
+    class Predicate : public Unserializable<Predicate> {
     public:
       static const Predicate TRUE_PRED;
       static const Predicate FALSE_PRED;
@@ -931,7 +934,7 @@ namespace Legion {
      * futures which come from tasks which predicates that resolve
      * to false.
      */
-    class Future {
+    class Future : public Unserializable<Future> {
     public:
       Future(void);
       Future(const Future &f);
@@ -956,7 +959,8 @@ namespace Legion {
        * @param silence_warnings silence any warnings for this blocking call
        * @return the value of the future cast as the template type
        */
-      template<typename T> inline T get_result(bool silence_warnings = false) const;
+      template<typename T> 
+        inline T get_result(bool silence_warnings = false) const;
       /**
        * Block until the future completes.
        * @param silence_warnings silence any warnings for this blocking call
@@ -1003,6 +1007,14 @@ namespace Legion {
        */
       size_t get_untyped_size(void);
     public:
+      // These methods provide partial support the C++ future interface
+      template<typename T>
+      inline T get(void);
+
+      inline bool valid(void) const;
+
+      inline void wait(void) const;
+    public:
       /**
        * Allow users to generate their own futures. These
        * futures are guaranteed to always have completed
@@ -1035,7 +1047,7 @@ namespace Legion {
      * context in which they are created as the runtime garbage collects
      * them after the enclosing task context completes execution.
      */
-    class FutureMap {
+    class FutureMap : public Unserializable<FutureMap> {
     public:
       FutureMap(void);
       FutureMap(const FutureMap &map);
@@ -1047,10 +1059,12 @@ namespace Legion {
       FRIEND_ALL_RUNTIME_CLASSES
       explicit FutureMap(Internal::FutureMapImpl *impl);
     public:
-      bool operator==(const FutureMap &f) const
+      inline bool operator==(const FutureMap &f) const
         { return impl == f.impl; }
-      bool operator<(const FutureMap &f) const
+      inline bool operator<(const FutureMap &f) const
         { return impl < f.impl; }
+      inline Future operator[](const DomainPoint &point)
+        { return get_future(point); }
       FutureMap& operator=(const FutureMap &f);
     public:
       /**
@@ -1128,7 +1142,7 @@ namespace Legion {
      * runtime overhead. These static dependences need only
      * be specified for dependences based on region requirements.
      */
-    struct StaticDependence {
+    struct StaticDependence : public Unserializable<StaticDependence> {
     public:
       StaticDependence(void);
       StaticDependence(unsigned previous_offset,
@@ -1809,7 +1823,7 @@ namespace Legion {
      * by value.  They should never escape the context in which
      * they are created.
      */
-    class PhysicalRegion {
+    class PhysicalRegion : public Unserializable<PhysicalRegion> {
     public:
       PhysicalRegion(void);
       PhysicalRegion(const PhysicalRegion &rhs);
@@ -1856,6 +1870,8 @@ namespace Legion {
        * method instead. You can silence warnings about this blocking
        * call with the 'silence_warnings' parameter.
        */
+      LEGION_DEPRECATED("Requesting generic accessors are now deprecated. "
+                        "A field accessor should be requested instead.")
       LegionRuntime::Accessor::RegionAccessor<
         LegionRuntime::Accessor::AccessorType::Generic> 
           get_accessor(bool silience_warnings = false) const;
@@ -2051,7 +2067,7 @@ namespace Legion {
     //                     MPI Interoperability Classes
     //==========================================================================
 
-    class MPILegionHandshake {
+    class MPILegionHandshake : public Unserializable<MPILegionHandshake> {
     public:
       MPILegionHandshake(void);
       MPILegionHandshake(const MPILegionHandshake &rhs);
@@ -2521,6 +2537,8 @@ namespace Legion {
        * @param point the point of the task in the index space
        * @return logical region to be used by the child task
        */
+      LEGION_DEPRECATED("The interface for projection functors has been "
+                        "updated. Please use the new 'project' methods.")
       virtual LogicalRegion project(Context ctx, Task *task,
                                     unsigned index,
                                     LogicalRegion upper_bound,
@@ -2536,6 +2554,8 @@ namespace Legion {
        * @param point the point of the task in the index space
        * @return logical region to be used by the child task
        */
+      LEGION_DEPRECATED("The interface for projection functors has been "
+                        "updated. Please use the new 'project' methods.")
       virtual LogicalRegion project(Context ctx, Task *task, 
                                     unsigned index,
                                     LogicalPartition upper_bound,
@@ -2668,8 +2688,7 @@ namespace Legion {
       /**
        * Structured projection function to be implemented
        */
-      virtual StructuredProjection project_structured(
-          Context ctx, Task *task) = 0;
+      virtual StructuredProjection project_structured(Context ctx) = 0;
 
       virtual bool is_structured() { return true; }
     };
@@ -2854,7 +2873,7 @@ namespace Legion {
 					    int part_color = AUTO_GENERATE_ID);
 
       /**
-       * @deprectated 
+       * @deprecated 
        * @see create_partition_by_field instead
        * Create an index partitioning from an existing field
        * in a physical instance.  This requires that the field
@@ -3887,13 +3906,14 @@ namespace Legion {
       FieldAllocator create_field_allocator(Context ctx, FieldSpace handle);
 
       /**
-       * @deprectated
+       * @deprecated
        * Create an argument map in the given context.  This method
        * is deprecated as argument maps can now be created directly
        * by a simple declaration.
        * @param ctx enclosing task context
        * @return a new argument map
        */
+      LEGION_DEPRECATED("ArgumentMap can be constructed directly.")
       ArgumentMap create_argument_map(Context ctx);
     public:
       //------------------------------------------------------------------------
@@ -3952,6 +3972,8 @@ namespace Legion {
        * @param tag mapping tag to be passed to any mapping calls
        * @return future representing return value of the task
        */
+      LEGION_DEPRECATED("Launching tasks should be done with the new task "
+                        "launcher interface.")
       Future execute_task(Context ctx, 
                           Processor::TaskFuncID task_id,
                           const std::vector<IndexSpaceRequirement> &indexes,
@@ -3980,6 +4002,8 @@ namespace Legion {
        * @param tag mapping tag to be passed to any mapping calls
        * @return future map containing results for all tasks
        */
+      LEGION_DEPRECATED("Launching tasks should be done with the new task "
+                        "launcher interface.")
       FutureMap execute_index_space(Context ctx, 
                           Processor::TaskFuncID task_id,
                           const Domain domain,
@@ -4014,6 +4038,8 @@ namespace Legion {
        * @param tag mapping tag to be passed to any mapping calls
        * @return future containing reduced return value of all tasks
        */
+      LEGION_DEPRECATED("Launching tasks should be done with the new task "
+                        "launcher interface.")
       Future execute_index_space(Context ctx, 
                           Processor::TaskFuncID task_id,
                           const Domain domain,
@@ -4263,6 +4289,8 @@ namespace Legion {
        * @param mode the access mode for attaching the file
        * @return a new physical instance corresponding to the HDF5 file
        */
+      LEGION_DEPRECATED("Attaching specific HDF5 file type is deprecated "
+                        "in favor of generic attach launcher interface.")
       PhysicalRegion attach_hdf5(Context ctx, const char *file_name,
                                  LogicalRegion handle, LogicalRegion parent, 
                                  const std::map<FieldID,const char*> &field_map,
@@ -4284,6 +4312,8 @@ namespace Legion {
        * @param ctx enclosing task context 
        * @param region the physical region for an HDF5 file to detach
        */
+      LEGION_DEPRECATED("Detaching specific HDF5 file type is deprecated "
+                        "in favor of generic detach interface.")
       void detach_hdf5(Context ctx, PhysicalRegion region);
 
       /**
@@ -4292,6 +4322,8 @@ namespace Legion {
        * attach_hdf5 operation, except that the file has exact same data format
        * as in-memory physical region. Data lays out as SOA in file.
        */
+      LEGION_DEPRECATED("Attaching generic file type is deprecated "
+                        "in favor of generic attach launcher interface.")
       PhysicalRegion attach_file(Context ctx, const char *file_name,
                                  LogicalRegion handle, LogicalRegion parent,
                                  const std::vector<FieldID> &field_vec,
@@ -4302,6 +4334,8 @@ namespace Legion {
        * Detach an normal file. THis detach operation is similar to
        * detach_hdf5
        */
+      LEGION_DEPRECATED("Detaching generic file type is deprecated "
+                        "in favor of generic detach interface.")
       void detach_file(Context ctx, PhysicalRegion region);
     public:
       //------------------------------------------------------------------------
@@ -4691,8 +4725,47 @@ namespace Legion {
        * tunable value. It will assume that the resulting tunable 
        * future can be interpreted as an integer.
        */
+      LEGION_DEPRECATED("Tunable values should now be obtained via the "
+                        "generic interface that returns a future result.")
       int get_tunable_value(Context ctx, TunableID tid, 
                             MapperID mapper = 0, MappingTagID tag = 0);
+    public:
+      //------------------------------------------------------------------------
+      // Task Local Interface
+      //------------------------------------------------------------------------
+      /**
+       * Get a reference to the task for the current context.
+       * @param the enclosing task context 
+       * @return a pointer to the task for the context
+       */
+      const Task* get_local_task(Context ctx);
+
+      /**
+       * Get the value of a task-local variable named by the ID. This
+       * variable only has the lifetime of the task
+       * @param ctx the enclosing task context
+       * @param id the ID of the task-local variable to return
+       * @return pointer to the value of the variable if any
+       */
+      void* get_local_task_variable_untyped(Context ctx, LocalVariableID id);
+      template<typename T>
+      T* get_local_task_variable(Context ctx, LocalVariableID id);
+
+      /**
+       * Set the value of a task-local variable named by ID. This 
+       * variable will only have the lifetime of the task. The user
+       * can also specify an optional destructor function which will
+       * implicitly be called at the end the task's execution
+       * @param ctx the enclosing task context
+       * @param id the ID of the task-local variable to set
+       * @param value the value to set the variable to
+       * @param destructor optional method to delete the value
+       */
+      void set_local_task_variable_untyped(Context ctx, LocalVariableID id, 
+          const void *value, void (*destructor)(void*) = NULL);
+      template<typename T>
+      void set_local_task_variable(Context ctx, LocalVariableID id,
+          const T* value, void (*destructor)(void*) = NULL);
     public:
       //------------------------------------------------------------------------
       // Timing Operations 
@@ -4813,6 +4886,11 @@ namespace Legion {
        * @return a const reference to the reverse map
        */
       const std::map<AddressSpace,int/*rank*/>& find_reverse_MPI_mapping(void);
+
+      /**
+       * Return the local MPI rank ID for the current Legion runtime
+       */
+      int find_local_MPI_rank(void);
     public:
       //------------------------------------------------------------------------
       // Semantic Information 
@@ -5248,7 +5326,7 @@ namespace Legion {
        *  Messaging
        * -------------
        * -lg:message <int> Maximum size in bytes of the active messages
-       *              to be sent between instances of the high-level 
+       *              to be sent between instances of the Legion
        *              runtime.  This can help avoid the use of expensive
        *              per-pair-of-node RDMA buffers in the low-level
        *              runtime.  Default value is 4K which should guarantee
@@ -5472,6 +5550,8 @@ namespace Legion {
        * the application.
        * @param callback function pointer to the callback function to be run
        */
+      LEGION_DEPRECATED("Legion now supports multiple registration callbacks "
+                        "added via the add_registration_callback method.") 
       static void set_registration_callback(RegistrationCallbackFnptr callback);
 
       /**
@@ -5775,6 +5855,8 @@ namespace Legion {
       template<typename T,
         T (*TASK_PTR)(const Task*, const std::vector<PhysicalRegion>&,
                       Context, Runtime*)>
+      LEGION_DEPRECATED("Task registration should be done with "
+                        "a TaskVariantRegistrar") 
       static TaskID register_legion_task(TaskID id, Processor::Kind proc_kind,
                                          bool single, bool index, 
                                          VariantID vid = AUTO_GENERATE_ID,
@@ -5796,6 +5878,8 @@ namespace Legion {
       template<
         void (*TASK_PTR)(const Task*, const std::vector<PhysicalRegion>&,
                          Context, Runtime*)>
+      LEGION_DEPRECATED("Task registration should be done with "
+                        "a TaskVariantRegistrar")
       static TaskID register_legion_task(TaskID id, Processor::Kind proc_kind,
                                          bool single, bool index,
                                          VariantID vid = AUTO_GENERATE_ID,
@@ -5819,6 +5903,8 @@ namespace Legion {
       template<typename T, typename UDT,
         T (*TASK_PTR)(const Task*, const std::vector<PhysicalRegion>&,
                       Context, Runtime*, const UDT&)>
+      LEGION_DEPRECATED("Task registration should be done with "
+                        "a TaskVariantRegistrar")
       static TaskID register_legion_task(TaskID id, Processor::Kind proc_kind,
                                          bool single, bool index,
                                          const UDT &user_data,
@@ -5843,6 +5929,8 @@ namespace Legion {
       template<typename UDT,
         void (*TASK_PTR)(const Task*,const std::vector<PhysicalRegion>&,
                          Context, Runtime*, const UDT&)>
+      LEGION_DEPRECATED("Task registration should be done with "
+                        "a TaskVariantRegistrar")
       static TaskID register_legion_task(TaskID id, Processor::Kind proc_kind,
                                          bool single, bool index,
                                          const UDT &user_data,
@@ -5850,31 +5938,25 @@ namespace Legion {
                               TaskConfigOptions options = TaskConfigOptions(),
                                          const char *task_name = NULL);
     public:
-      //------------------------------------------------------------------------
-      // Runtime calls for Mappers 
-      //------------------------------------------------------------------------
-      /* 
-       * All of the methods in this block are utility methods that mappers
-       * can use as part of their execution. They are differentiated from
-       * normal runtime calls by the requirement that they take a mapper
-       * context instead of a normal context. These contexts can only be 
-       * obtained through a normal mapper call. Any one of these calls may 
-       * result in the mapper being pre-empted. The mapper can control 
-       * whether other mapper calls can be made during this time by setting 
-       * the mapper model in the 'get_mapper_sync_model' mapper call and/or 
-       * enabling/disabling the re-entrancy of mapper calls using the 
-       * methods below.
-       */
-
-    public:
       /**
-       * Provide a mechanism for finding the high-level runtime
+       * Provide a mechanism for finding the Legion runtime
        * pointer for a processor wrapper tasks that are starting
        * a new application level task.
        * @param processor the task will run on
-       * @return the high-level runtime pointer for the specified processor
+       * @return the Legion runtime pointer for the specified processor
        */
       static Runtime* get_runtime(Processor p = Processor::NO_PROC);
+#ifdef ENABLE_LEGION_TLS
+      /**
+       * Provisional support for a way to implicitly find the context
+       * of the task in which we are running. This is only supported
+       * if the runtime is built with the ENABLE_LEGION_TLS macro.
+       * This macro has not been performance tested and may cause 
+       * performance degradation in the runtime. Use at your own risk.
+       * @return the context for the enclosing task in which we are executing
+       */
+      static Context get_context(void);
+#endif
     private:
       friend class FieldAllocator;
       FieldID allocate_field(Context ctx, FieldSpace space, 

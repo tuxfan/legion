@@ -120,7 +120,7 @@ namespace Legion {
         dependence_tracker.commit = NULL;
       }
       if ((trace != NULL) && (trace->remove_reference()))
-        LegionTrace::delete_trace(trace);
+        delete trace;
       if (!mapped_event.has_triggered())
         Runtime::trigger_event(mapped_event);
       if (!resolved_event.has_triggered())
@@ -162,6 +162,8 @@ namespace Legion {
     {
       if ((req.handle_type == SINGULAR) || (req.handle_type == REG_PROJECTION))
       {
+        if (!req.region.exists())
+          return;
         runtime->forest->initialize_path(req.region.get_index_space(),
                                          req.parent.get_index_space(), path);
       }
@@ -170,6 +172,8 @@ namespace Legion {
 #ifdef DEBUG_LEGION
         assert(req.handle_type == PART_PROJECTION);
 #endif
+        if (!req.partition.exists())
+          return;
         runtime->forest->initialize_path(req.partition.get_index_partition(),
                                          req.parent.get_index_space(), path);
       }
@@ -253,7 +257,7 @@ namespace Legion {
       {
         if (it->first->remove_base_valid_ref(MAPPING_ACQUIRE_REF, this, 
                                              it->second.first))
-          PhysicalManager::delete_physical_manager(it->first);
+          delete it->first;
       }
       acquired_instances.clear();
     }
@@ -1717,7 +1721,7 @@ namespace Legion {
       if (result_future.impl == NULL)
       {
         Future temp = Future(
-              legion_new<FutureImpl>(runtime, true/*register*/,
+              new FutureImpl(runtime, true/*register*/,
                 runtime->get_available_distributed_id(true),
                 runtime->address_space, this));
         AutoLock o_lock(op_lock);
@@ -1884,8 +1888,7 @@ namespace Legion {
       }
       if (wait_event.exists())
       {
-        if (!wait_event.has_triggered())
-          wait_event.wait();
+        wait_event.lg_wait();
         // Might be a little bit of a race here with cleanup
 #ifdef DEBUG_LEGION
         assert((speculation_state == RESOLVE_TRUE_STATE) ||
@@ -2002,7 +2005,7 @@ namespace Legion {
       // Handle the waiting case if necessary
       if (wait_on.exists())
       {
-        wait_on.wait();
+        wait_on.lg_wait();
         // Now retake the lock and see if anything changed
         AutoLock o_lock(op_lock);
         switch (speculation_state)
@@ -2198,7 +2201,7 @@ namespace Legion {
       tag = launcher.tag;
       layout_constraint_id = launcher.layout_constraint_id;
       termination_event = Runtime::create_ap_user_event();
-      region = PhysicalRegion(legion_new<PhysicalRegionImpl>(requirement,
+      region = PhysicalRegion(new PhysicalRegionImpl(requirement,
                               completion_event, true/*mapped*/, ctx, 
                               map_id, tag, false/*leaf*/, 
                               false/*virtual mapped*/, runtime));
@@ -2644,11 +2647,12 @@ namespace Legion {
 #endif
         exit(ERROR_BAD_PROJECTION_USE);
       }
-      FieldID bad_field;
+      FieldID bad_field = AUTO_GENERATE_ID;
+      int bad_index = -1;
       LegionErrorType et = runtime->verify_requirement(requirement, bad_field);
       // If that worked, then check the privileges with the parent context
       if (et == NO_ERROR)
-        et = parent_ctx->check_privilege(requirement, bad_field);
+        et = parent_ctx->check_privilege(requirement, bad_field, bad_index);
       switch (et)
       {
         case NO_ERROR:
@@ -2704,16 +2708,44 @@ namespace Legion {
           }
         case ERROR_BAD_PARENT_REGION:
           {
-            log_region.error("Parent task %s (ID %lld) of inline mapping "
-                                   "(ID %lld) does not have a region "
-                                   "requirement for region (%x,%x,%x) "
-                                   "as a parent of region requirement",
-                                   parent_ctx->get_task_name(), 
-                                   parent_ctx->get_unique_id(),
-                                   unique_op_id, 
-                                   requirement.region.index_space.id,
-                                   requirement.region.field_space.id, 
-                                   requirement.region.tree_id);
+            if (bad_index < 0)
+              log_region.error("Parent task %s (ID %lld) of inline mapping "
+                               "(ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) "
+                               "as a parent of region requirement because "
+                               "no 'parent' region had that name.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id);
+            else if (bad_field == AUTO_GENERATE_ID)
+              log_region.error("Parent task %s (ID %lld) of inline mapping "
+                               "(ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) "
+                               "as a parent of region requirement because "
+                               "parent requirement %d did not have "
+                               "sufficent privileges.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id, bad_index);
+            else
+              log_region.error("Parent task %s (ID %lld) of inline mapping "
+                               "(ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) "
+                               "as a parent of region requirement because "
+                               "region requirement %d was missing field %d.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id,
+                               bad_index, bad_field);
 #ifdef DEBUG_LEGION
             assert(false);
 #endif
@@ -4075,11 +4107,12 @@ namespace Legion {
 #endif
         exit(ERROR_BAD_PROJECTION_USE);
       }
-      FieldID bad_field;
+      FieldID bad_field = AUTO_GENERATE_ID;
+      int bad_index = -1;
       LegionErrorType et = runtime->verify_requirement(requirement, bad_field);
       // If that worked, then check the privileges with the parent context
       if (et == NO_ERROR)
-        et = parent_ctx->check_privilege(requirement, bad_field);
+        et = parent_ctx->check_privilege(requirement, bad_field, bad_index);
       switch (et)
       {
         case NO_ERROR:
@@ -4144,18 +4177,50 @@ namespace Legion {
           }
         case ERROR_BAD_PARENT_REGION:
           {
-            log_region.error("Parent task %s (ID %lld) of copy operation "
-                                   "(ID %lld) does not have a region "
-                                   "requirement for region (%x,%x,%x) "
-                                   "as a parent of index %d of %s region "
-                                   "requirements",
-                                   parent_ctx->get_task_name(), 
-                                   parent_ctx->get_unique_id(),
-                                   unique_op_id, 
-                                   requirement.region.index_space.id,
-                                   requirement.region.field_space.id, 
-                                   requirement.region.tree_id,
-                                   idx, (src ? "source" : "destination"));
+            if (bad_index < 0)
+              log_region.error("Parent task %s (ID %lld) of copy operation "
+                               "(ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) "
+                               "as a parent of index %d of %s region "
+                               "requirements because there was no "
+                               "'parent' region had that name.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id,
+                               idx, (src ? "source" : "destination"));
+            else if (bad_field == AUTO_GENERATE_ID)
+              log_region.error("Parent task %s (ID %lld) of copy operation "
+                               "(ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) "
+                               "as a parent of index %d of %s region "
+                               "requirements because parent requirement %d "
+                               "did not have sufficient privileges.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id,
+                               idx, (src ? "source" : "destination"), 
+                               bad_index);
+            else
+              log_region.error("Parent task %s (ID %lld) of copy operation "
+                               "(ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) "
+                               "as a parent of index %d of %s region "
+                               "requirements because region requirement %d "
+                               "was missing field %d.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id,
+                               idx, (src ? "source" : "destination"),
+                               bad_index, bad_field);
 #ifdef DEBUG_LEGION
             assert(false);
 #endif
@@ -6653,20 +6718,6 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void* InterCloseOp::operator new(size_t count)
-    //--------------------------------------------------------------------------
-    {
-      return legion_alloc_aligned<InterCloseOp,true/*bytes*/>(count);
-    }
-
-    //--------------------------------------------------------------------------
-    void InterCloseOp::operator delete(void *ptr)
-    //--------------------------------------------------------------------------
-    {
-      free(ptr);
-    }
-
-    //--------------------------------------------------------------------------
     void InterCloseOp::initialize(TaskContext *ctx,const RegionRequirement &req,
                               ClosedNode *closed_t, const TraceInfo &trace_info,
                               int close_idx, const VersionInfo &clone_info,
@@ -7265,7 +7316,7 @@ namespace Legion {
       if (!done_events.empty())
       {
         RtEvent wait_on = Runtime::merge_events(done_events);
-        wait_on.wait();
+        wait_on.lg_wait();
       }
     }
 
@@ -7302,20 +7353,6 @@ namespace Legion {
       // should never be called
       assert(false);
       return *this;
-    }
-
-    //--------------------------------------------------------------------------
-    void* ReadCloseOp::operator new(size_t count)
-    //--------------------------------------------------------------------------
-    {
-      return legion_alloc_aligned<ReadCloseOp,true/*bytes*/>(count);
-    }
-
-    //--------------------------------------------------------------------------
-    void ReadCloseOp::operator delete(void *ptr)
-    //--------------------------------------------------------------------------
-    {
-      free(ptr);
     }
 
     //--------------------------------------------------------------------------
@@ -8212,13 +8249,15 @@ namespace Legion {
     void AcquireOp::check_acquire_privilege(void)
     //--------------------------------------------------------------------------
     {
-      FieldID bad_field;
+      FieldID bad_field = AUTO_GENERATE_ID;
+      int bad_index = -1;
       LegionErrorType et = runtime->verify_requirement(requirement, bad_field);
       // If that worked, check the privileges, but only check the
       // data and not the actual privilege values since we're
       // using psuedo-read-write-exclusive
       if (et == NO_ERROR)
-        et = parent_ctx->check_privilege(requirement, bad_field, true/*skip*/);
+        et = parent_ctx->check_privilege(requirement, bad_field, 
+                                         bad_index, true/*skip*/);
       switch (et)
       {
         case NO_ERROR:
@@ -8254,15 +8293,42 @@ namespace Legion {
           }
         case ERROR_BAD_PARENT_REGION:
           {
-            log_region.error("Parent task %s (ID %lld) of acquire "
-                             "operation (ID %lld) does not have a region "
-                             "requirement for region (%x,%x,%x) as a parent",
-                             parent_ctx->get_task_name(), 
-                             parent_ctx->get_unique_id(),
-                             unique_op_id, 
-                             requirement.region.index_space.id,
-                             requirement.region.field_space.id, 
-                             requirement.region.tree_id);
+            if (bad_index < 0)
+              log_region.error("Parent task %s (ID %lld) of acquire "
+                               "operation (ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) as a parent "
+                               "because no 'parent' region had that name.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id);
+            else if (bad_field == AUTO_GENERATE_ID)
+              log_region.error("Parent task %s (ID %lld) of acquire "
+                               "operation (ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) as a parent "
+                               "because parent requirement %d did not have "
+                               "sufficient privileges.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id, bad_index);
+            else
+              log_region.error("Parent task %s (ID %lld) of acquire "
+                               "operation (ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) as a parent "
+                               "because region requirement %d was missing "
+                               "field %d.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id,
+                               bad_index, bad_field);
 #ifdef DEBUG_LEGION
             assert(false);
 #endif
@@ -8855,13 +8921,15 @@ namespace Legion {
     void ReleaseOp::check_release_privilege(void)
     //--------------------------------------------------------------------------
     {
-      FieldID bad_field;
+      FieldID bad_field = AUTO_GENERATE_ID;
+      int bad_index = -1;
       LegionErrorType et = runtime->verify_requirement(requirement, bad_field);
       // If that worked, check the privileges, but only check the
       // data and not the actual privilege values since we're
       // using psuedo-read-write-exclusive
       if (et == NO_ERROR)
-        et = parent_ctx->check_privilege(requirement, bad_field, true/*skip*/);
+        et = parent_ctx->check_privilege(requirement, bad_field, 
+                                         bad_index, true/*skip*/);
       switch (et)
       {
         // There is no such thing as bad privileges for release operations
@@ -8900,15 +8968,42 @@ namespace Legion {
           }
         case ERROR_BAD_PARENT_REGION:
           {
-            log_region.error("Parent task %s (ID %lld) of release "
-                             "operation (ID %lld) does not have a region "
-                             "requirement for region (%x,%x,%x) as a parent",
-                             parent_ctx->get_task_name(), 
-                             parent_ctx->get_unique_id(),
-                             unique_op_id, 
-                             requirement.region.index_space.id,
-                             requirement.region.field_space.id, 
-                             requirement.region.tree_id);
+            if (bad_index < 0)
+              log_region.error("Parent task %s (ID %lld) of release "
+                               "operation (ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) as a parent "
+                               "because no 'parent' region had that name.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id);
+            else if (bad_field == AUTO_GENERATE_ID)
+              log_region.error("Parent task %s (ID %lld) of release "
+                               "operation (ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) as a parent "
+                               "because parent requirement %d did not have "
+                               "sufficient privileges.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id, bad_index);
+            else
+              log_region.error("Parent task %s (ID %lld) of release "
+                               "operation (ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) as a parent "
+                               "because region requirement %d was missing " 
+                               "field %d.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id, 
+                               bad_index, bad_field);
 #ifdef DEBUG_LEGION
             assert(false);
 #endif
@@ -9077,7 +9172,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       initialize_operation(ctx, true/*track*/);
-      future = Future(legion_new<FutureImpl>(runtime, true/*register*/,
+      future = Future(new FutureImpl(runtime, true/*register*/,
             runtime->get_available_distributed_id(true), 
             runtime->address_space, this));
       collective = dc;
@@ -9892,7 +9987,7 @@ namespace Legion {
       mapper_tag = launcher.mapping_tag;
       // Make a new future map for storing our results
       // We'll fill it in later
-      result_map = FutureMap(legion_new<FutureMapImpl>(ctx, this, runtime,
+      result_map = FutureMap(new FutureMapImpl(ctx, this, runtime,
             runtime->get_available_distributed_id(true/*need continuation*/),
             runtime->address_space));
 #ifdef DEBUG_LEGION
@@ -10650,7 +10745,7 @@ namespace Legion {
       if (!wait_events.empty())
       {
         RtEvent trigger_event = Runtime::merge_events(wait_events);
-        trigger_event.wait();
+        trigger_event.lg_wait();
       }
     }
 
@@ -10763,7 +10858,7 @@ namespace Legion {
       if (!wait_events.empty())
       {
         RtEvent mapped_event = Runtime::merge_events(wait_events);
-        mapped_event.wait();
+        mapped_event.lg_wait();
       }
     }
 
@@ -10774,13 +10869,13 @@ namespace Legion {
       // Before we can actually map, we have to perform our versioning analysis
       RtEvent versions_ready = task->perform_must_epoch_version_analysis(owner);
       if (versions_ready.exists())
-        versions_ready.wait();
+        versions_ready.lg_wait();
       // Note we don't need to hold a lock here because this is
       // a monotonic change.  Once it fails for anyone then it
       // fails for everyone.
       RtEvent done_mapping = task->perform_mapping(owner);
       if (done_mapping.exists())
-        done_mapping.wait();
+        done_mapping.lg_wait();
     }
 
     //--------------------------------------------------------------------------
@@ -10884,7 +10979,7 @@ namespace Legion {
       if (!wait_events.empty())
       {
         RtEvent dist_event = Runtime::merge_events(wait_events);
-        dist_event.wait();
+        dist_event.lg_wait();
       }
     }
 
@@ -12025,10 +12120,11 @@ namespace Legion {
     void FillOp::check_fill_privilege(void)
     //--------------------------------------------------------------------------
     {
-      FieldID bad_field;
+      FieldID bad_field = AUTO_GENERATE_ID;
+      int bad_index = -1;
       LegionErrorType et = runtime->verify_requirement(requirement, bad_field);
       if (et == NO_ERROR)
-        et = parent_ctx->check_privilege(requirement, bad_field);
+        et = parent_ctx->check_privilege(requirement, bad_field, bad_index);
       switch (et)
       {
         case NO_ERROR:
@@ -12084,16 +12180,44 @@ namespace Legion {
           }
         case ERROR_BAD_PARENT_REGION:
           {
-            log_region.error("Parent task %s (ID %lld) of fill operation "
-                                   "(ID %lld) does not have a region "
-                                   "requirement for region (%x,%x,%x) "
-                                   "as a parent of region requirement",
-                                   parent_ctx->get_task_name(), 
-                                   parent_ctx->get_unique_id(),
-                                   unique_op_id, 
-                                   requirement.region.index_space.id,
-                                   requirement.region.field_space.id, 
-                                   requirement.region.tree_id);
+            if (bad_index < 0)
+              log_region.error("Parent task %s (ID %lld) of fill operation "
+                               "(ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) "
+                               "as a parent of region requirement because "
+                               "no 'parent' region had that name.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id);
+            else if (bad_field == AUTO_GENERATE_ID)
+              log_region.error("Parent task %s (ID %lld) of fill operation "
+                               "(ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) "
+                               "as a parent of region requirement because "
+                               "parent requirement %d did not have "
+                               "sufficient privileges.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id, bad_index);
+            else
+              log_region.error("Parent task %s (ID %lld) of fill operation "
+                               "(ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) "
+                               "as a parent of region requirement because "
+                               "region requirement %d was missing field %d.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id,
+                               bad_index, bad_field);
 #ifdef DEBUG_LEGION
             assert(false);
 #endif
@@ -12810,7 +12934,7 @@ namespace Legion {
         default:
           assert(false); // should never get here
       }
-      region = PhysicalRegion(legion_new<PhysicalRegionImpl>(requirement,
+      region = PhysicalRegion(new PhysicalRegionImpl(requirement,
                               completion_event, true/*mapped*/, ctx,
                               0/*map id*/, 0/*tag*/, false/*leaf*/, 
                               false/*virtual mapped*/, runtime));
@@ -13072,11 +13196,12 @@ namespace Legion {
     void AttachOp::check_privilege(void)
     //--------------------------------------------------------------------------
     {
-      FieldID bad_field;
+      FieldID bad_field = AUTO_GENERATE_ID;
+      int bad_index = -1;
       LegionErrorType et = runtime->verify_requirement(requirement, bad_field);
       // If that worked, then check the privileges with the parent context
       if (et == NO_ERROR)
-        et = parent_ctx->check_privilege(requirement, bad_field);
+        et = parent_ctx->check_privilege(requirement, bad_field, bad_index);
       switch (et)
       {
         // Not there is no such things as bad privileges for 
@@ -13135,16 +13260,44 @@ namespace Legion {
           }
         case ERROR_BAD_PARENT_REGION:
           {
-            log_region.error("Parent task %s (ID %lld) of attach operation "
-                                   "(ID %lld) does not have a region "
-                                   "requirement for region (%x,%x,%x) "
-                                   "as a parent of region requirement",
-                                   parent_ctx->get_task_name(), 
-                                   parent_ctx->get_unique_id(),
-                                   unique_op_id, 
-                                   requirement.region.index_space.id,
-                                   requirement.region.field_space.id, 
-                                   requirement.region.tree_id);
+            if (bad_index > 0)
+              log_region.error("Parent task %s (ID %lld) of attach operation "
+                               "(ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) "
+                               "as a parent of region requirement because "
+                               "no 'parent' region had that name.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id);
+            else if (bad_field == AUTO_GENERATE_ID)
+              log_region.error("Parent task %s (ID %lld) of attach operation "
+                               "(ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) "
+                               "as a parent of region requirement because "
+                               "parent requirement %d did not have "
+                               "sufficient privileges.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id, bad_index);
+            else
+              log_region.error("Parent task %s (ID %lld) of attach operation "
+                               "(ID %lld) does not have a region "
+                               "requirement for region (%x,%x,%x) "
+                               "as a parent of region requirement because "
+                               "region requirement %d was missing field %d.",
+                               parent_ctx->get_task_name(), 
+                               parent_ctx->get_unique_id(),
+                               unique_op_id, 
+                               requirement.region.index_space.id,
+                               requirement.region.field_space.id, 
+                               requirement.region.tree_id,
+                               bad_index, bad_field);
 #ifdef DEBUG_LEGION
             assert(false);
 #endif
@@ -13492,7 +13645,7 @@ namespace Legion {
       initialize_operation(ctx, true/*track*/);
       measurement = launcher.measurement;
       preconditions = launcher.preconditions;
-      result = Future(legion_new<FutureImpl>(runtime, true/*register*/,
+      result = Future(new FutureImpl(runtime, true/*register*/,
                   runtime->get_available_distributed_id(true),
                   runtime->address_space, this));
       if (Runtime::legion_spy_enabled)
