@@ -455,11 +455,11 @@ namespace Legion {
     };
 
     /**
-     * \class ProjectionAnalysisConstraint
-     * Constraints on regions discovered during structured projection
-     * analysis.
+     * \struct SolutionSet
+     * Helper data structure for maintaining the potential sets of points that
+     * could casue a dependency in a projection function.
      */
-    struct SolverHelper {
+    struct SolutionSet {
       public:
         long int first_value;
         long int second_value;
@@ -468,12 +468,18 @@ namespace Legion {
         bool second_wildcard;
         bool third_wildcard;
       public:
-        SolverHelper(void) {
+        SolutionSet(void) {
           first_wildcard = true;
           second_wildcard = true;
           third_wildcard = true;
         }
     };
+
+    /**
+     * \class ProjectionAnalysisConstraint
+     * Constraints on regions discovered during structured projection
+     * analysis.
+     */
     class ProjectionAnalysisConstraint {
       public:
         ProjectionAnalysisConstraint(ConstraintType type);
@@ -493,13 +499,13 @@ namespace Legion {
             Domain &bounding_domain);
         std::string stringify(void) const;
       private:
-        std::pair<std::vector<SolverHelper>, std::vector<SolverHelper> >
+        std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> >
             get_dependent_points_helper(DomainPoint &point);
-        SolverHelper solve_linear(DomainPoint &point);
-        std::vector<SolverHelper> intersect_helper(std::vector<SolverHelper>,
-          std::vector<SolverHelper>);
-        std::vector<SolverHelper> union_helper(std::vector<SolverHelper>,
-          std::vector<SolverHelper>);
+        SolutionSet solve_linear(DomainPoint &point);
+        std::vector<SolutionSet> intersect_helper(std::vector<SolutionSet>,
+          std::vector<SolutionSet>);
+        std::vector<SolutionSet> union_helper(std::vector<SolutionSet>,
+          std::vector<SolutionSet>);
       public:
         ConstraintType constraint_type;
         ProjectionAnalysisConstraint *lhs;
