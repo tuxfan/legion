@@ -2247,20 +2247,31 @@ namespace Legion {
 #ifdef DEBUG_LEGION
       assert(constraint_pairs.first.size() == 0 || constraint_pairs.second.size() == 0);
 #endif
+      int dim = point.get_dim();
       if (constraint_pairs.first.size() != 0) {
         DomainPoint new_point(point);
         for (unsigned idx = 0; idx < constraint_pairs.first.size(); idx++) {
-          // copy the point to get the right dimensions
           SolutionSet solver_helper = constraint_pairs.first[idx];
+#ifdef DEBUG_LEGION
+          assert(!(solver_helper.first_wildcard && solver_helper.second_wildcard &&
+              solver_helper.third_wildcard));
+#endif
+          // copy the point to get the right dimensions
           new_point[0] = solver_helper.first_value;
-          new_point[1] = solver_helper.second_value;
+          if (dim == 2) {
+            new_point[1] = solver_helper.second_value;
+          }
+          if (dim == 3) {
+            new_point[2] = solver_helper.second_value;
+          }
         }
         if (new_point != point) {
           ret_vec.push_back(new_point);
         }
       }
       else {
-        //TODO implement this case!
+        //TODO maybe implement this eventually!
+        // But highly constrained and possibly something we don't want to handle
       }
       return ret_vec;
     }
@@ -2289,55 +2300,34 @@ namespace Legion {
           return std::make_pair(empty1, empty2);
         case OR:
           left_pair = lhs->get_dependent_points_helper(point);
-          return left_pair;
-          /*right_pair = rhs->get_dependent_points_helper(point);
-          std::set_intersection(left_pair.second.begin(),
-                                left_pair.second.end(),
-                                right_pair.second.begin(),
-                                right_pair.second.end(),
-                                back_inserter(set_intersection));
-          std::set_union(left_pair.first.begin(),
-                         left_pair.first.end(),
-                         right_pair.first.begin(),
-                         right_pair.first.end(),
-                         back_inserter(set_union));
+          right_pair = rhs->get_dependent_points_helper(point);
+          set_intersection = intersect_helper(left_pair.second,
+              right_pair.second);
+          set_union = union_helper(left_pair.first, right_pair.first);
           if (set_intersection.size() > 0) {
-            std::set_difference(set_intersection.begin(),
-                                set_intersection.end(),
-                                set_union.begin(),
-                                set_union.end(),
-                                back_inserter(set_difference));
+            /* By the invarianct that only one of the pair can be non-empty
+             * we know that the union is empty
+             */
             return std::make_pair(empty1, set_difference);
           }
           else {
             return std::make_pair(set_union, empty1);
-          }*/
+          }
         case AND:
           left_pair = lhs->get_dependent_points_helper(point);
           right_pair = rhs->get_dependent_points_helper(point);
           set_intersection = intersect_helper(left_pair.first,
               right_pair.first);
-          /*//std::set_intersection(left_pair.first.begin(),
-                                //left_pair.first.end(),
-                                //right_pair.first.begin(),
-                                //right_pair.first.end(),
-                                //back_inserter(set_intersection));
-          std::set_union(left_pair.second.begin(),
-                         left_pair.second.end(),
-                         right_pair.second.begin(),
-                         right_pair.second.end(),
-                         back_inserter(set_union));*/
+          set_union = union_helper(left_pair.second, right_pair.second);
           if (set_intersection.size() > 0) {
-            /*std::set_difference(set_intersection.begin(),
-                                set_intersection.end(),
-                                set_union.begin(),
-                                set_union.end(),
-                                back_inserter(set_difference));
-            return std::make_pair(set_difference, empty1);*/
+            /* By the invarianct that only one of the pair can be non-empty
+             * we know that the union is empty
+             */
             return std::make_pair(set_intersection, empty1);
           }
           else {
-            return std::make_pair(empty1, set_union); }
+            return std::make_pair(empty1, set_union);
+          }
         case NOT:
           left_pair = lhs->get_dependent_points_helper(point);
           return std::make_pair(left_pair.second, left_pair.first);
