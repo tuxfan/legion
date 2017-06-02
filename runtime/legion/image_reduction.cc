@@ -27,11 +27,6 @@ using namespace LegionRuntime::Accessor;
 namespace Legion {
     namespace Visualization {
         
-#ifndef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
-        ImageReduction::CompositeProjectionFunctor<0>* ImageReduction::mFunctor0;
-        ImageReduction::CompositeProjectionFunctor<1>* ImageReduction::mFunctor1;
-#endif
-        
         ImageReduction::ImageReduction(ImageSize imageSize, Context context, HighLevelRuntime *runtime) {
             mImageSize = imageSize;
             mContext = context;
@@ -42,7 +37,7 @@ namespace Legion {
             mBlendFunctionDestination = 0;
             createImage();
             partitionImageByDepth();
-            prepareImageForComposite();
+            partitionImageByScreenSpace();
             registerTasks();
         }
         
@@ -60,11 +55,18 @@ namespace Legion {
             LayoutConstraintRegistrar layoutRegistrar(imageFields(), "layout");
             LayoutConstraintID layoutConstraintID = mRuntime->register_layout(layoutRegistrar);
             
+            mScreenSpaceTaskID = mRuntime->generate_dynamic_task_id();
+            TaskVariantRegistrar screenSpaceRegistrar(mScreenSpaceTaskID, "screenSpaceTask");
+            screenSpaceRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
+            .add_layout_constraint_set(1/*index*/, layoutConstraintID);
+            mRuntime->register_task_variant<screen_space_task>(screenSpaceRegistrar);
+            mRuntime->attach_name(mScreenSpaceTaskID, "screenSpaceTask");
+            
             mCompositeTaskID = mRuntime->generate_dynamic_task_id();
             TaskVariantRegistrar compositeRegistrar(mCompositeTaskID, "compositeTask");
             compositeRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
-            .add_layout_constraint_set(1/*index*/, layoutConstraintID);
-            mRuntime->register_task_variant<composite_task>(compositeRegistrar);
+            .add_layout_constraint_set(0/*index*/, layoutConstraintID);
+            mRuntime->register_task_variant<int, composite_task>(compositeRegistrar);
             mRuntime->attach_name(mCompositeTaskID, "compositeTask");
             
             mDisplayTaskID = mRuntime->generate_dynamic_task_id();
@@ -101,7 +103,6 @@ namespace Legion {
         void ImageReduction::createImage() {
             Rect<IMAGE_REDUCTION_DIMENSIONS> imageBounds(mImageSize.origin(), mImageSize.upperBound() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES());
             mImageDomain = Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(imageBounds);
-            //TODO mRuntime->attach_name(mImageDomain, "image domain");
             IndexSpace pixels = mRuntime->create_index_space(mContext, mImageDomain);
             mRuntime->attach_name(pixels, "image index space");
             FieldSpace fields = imageFields();
@@ -113,80 +114,27 @@ namespace Legion {
         void ImageReduction::partitionImageByDepth() {
             Blockify<IMAGE_REDUCTION_DIMENSIONS> coloring(mImageSize.layerSize());
             IndexPartition imageDepthIndexPartition = mRuntime->create_index_partition(mContext, mImage.get_index_space(), coloring);
-            mRuntime->attach_name(imageDepthIndexPartition, "image depth index partition");
             mDepthPartition = mRuntime->get_logical_partition(mContext, mImage, imageDepthIndexPartition);
-            
+            mRuntime->attach_name(mDepthPartition, "image depth partition");
             Rect<IMAGE_REDUCTION_DIMENSIONS> depthBounds(mImageSize.origin(), mImageSize.numLayers() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES());
             mDepthDomain = Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(depthBounds);
-            //TODO mRuntime->attach_name(mDepthDomain, "depth domain");
         }
         
         
-        void ImageReduction::prepareCompositePartition() {
-            Blockify<IMAGE_REDUCTION_DIMENSIONS> coloring(mImageSize.fragmentSize());
-            IndexPartition imageCompositeIndexPartition = mRuntime->create_index_partition(mContext, mImage.get_index_space(), coloring);
-            mRuntime->attach_name(imageCompositeIndexPartition, "image composite index partition");
-            mCompositePartition = mRuntime->get_logical_partition(mContext, mImage, imageCompositeIndexPartition);
+        void ImageReduction::partitionImageByScreenSpace() {
+            Point<IMAGE_REDUCTION_DIMENSIONS> partitionSize = mImageSize.fragmentSize();
+            partitionSize.x[2] = mImageSize.depth;
+            Blockify<IMAGE_REDUCTION_DIMENSIONS> coloring(partitionSize);
+            IndexPartition imageCompositeScreenSpaceIndexPartition = mRuntime->create_index_partition(mContext, mImage.get_index_space(), coloring);
+            mScreenSpacePartition = mRuntime->get_logical_partition(mContext, mImage, imageCompositeScreenSpaceIndexPartition);
+            mRuntime->attach_name(mScreenSpacePartition, "image screen space partition");
+            Point<IMAGE_REDUCTION_DIMENSIONS> screenSpaceBounds = mImageSize.numFragments();
+            screenSpaceBounds.x[2] = 1;
+            Rect<IMAGE_REDUCTION_DIMENSIONS> screenSpaceRect(mImageSize.origin(), screenSpaceBounds - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES());
+            mScreenSpaceDomain = Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(screenSpaceRect);
         }
         
-        
-        
-        Domain ImageReduction::compositeDomain(int increment) {
-            Point<IMAGE_REDUCTION_DIMENSIONS> numTreeComposites = mImageSize.numFragments();
-            numTreeComposites.x[2] /= (NUM_FRAGMENTS_PER_COMPOSITE_TASK * increment);
-            Rect<IMAGE_REDUCTION_DIMENSIONS> compositeTreeBounds(mImageSize.origin(), numTreeComposites - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES());
-            return Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(compositeTreeBounds);
-            
-        }
-        
-        
-        int ImageReduction::numTreeLevels() {
-            int numTreeLevels = log2f(mImageSize.depth);
-            if(powf(2.0f, numTreeLevels) < mImageSize.depth) {
-                numTreeLevels++;
-            }
-            return numTreeLevels;
-        }
-        
-        
-        void ImageReduction::prepareCompositeDomains() {
-            int increment = 1;
-            
-            mCompositeTreeDomain = vector<Domain>();
-            for(int level = 0; level < numTreeLevels(); ++level) {
-                mCompositeTreeDomain.push_back(compositeDomain(increment));
-                increment *= 2;
-            }
-            
-            Rect<IMAGE_REDUCTION_DIMENSIONS> compositePipelineBounds(mImageSize.origin(), mImageSize.numFragments() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES());
-            mCompositePipelineDomain = Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(compositePipelineBounds);
-        }
-        
-        
-        
-        void ImageReduction::prepareProjectionFunctors() {
-            mFunctor0 = new CompositeProjectionFunctor<0>(1);
-#ifdef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
-            mRuntime->register_projection_functor(mFunctor0->functorID(), mFunctor0);
-#else
-            Legion::Runtime::preregister_projection_functor(mFunctor0->functorID(), mFunctor0);
-#endif
-            mFunctor1 = new CompositeProjectionFunctor<1>(2);
-#ifdef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
-            mRuntime->register_projection_functor(mFunctor1->functorID(), mFunctor1);
-#else
-            Legion::Runtime::preregister_projection_functor(mFunctor1->functorID(), mFunctor1);
-#endif
-        }
-        
-        void ImageReduction::prepareImageForComposite() {
-            prepareCompositePartition();
-            prepareCompositeDomains();
-#ifdef DYNAMIC_PROJECTION_FUNCTOR_REGISTRATION_WORKS_ON_MULTIPLE_NODES
-            prepareProjectionFunctors();
-#endif
-        }
-        
+
         
         void ImageReduction::addImageFieldsToRequirement(RegionRequirement &req) {
             req.add_field(FID_FIELD_R);
@@ -233,10 +181,16 @@ namespace Legion {
         }
         
         
-        FutureMap ImageReduction::launch_task_by_depth(unsigned taskID){
+        FutureMap ImageReduction::launch_task_by_depth(unsigned taskID, void *args, int argLen){
             ArgumentMap argMap;
-            IndexTaskLauncher depthLauncher(taskID, mDepthDomain, TaskArgument(&mImageSize, sizeof(ImageSize)), argMap);
-            //TODO mRuntime->attach_name(depthLauncher, "depth task launcher");
+            int totalArgLen = sizeof(mImageSize) + argLen;
+            char argsBuffer[totalArgLen];
+            memcpy(argsBuffer, &mImageSize, sizeof(mImageSize));
+            if(argLen > 0) {
+                memcpy(argsBuffer + sizeof(mImageSize), args, argLen);
+            }
+            
+            IndexTaskLauncher depthLauncher(taskID, mDepthDomain, TaskArgument(argsBuffer, totalArgLen), argMap);
             RegionRequirement req(mDepthPartition, 0, READ_WRITE, EXCLUSIVE, mImage);
             addImageFieldsToRequirement(req);
             depthLauncher.add_region_requirement(req);
@@ -255,6 +209,7 @@ namespace Legion {
             }
             return mDefaultPermutation;
         }
+        
         
         
         inline PhysicalRegion ImageReduction::compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, Point<IMAGE_REDUCTION_DIMENSIONS> origin0,
@@ -276,11 +231,9 @@ namespace Legion {
         
         
         
-        void ImageReduction::composite_task(const Task *task,
+        int ImageReduction::composite_task(const Task *task,
                                             const std::vector<PhysicalRegion> &regions,
                                             Context ctx, HighLevelRuntime *runtime) {
-            //            UsecTimer composite(describe_task(task) + " leaf:");
-            //            composite.start();
             CompositeArguments args = ((CompositeArguments*)task->local_args)[0];
             if(args.layer1 >= 0) {
                 PhysicalRegion fragment0 = regions[0];
@@ -301,72 +254,157 @@ namespace Legion {
                 
                 PhysicalRegion compositedResult = compositeTwoFragments(args, fragment0, origin0, fragment1, origin1);
             }
-            //            composite.stop();
-            //            cout << composite.to_string() << endl;
+            return (args.layer0);//output destination
         }
         
         
+    
         
-        void ImageReduction::addCompositeArgumentsToArgmap(CompositeArguments *&argsPtr, int taskZ, Legion::ArgumentMap &argMap, int layer0, int layer1) {
-            assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
-            Point<IMAGE_REDUCTION_DIMENSIONS> point = Point<IMAGE_REDUCTION_DIMENSIONS>::ZEROES();
-            point.x[2] = taskZ;
+        void ImageReduction::addSubregionRequirementToFragmentLauncher(TaskLauncher &launcher, DomainPoint origin, int layer, 
+                                                               Context context, Runtime* runtime, LogicalPartition partition, LogicalRegion parent) {
+            origin[2] = layer;
             
-            for(int fragment = 0; fragment < mImageSize.numFragmentsPerLayer; ++fragment) {
-                DomainPoint domainPoint = DomainPoint::from_point<IMAGE_REDUCTION_DIMENSIONS>(point);
-                *argsPtr = (CompositeArguments){ mImageSize, point.x[0], point.x[1], layer0, layer1, mDepthFunction, mBlendFunctionSource, mBlendFunctionDestination };
-                argMap.set_point(domainPoint, TaskArgument(argsPtr, sizeof(CompositeArguments)));
-                point = mImageSize.incrementFragment(point);
-            }
-        }
-        
-        
-        void ImageReduction::addRegionRequirementToCompositeLauncher(Legion::IndexTaskLauncher &launcher, int projectionFunctorID, PrivilegeMode privilege, CoherenceProperty coherence) {
-            RegionRequirement req(mCompositePartition, projectionFunctorID, privilege, coherence, mImage);
+            cout << "require subregion " << origin << endl;
+            
+            LogicalRegion subregion = runtime->get_logical_subregion_by_color(context, partition, origin);
+            RegionRequirement req(subregion, READ_WRITE, EXCLUSIVE, parent);
             addImageFieldsToRequirement(req);
             launcher.add_region_requirement(req);
         }
         
         
-        FutureMap ImageReduction::launchTreeLevel(int level, int ordering[]) {
-            ArgumentMap argMap;
-            int increment = powf(2.0f, level);
-            int numTasks = mImageSize.depth / (increment * NUM_FRAGMENTS_PER_COMPOSITE_TASK);
-            CompositeArguments args[numTasks * mImageSize.numFragmentsPerLayer];
-            CompositeArguments *argsPtr = args;
+        Future ImageReduction::launchCompositeTask(DomainPoint origin, int taskNumber, ScreenSpaceArguments args, FutureSet futures, int layer0, int layer1,
+                                                   Context context, Runtime* runtime, LogicalPartition fragmentPartition) {
+            CompositeArguments compositeArgs = { args.imageSize, origin[0], origin[1], layer0, layer1,
+            args.depthFunction, args.blendFunctionSource, args.blendFunctionDestination };
+            TaskLauncher compositeLauncher(args.compositeTaskID, TaskArgument(&compositeArgs, sizeof(compositeArgs)));
+            addSubregionRequirementToFragmentLauncher(compositeLauncher, origin, layer0, context, runtime, fragmentPartition, args.image);
+            addSubregionRequirementToFragmentLauncher(compositeLauncher, origin, layer1, context, runtime, fragmentPartition, args.image);
+            Future future = runtime->execute_task(context, compositeLauncher);
+            return future;
+        }
+        
+        
+        ImageReduction::FutureSet ImageReduction::launchTreeReduction(ScreenSpaceArguments args, int *ordering, int treeLevel, int maxTreeLevel, DomainPoint origin,
+                                                                      Context context, Runtime* runtime, LogicalPartition fragmentPartition) {
+
+            FutureSet futures;
+            if(treeLevel < maxTreeLevel - 1) {
+                futures = launchTreeReduction(args, ordering, treeLevel + 1, maxTreeLevel, origin, context, runtime, fragmentPartition);
+            }
+
+            int numTasks = (int)(powf(2.0f, treeLevel));
+            FutureSet result = FutureSet();
+            for(int i = 0; i < numTasks; ++i) {
+                int layer0;
+                int layer1;
+                if(treeLevel < maxTreeLevel - 1) {
+                    layer0 = futures[i * NUM_FRAGMENTS_PER_COMPOSITE_TASK].get_result<int>();
+                    layer1 = futures[i * NUM_FRAGMENTS_PER_COMPOSITE_TASK + 1].get_result<int>();
+                } else {
+                    layer0 = ordering[i * NUM_FRAGMENTS_PER_COMPOSITE_TASK];
+                    layer1 = ordering[i * NUM_FRAGMENTS_PER_COMPOSITE_TASK + 1];
+                }
+                Future future = launchCompositeTask(origin, i, args, futures, layer0, layer1, context, runtime, fragmentPartition);
+                result.push_back(future);
+            }
+            return result;
+        }
+        
+        
+        void ImageReduction::launchPipelineReduction(ScreenSpaceArguments args, int *ordering) {
             
-            for(int i = 0; i < numTasks; i++) {
-                int taskZ = i;
-                int order0 = i * NUM_FRAGMENTS_PER_COMPOSITE_TASK;
-                int layer0 = ordering[order0];
-                int order1 = order0 + increment;
-                int layer1 = (order1 < mImageSize.depth) ? ordering[order1] : -1;
-                addCompositeArgumentsToArgmap(argsPtr, taskZ, argMap, layer0, layer1);
+        }
+        
+        
+        int ImageReduction::numTreeLevels(ImageSize imageSize) {
+            int numTreeLevels = log2f(imageSize.depth);
+            if(powf(2.0f, numTreeLevels) < imageSize.depth) {
+                numTreeLevels++;
+            }
+            return numTreeLevels;
+        }
+
+        int ImageReduction::subtreeHeight(ImageSize imageSize) {
+            const int totalLevels = numTreeLevels(imageSize);
+            const int MAX_LEVELS_PER_SUBTREE = 7; // 128 tasks per subtree
+            return (totalLevels < MAX_LEVELS_PER_SUBTREE) ? totalLevels : MAX_LEVELS_PER_SUBTREE;
+        }
+        
+        LogicalPartition ImageReduction::partitionScreenSpaceByFragment(DomainPoint origin, Runtime* runtime, Context context, LogicalRegion parent, ImageSize imageSize) {
+            
+            if(runtime->has_logical_partition_by_color(context, parent, origin)) {
+                return runtime->get_logical_partition_by_color(parent, origin);
             }
             
-            Domain launchDomain = mCompositeTreeDomain[level];
-            IndexTaskLauncher treeLauncher(mCompositeTaskID, launchDomain, TaskArgument(NULL, 0), argMap);
-            addRegionRequirementToCompositeLauncher(treeLauncher, mFunctor0->functorID(), READ_WRITE, EXCLUSIVE);
-            addRegionRequirementToCompositeLauncher(treeLauncher, mFunctor1->functorID(), READ_ONLY, SIMULTANEOUS);
-            assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
+            cout << "making new partition for point " << origin << endl;
             
-            FutureMap futures = mRuntime->execute_index_space(mContext, treeLauncher);
-            return futures;
+            DomainPoint extent = origin;
+            extent[2] = imageSize.depth - 1;
+            Rect<IMAGE_REDUCTION_DIMENSIONS> colorBounds(origin.get_point<IMAGE_REDUCTION_DIMENSIONS>(), extent.get_point<IMAGE_REDUCTION_DIMENSIONS>());
+            const Domain colorSpace = Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(colorBounds);
+            
+            Blockify<IMAGE_REDUCTION_DIMENSIONS> coloring(imageSize.fragmentSize());
+            const PointColoring coloring2;
+
+            IndexPartition imageCompositeFragmentIndexPartition = runtime->create_index_partition(context, parent.get_index_space(), colorSpace, coloring2, COMPUTE_KIND, origin);
+            LogicalPartition fragmentPartition = runtime->get_logical_partition(context, parent, imageCompositeFragmentIndexPartition);
+            char buffer[256];
+            sprintf(buffer, "fragment partition at screen space (%lld, %lld, %lld)", origin[0], origin[1], origin[2]);
+            runtime->attach_name(fragmentPartition, buffer);
+            return fragmentPartition;
+        }
+
+        
+
+        
+        void ImageReduction::screen_space_task(const Task *task,
+                                               const std::vector<PhysicalRegion> &regions,
+                                               Context ctx, HighLevelRuntime *runtime) {
+            ScreenSpaceArguments args = ((ScreenSpaceArguments*)task->args)[0];
+            int* ordering = (int*)((char*)task->args + sizeof(args));
+            
+            LogicalPartition fragmentPartition = partitionScreenSpaceByFragment(task->index_point, runtime, ctx, args.image, args.imageSize);
+            
+            if(args.isAssociative) {
+                launchTreeReduction(args, ordering, 0, subtreeHeight(args.imageSize), task->index_point, ctx, runtime, fragmentPartition);
+            } else {
+                launchPipelineReduction(args, ordering);
+            }
+            
         }
         
         
         
-        FutureMap ImageReduction::launchCompositeTaskTree(int ordering[]) {
-            FutureMap futures;
-            for(int level = 0; level < numTreeLevels(); ++level) {
-                futures = launchTreeLevel(level, ordering);
-            }
+        char* ImageReduction::screenSpaceArguments(int ordering[], bool isAssociative) {
+            int orderingSize = sizeof(ordering[0]) * mImageSize.depth;
+            int totalSize = sizeof(ScreenSpaceArguments) + orderingSize;
+            ScreenSpaceArguments args = { mImageSize, totalSize, isAssociative, mCompositeTaskID,
+            mDepthFunction, mBlendFunctionSource, mBlendFunctionDestination, mImage };
+            char *result = new char[totalSize];
+            memcpy(result, &args, sizeof(args));
+            memcpy(result + sizeof(args), ordering, orderingSize);
+            return result;
+        }
+    
+    
+        FutureMap ImageReduction::launchScreenSpaceTasks(int ordering[], bool isAssociative) {
+            ArgumentMap argMap;
+            char* args = screenSpaceArguments(ordering, isAssociative);
+            ScreenSpaceArguments* screenSpaceArgs = (ScreenSpaceArguments*)args;
+            IndexTaskLauncher screenSpaceLauncher(mScreenSpaceTaskID, mScreenSpaceDomain, TaskArgument(args, screenSpaceArgs->totalSize), argMap);
+            RegionRequirement req(mScreenSpacePartition, 0, READ_WRITE, EXCLUSIVE, mImage);
+            addImageFieldsToRequirement(req);
+            screenSpaceLauncher.add_region_requirement(req);
+            
+            FutureMap futures = mRuntime->execute_index_space(mContext, screenSpaceLauncher);
+            delete [] args;
             return futures;
         }
         
         
         FutureMap ImageReduction::reduceAssociative(int ordering[]) {
-            return launchCompositeTaskTree(ordering);
+            return launchScreenSpaceTasks(ordering, true);
         }
         
         FutureMap ImageReduction::reduce_associative_commutative(){
@@ -377,31 +415,9 @@ namespace Legion {
             return reduceAssociative(ordering);
         }
         
-        FutureMap ImageReduction::launchCompositeTaskPipeline(int ordering[]) {
-            ArgumentMap argMap;
-            int taskDepth = mImageSize.depth / NUM_FRAGMENTS_PER_COMPOSITE_TASK;
-            CompositeArguments args[taskDepth * mImageSize.numFragmentsPerLayer];
-            CompositeArguments *argsPtr = args;
-            
-            for(int i = mImageSize.depth; i > 1; i--) {
-                assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
-                int layer0 = i - NUM_FRAGMENTS_PER_COMPOSITE_TASK;
-                int layer1 = layer0 + 1;
-                int taskZ = layer0;
-                addCompositeArgumentsToArgmap(argsPtr, taskZ, argMap, layer0, layer1);
-            }
-            
-            IndexTaskLauncher pipelineLauncher(mCompositeTaskID, mCompositePipelineDomain, TaskArgument(NULL, 0), argMap);
-            addRegionRequirementToCompositeLauncher(pipelineLauncher, mFunctor0->functorID(), READ_WRITE, EXCLUSIVE);
-            addRegionRequirementToCompositeLauncher(pipelineLauncher, mFunctor1->functorID(), READ_ONLY, SIMULTANEOUS);
-            assert(NUM_FRAGMENTS_PER_COMPOSITE_TASK == 2);
-            
-            FutureMap futures = mRuntime->execute_index_space(mContext, pipelineLauncher);
-            return futures;
-        }
         
         FutureMap ImageReduction::reduceNonassociative(int ordering[]) {
-            return launchCompositeTaskPipeline(ordering);
+            return launchScreenSpaceTasks(ordering, false);
         }
         
         FutureMap ImageReduction::reduce_nonassociative_commutative(){

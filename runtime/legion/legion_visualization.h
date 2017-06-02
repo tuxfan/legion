@@ -64,8 +64,8 @@ namespace Legion {
             Point<IMAGE_REDUCTION_DIMENSIONS> fragmentSize() const{
                 Point<IMAGE_REDUCTION_DIMENSIONS> result;
                 if(numFragmentsPerLayer > height) {
-                    assert(width % numFragmentsPerLayer == 0);
-                    result.x[0] = width / numFragmentsPerLayer;
+                    assert((width * height) % numFragmentsPerLayer == 0);
+                    result.x[0] = (width * height) / numFragmentsPerLayer;
                     result.x[1] = 1;
                     result.x[2] = 1;
                 } else {
