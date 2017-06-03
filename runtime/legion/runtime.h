@@ -1855,6 +1855,10 @@ namespace Legion {
                                        ProjectionFunctor *func);
       ProjectionFunction* find_projection_function(ProjectionID pid);
     public:
+      void register_ordering_functor(OrderingID oid,
+                                     OrderingFunctor *func);
+      OrderingFunctor* find_ordering_functor(OrderingID oid);
+    public:
       void attach_semantic_information(TaskID task_id, SemanticTag,
                                    const void *buffer, size_t size, 
                                    bool is_mutable, bool send_to_owner = true);
@@ -2679,6 +2683,8 @@ namespace Legion {
     protected:
       Reservation projection_lock;
       std::map<ProjectionID,ProjectionFunction*> projection_functions;
+    protected:
+      std::map<OrderingID,OrderingFunctor*> ordering_functors;
     protected:
       Reservation group_lock;
       LegionMap<uint64_t,LegionDeque<ProcessorGroupInfo>::aligned,

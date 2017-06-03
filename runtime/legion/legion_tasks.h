@@ -567,6 +567,7 @@ namespace Legion {
       bool sliced;
     public:
       Domain internal_domain; // twarsz change this back to protected
+      OrderingID oid; // twarsz change this back to protected
     protected:
       ReductionOpID redop;
       const ReductionOp *reduction_op;

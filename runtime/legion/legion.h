@@ -1266,6 +1266,15 @@ namespace Legion {
                         bool must = false,
                         MapperID id = 0,
                         MappingTagID tag = 0);
+      IndexTaskLauncher(Processor::TaskFuncID tid,
+                        Domain domain,
+                        TaskArgument global_arg,
+                        ArgumentMap map,
+                        OrderingID oid,
+                        Predicate pred = Predicate::TRUE_PRED,
+                        bool must = false,
+                        MapperID id = 0,
+                        MappingTagID tag = 0);
     public:
       inline IndexSpaceRequirement&
                   add_index_requirement(const IndexSpaceRequirement &req);
@@ -1299,6 +1308,7 @@ namespace Legion {
       bool                               must_parallelism;
       MapperID                           map_id;
       MappingTagID                       tag;
+      OrderingID                         oid;
     public:
       // If the predicate is set to anything other than
       // Predicate::TRUE_PRED, then the application must 
@@ -2470,6 +2480,27 @@ namespace Legion {
       bool leaf;
       bool inner;
       bool idempotent;
+    };
+
+    /**
+     * \interface OrderingFunctor
+     * An ordering function to specify the order of tasks in a
+     * dependent index space launch
+     */
+    class OrderingFunctor {
+    public:
+      OrderingFunctor(void);
+      virtual ~OrderingFunctor(void);
+    public:
+      /**
+       * The only method of the class that needs to be overridden -
+       * takes in a domain point and outputs a value.  The points
+       * in the index launch with dependencies will be run with the
+       * lower value point running first
+       * @param point the point being projected
+       * @return int order
+       */
+      virtual int get_order_value(const DomainPoint &point)=0;
     };
 
     /**
@@ -5278,6 +5309,15 @@ namespace Legion {
        */
       static void preregister_projection_functor(ProjectionID pid,
                                                  ProjectionFunctor *functor);
+
+      /**
+       * Register an ordering functor for defining the order in a structured
+       * index space launch.
+       * @param oid the ordering ID to use for the registration
+       * @param functor the object to register for defining the ordering
+       */
+      void register_ordering_functor(OrderingID oid,
+                                     OrderingFunctor *functor);
     public:
       //------------------------------------------------------------------------
       // Start-up Operations

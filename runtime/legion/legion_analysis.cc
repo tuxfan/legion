@@ -2242,7 +2242,8 @@ namespace Legion {
         DomainPoint &point, Domain &bounding_domain)
     //--------------------------------------------------------------------------
     {
-      std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> > constraint_pairs = get_dependent_points_helper(point);
+      std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> > constraint_pairs =
+          get_dependent_points_helper(point);
       std::vector<DomainPoint> ret_vec;
 #ifdef DEBUG_LEGION
       assert(constraint_pairs.first.size() == 0 || constraint_pairs.second.size() == 0);
@@ -2264,9 +2265,9 @@ namespace Legion {
           if (dim == 3) {
             new_point[2] = solver_helper.second_value;
           }
-        }
-        if (new_point != point) {
-          ret_vec.push_back(new_point);
+          if (new_point != point) {
+            ret_vec.push_back(new_point);
+          }
         }
       }
       else {
@@ -2288,7 +2289,6 @@ namespace Legion {
       std::vector<SolutionSet> set_difference;
       std::vector<SolutionSet> empty1;
       std::vector<SolutionSet> empty2;
-      SolutionSet new_constraint;
       std::vector<SolutionSet> new_constraint_vec;
       switch(constraint_type)
       {
@@ -2332,8 +2332,8 @@ namespace Legion {
           left_pair = lhs->get_dependent_points_helper(point);
           return std::make_pair(left_pair.second, left_pair.first);
         case EQ:
-          new_constraint = solve_linear(point);
-          new_constraint_vec.push_back(new_constraint);
+          new_constraint_vec.push_back(solve_linear(point, true));
+          new_constraint_vec.push_back(solve_linear(point, false));
           return std::make_pair(new_constraint_vec, empty1);
           //evaluate the point.
           //solve for the relevant domain points
@@ -2341,8 +2341,8 @@ namespace Legion {
           //return that as the "yes" vector
           break;
         case NEQ:
-          new_constraint = solve_linear(point);
-          new_constraint_vec.push_back(new_constraint);
+          new_constraint_vec.push_back(solve_linear(point, true));
+          new_constraint_vec.push_back(solve_linear(point, false));
           return std::make_pair(empty1, new_constraint_vec);
           //evaluate the point.
           //solve for the relevant domain points
@@ -2357,7 +2357,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     SolutionSet ProjectionAnalysisConstraint::solve_linear(
-        DomainPoint &point)
+        DomainPoint &point, bool subst_to_lhs)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
@@ -2372,11 +2372,21 @@ namespace Legion {
       assert(rhs_exp->lhs->lhs->expression_type == CONST);
       assert(rhs_exp->lhs->rhs->expression_type == VAR);
 #endif
-      long int value = lhs_exp->evaluate(point);
-      value = value - rhs_exp->rhs->value;
-      value = value / rhs_exp->lhs->lhs->value;
+      ProjectionExpression* subst_exp;
+      ProjectionExpression* solve_exp;
+      if (subst_to_lhs) {
+        subst_exp = lhs_exp;
+        solve_exp = rhs_exp;
+      }
+      else {
+        subst_exp = rhs_exp;
+        solve_exp = lhs_exp;
+      }
+      long int value = subst_exp->evaluate(point);
+      value = value - solve_exp->rhs->value;
+      value = value / solve_exp->lhs->lhs->value;
       SolutionSet solver_helper;
-      int var = lhs_exp->lhs->rhs->value;
+      int var = solve_exp->lhs->rhs->value;
       switch (var) {
         case 0:
           solver_helper.first_value = value;

@@ -501,7 +501,7 @@ namespace Legion {
       private:
         std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> >
             get_dependent_points_helper(DomainPoint &point);
-        SolutionSet solve_linear(DomainPoint &point);
+        SolutionSet solve_linear(DomainPoint &point, bool subst_to_lhs);
         std::vector<SolutionSet> intersect_helper(std::vector<SolutionSet>,
           std::vector<SolutionSet>);
         std::vector<SolutionSet> union_helper(std::vector<SolutionSet>,

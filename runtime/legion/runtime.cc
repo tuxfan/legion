@@ -12694,6 +12694,43 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    void Runtime::register_ordering_functor(OrderingID oid,
+                                            OrderingFunctor *functor)
+    //--------------------------------------------------------------------------
+    {
+      std::map<OrderingID,OrderingFunctor*>::
+        const_iterator finder = ordering_functors.find(oid);
+      if (finder != ordering_functors.end())
+      {
+        log_run.error("ERROR: OrderingID %d has already been used in "
+                                    "the ordering table\n", oid);
+#ifdef DEBUG_LEGION
+        assert(false);
+#endif
+        exit(ERROR_DUPLICATE_ORDERING_ID);
+      }
+      ordering_functors[oid] = functor;
+    }
+
+    //--------------------------------------------------------------------------
+    OrderingFunctor* Runtime::find_ordering_functor(OrderingID oid)
+    //--------------------------------------------------------------------------
+    {
+      std::map<OrderingID,OrderingFunctor*>::
+        const_iterator finder = ordering_functors.find(oid);
+      if (finder == ordering_functors.end())
+      {
+        log_run.warning("Unable to find registered ordering functor "
+                              "ID %d.", oid);
+#ifdef DEBUG_LEGION
+        assert(false);
+#endif
+        exit(ERROR_INVALID_PROJECTION_ID);
+      }
+      return finder->second;
+    }
+
+    //--------------------------------------------------------------------------
     void Runtime::attach_semantic_information(TaskID task_id, SemanticTag tag,
            const void *buffer, size_t size, bool is_mutable, bool send_to_owner)
     //--------------------------------------------------------------------------

@@ -1368,7 +1368,7 @@ namespace Legion {
       : task_id(0), launch_domain(Domain::NO_DOMAIN), 
         global_arg(TaskArgument()), argument_map(ArgumentMap()), 
         predicate(Predicate::TRUE_PRED), must_parallelism(false), 
-        map_id(0), tag(0), static_dependences(NULL), enable_inlining(false),
+        map_id(0), tag(0), oid(0), static_dependences(NULL), enable_inlining(false),
         independent_requirements(false), silence_warnings(false)
     //--------------------------------------------------------------------------
     {
@@ -1381,10 +1381,28 @@ namespace Legion {
                                      Predicate pred /*= Predicate::TRUE_PRED*/,
                                      bool must /*=false*/, MapperID mid /*=0*/,
                                      MappingTagID t /*=0*/)
+      : task_id(tid), launch_domain(dom), global_arg(global),
+        argument_map(map), predicate(pred), must_parallelism(must),
+        map_id(mid), tag(t), oid(0), static_dependences(NULL),
+        enable_inlining(false), independent_requirements(false),
+        silence_warnings(false)
+    //--------------------------------------------------------------------------
+    {
+    }
+
+    //--------------------------------------------------------------------------
+    IndexTaskLauncher::IndexTaskLauncher(Processor::TaskFuncID tid, Domain dom,
+                                     TaskArgument global,
+                                     ArgumentMap map,
+                                     OrderingID oid,
+                                     Predicate pred /*= Predicate::TRUE_PRED*/,
+                                     bool must /*=false*/, MapperID mid /*=0*/,
+                                     MappingTagID t /*=0*/)
       : task_id(tid), launch_domain(dom), global_arg(global), 
         argument_map(map), predicate(pred), must_parallelism(must),
-        map_id(mid), tag(t), static_dependences(NULL), enable_inlining(false),
-        independent_requirements(false), silence_warnings(false)
+        map_id(mid), tag(t), oid(oid), static_dependences(NULL),
+        enable_inlining(false), independent_requirements(false),
+        silence_warnings(false)
     //--------------------------------------------------------------------------
     {
     }
@@ -2188,6 +2206,22 @@ namespace Legion {
                                          bool in /*=false*/,
                                          bool idem /*=false*/)
       : leaf(l), inner(in), idempotent(idem)
+    //--------------------------------------------------------------------------
+    {
+    }
+
+    /////////////////////////////////////////////////////////////
+    // OrderingFunctor
+    /////////////////////////////////////////////////////////////
+
+    //--------------------------------------------------------------------------
+    OrderingFunctor::OrderingFunctor(void)
+    //--------------------------------------------------------------------------
+    {
+    }
+
+    //--------------------------------------------------------------------------
+    OrderingFunctor::~OrderingFunctor(void)
     //--------------------------------------------------------------------------
     {
     }
@@ -4230,6 +4264,14 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       Internal::Runtime::preregister_projection_functor(pid, func);
+    }
+
+    //--------------------------------------------------------------------------
+    void Runtime::register_ordering_functor(OrderingID oid,
+                                            OrderingFunctor *func)
+    //--------------------------------------------------------------------------
+    {
+      runtime->register_ordering_functor(oid, func);
     }
 
     //--------------------------------------------------------------------------

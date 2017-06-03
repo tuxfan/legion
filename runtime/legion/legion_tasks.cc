@@ -5999,7 +5999,7 @@ namespace Legion {
         // get it's mapping event from the index task, or create one if it
         // doesn't exist already
         // add that to our mapping constraints
-        std::set<RtEvent> map_preconditionss;
+        std::set<RtEvent> map_preconditions;
         for (unsigned idx1 = 0; idx1 < slice_owner->index_owner->constraint_equations.size();
             idx1++) {
           ProjectionAnalysisConstraint* constraintEq = slice_owner->index_owner->constraint_equations[idx1];
@@ -6007,23 +6007,24 @@ namespace Legion {
           /*std::vector<DomainPoint> dependentPoints =
               constraintEq->get_dependent_points2(index_point,
               slice_owner->index_owner->internal_domain);*/
+          // TODO here - change the get_dependent_points function to return all of the points (use both sides of the equation, and then use the ordering function to only track the points that we actually depend on.
           std::vector<DomainPoint> dependentPoints =
               constraintEq->get_dependent_points(index_point,
               slice_owner->index_owner->internal_domain);
-          /*std::vector<DomainPoint> dependentPoints;
-          dependentPoints.reserve(2);
-          const LegionRuntime::Arrays::Point<2> onex = LegionRuntime::Arrays::make_point(1,0);
-          const LegionRuntime::Arrays::Point<2> oney = LegionRuntime::Arrays::make_point(0,1);
-          LegionRuntime::Arrays::Point<2> dep_x = index_point.get_point<2>() + onex;
-          LegionRuntime::Arrays::Point<2> dep_y = index_point.get_point<2>() + oney;
-          dependentPoints.push_back(DomainPoint::from_point<2>(dep_x));
-          dependentPoints.push_back(DomainPoint::from_point<2>(dep_y));*/
+          OrderingFunctor *ord_func = runtime->find_ordering_functor(slice_owner->index_owner->oid);
+          int point_val = ord_func->get_order_value(index_point);
           for (unsigned idx2 = 0; idx2 < dependentPoints.size(); idx2++) {
             DomainPoint dep_point = dependentPoints[idx2];
-            map_preconditionss.insert(slice_owner->index_owner->point_task_events[dep_point]);
+            int dep_point_val = ord_func->get_order_value(dep_point);
+            if (dep_point_val < point_val) {
+              map_preconditions.insert(slice_owner->index_owner->point_task_events[dep_point]);
+            }
+#ifdef DEBUG_LEGION
+            assert(dep_point_val != point_val);
+#endif
           }
         }
-        RtEvent done = Runtime::merge_events(map_preconditionss);
+        RtEvent done = Runtime::merge_events(map_preconditions);
         return done;
       }
       return RtEvent::NO_RT_EVENT;
@@ -6542,6 +6543,7 @@ namespace Legion {
       is_index_space = true;
       index_domain = launcher.launch_domain;
       internal_domain = launcher.launch_domain;
+      oid = launcher.oid;
       need_intra_task_alias_analysis = !launcher.independent_requirements;
       initialize_base_task(ctx, track, launcher.static_dependences,
                            launcher.predicate, task_id);
@@ -6608,6 +6610,7 @@ namespace Legion {
       is_index_space = true;
       index_domain = launcher.launch_domain;
       internal_domain = launcher.launch_domain;
+      oid = launcher.oid;
       need_intra_task_alias_analysis = !launcher.independent_requirements;
       redop = redop_id;
       reduction_op = Runtime::get_reduction_op(redop);

@@ -53,6 +53,10 @@ enum ProjIDs {
   ID_PROJ = 3,
 };
 
+enum OrderIDs {
+  FROM_TOP_RIGHT = 1,
+};
+
 struct RectDims {
   int side_length_x;
   int side_length_y;
@@ -61,6 +65,21 @@ struct RectDims {
 struct ComputeArgs {
   int angle;
   int parallel_length;
+};
+
+class FromTopRightOrderFunctor : public OrderingFunctor
+{
+  public:
+    FromTopRightOrderFunctor()
+      : OrderingFunctor() {}
+
+    ~FromTopRightOrderFunctor() {}
+
+    virtual int get_order_value(const DomainPoint &point)
+    {
+      assert(point.get_dim() == 2);
+      return -point[0] - point[1];
+    }
 };
 
 class IDProjectionFunctor : public StructuredProjectionFunctor
@@ -333,7 +352,7 @@ void top_level_task(const Task *task,
   for (int j = 0; j < num_iterations; j++) {
     if (angle == 225) {
       IndexLauncher compute_launcher(COMPUTE_TASK_ANGLE_ID, launch_domain,
-           TaskArgument(NULL, 0), arg_map);
+           TaskArgument(NULL, 0), arg_map, FROM_TOP_RIGHT);
       compute_launcher.add_region_requirement(
           RegionRequirement(grid_lp, X_PROJ,
                             READ_ONLY, EXCLUSIVE, top_lr));
@@ -361,7 +380,7 @@ void top_level_task(const Task *task,
       compute_args.angle = angle;
       compute_args.parallel_length = parallel_size;
       IndexLauncher compute_launcher(COMPUTE_TASK_AXIS_ALIGNED_ID, launch_domain,
-           TaskArgument(&compute_args, sizeof(ComputeArgs)), arg_map);
+           TaskArgument(&compute_args, sizeof(ComputeArgs)), arg_map, FROM_TOP_RIGHT);
       compute_launcher.add_region_requirement(
           RegionRequirement(grid_lp, proj_id,
                             READ_ONLY, EXCLUSIVE, top_lr));
@@ -656,6 +675,7 @@ void registration_callback(Machine machine, HighLevelRuntime *rt,
   rt->register_projection_functor(X_PROJ, new XDiffProjectionFunctor(rt));
   rt->register_projection_functor(Y_PROJ, new YDiffProjectionFunctor(rt));
   rt->register_projection_functor(ID_PROJ, new IDProjectionFunctor(rt));
+  rt->register_ordering_functor(FROM_TOP_RIGHT, new FromTopRightOrderFunctor());
 }
 
 int main(int argc, char **argv)
