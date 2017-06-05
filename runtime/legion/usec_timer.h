@@ -19,14 +19,15 @@
 
 #include <time.h>
 
+#include "timers.h"
+
 using namespace std;
 
 #ifdef __APPLE__ ///////////////////////////////////////////////
 
 class UsecTimer {
 public:
-//    typedef struct timespec Time;
-//    static const clockid_t CLOCK = CLOCK_MONOTONIC;
+    typedef double Time;
     
     UsecTimer(string description){
         mDescription = description;
@@ -36,21 +37,13 @@ public:
     }
     ~UsecTimer(){}
     void start(){
-//        if(clock_gettime(CLOCK, &mStart)) {
-//            cerr << "error from clock_gettime" << endl;
-//            return;
-//        }
+      mStart = Realm::Clock::current_time();
         mStarted = true;
     }
     void stop(){
         if(mStarted) {
-//            Time end;
-//            if(clock_gettime(CLOCK, &end)) {
-//                cerr << "error from clock_gettime" << endl;
-//                return;
-//            }
-//            double elapsedSeconds = timespecToSeconds(&end) - timespecToSeconds(&mStart);
-//            mCumulativeElapsedSeconds += elapsedSeconds;
+          Time end = Realm::Clock::current_time();
+            mCumulativeElapsedSeconds += end - mStart;
             mNumSamples++;
             mStarted = false;
         }
@@ -78,7 +71,7 @@ private:
     }
     
     bool mStarted;
-//    Time mStart;
+    Time mStart;
     string mDescription;
     double mCumulativeElapsedSeconds;
     int mNumSamples;
