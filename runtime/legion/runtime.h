@@ -1848,9 +1848,13 @@ namespace Legion {
       static MapperManager* wrap_mapper(Runtime *runtime, Mapper *mapper,
                                         MapperID map_id, Processor proc);
     public:
-      void register_projection_functor(ProjectionID pid,
+      ProjectionID generate_dynamic_projection_id(void);
+      static ProjectionID& get_current_static_projection_id(void);
+      static ProjectionID generate_static_projection_id(void);
+      void register_projection_functor(ProjectionID pid, 
                                        ProjectionFunctor *func,
-                                       bool need_zero_check = true);
+                                       bool need_zero_check = true,
+                                       bool was_preregistered = false);
       static void preregister_projection_functor(ProjectionID pid,
                                        ProjectionFunctor *func);
       ProjectionFunction* find_projection_function(ProjectionID pid);
@@ -2068,6 +2072,10 @@ namespace Legion {
       void send_remote_context_request(AddressSpaceID target, Serializer &rez);
       void send_remote_context_response(AddressSpaceID target, Serializer &rez);
       void send_remote_context_free(AddressSpaceID target, Serializer &rez);
+      void send_remote_context_physical_request(AddressSpaceID target, 
+                                                Serializer &rez);
+      void send_remote_context_physical_response(AddressSpaceID target,
+                                                 Serializer &rez);
       void send_version_owner_request(AddressSpaceID target, Serializer &rez);
       void send_version_owner_response(AddressSpaceID target, Serializer &rez);
       void send_version_state_response(AddressSpaceID target, Serializer &rez);
@@ -2238,6 +2246,9 @@ namespace Legion {
                                          AddressSpaceID source);
       void handle_remote_context_response(Deserializer &derez);
       void handle_remote_context_free(Deserializer &derez);
+      void handle_remote_context_physical_request(Deserializer &derez,
+                                                  AddressSpaceID source);
+      void handle_remote_context_physical_response(Deserializer &derez);
       void handle_version_owner_request(Deserializer &derez, 
                                         AddressSpaceID source);
       void handle_version_owner_response(Deserializer &derez);
@@ -2680,6 +2691,7 @@ namespace Legion {
       unsigned unique_constraint_id;
       unsigned unique_task_id;
       unsigned unique_mapper_id;
+      unsigned unique_projection_id;
     protected:
       Reservation projection_lock;
       std::map<ProjectionID,ProjectionFunction*> projection_functions;
@@ -2939,6 +2951,8 @@ namespace Legion {
       static bool program_order_execution;
     public:
       static unsigned num_profiling_nodes;
+      static const char* serializer_type;
+      static const char* prof_logfile;
     public:
       static inline ApEvent merge_events(ApEvent e1, ApEvent e2);
       static inline ApEvent merge_events(ApEvent e1, ApEvent e2, ApEvent e3);
