@@ -68,7 +68,14 @@ namespace Legion {
     public:
       
       typedef float SimulationBoundsCoordinate;
-      static void preregisterSimulationBounds(SimulationBoundsCoordinate *bounds, int numBoundsX, int numBoundsY, int numBoundsZ);
+      /**
+       * Preregister an array of simulation bounds in 3D
+       * Be sure to call this *before* starting the Legion runtime.
+       *
+       * @param bounds array of 6xGLfloatxnumNodes
+       * @param numBounds number of simulation elements
+       */
+      static void preregisterSimulationBounds(SimulationBoundsCoordinate *bounds, int numBounds);
       
       ImageReduction(){}
       /**
@@ -119,6 +126,15 @@ namespace Legion {
        * @param t integer timestep
        */
       Future display(int t);
+      
+      /**
+       * Provide the camera view matrix, typically from gluLookAt
+       *
+       * @param view a 4x4 homogeneous view matrix, typically from gluLookAt
+       */
+      void set_view_matrix(GLfloat view[]) {
+        memcpy(mViewMatrix, view, sizeof(mViewMatrix));
+      }
       
       /**
        * Define a blend operator to use in subsequent reductions.
@@ -184,7 +200,7 @@ namespace Legion {
                                const std::vector<PhysicalRegion> &regions,
                                Context ctx, Runtime *runtime);
       
-    private:
+    protected:
       
       class AccessorProjectionFunctor : public ProjectionFunctor {
       public:
@@ -194,13 +210,16 @@ namespace Legion {
           mID = functorID;
         }
         
-        virtual LogicalRegion project(Context context, Task *task,
-                                      unsigned index,
+        virtual LogicalRegion project(const Mappable *mappable, unsigned index,
                                       LogicalPartition upperBound,
                                       const DomainPoint &point) {
-          LogicalRegion result = Legion::Runtime::get_runtime()->get_logical_subregion_by_color(context, upperBound, newPoint(point));
+          
+          std::cout << "accessor functor " << point << " remap to " << newPoint(point) << std::endl;
+          
+          LogicalRegion result = Legion::Runtime::get_runtime()->get_logical_subregion_by_color(upperBound, newPoint(point));
           return result;
         }
+        
         
         int id() const{ return mID; }
         
@@ -215,14 +234,56 @@ namespace Legion {
         DomainPoint newPoint(DomainPoint point) {
           int nodeID = point[2];
           SimulationBoundsCoordinate* bounds = mBounds + nodeID * fieldsPerSimulationBounds;
-          
-          std::cout << "point " << point << " bounds in functor " << mID << " are " << bounds[0] << "," << bounds[1] << "," << bounds[2]
-          << " to " << bounds[3] << "," << bounds[4] << "," << bounds[5] << std::endl;
-          
           point[2] = subdomainToCompositeIndex(bounds, mNumBounds);
           return point;
         }
       };
+      
+      class CompositeProjectionFunctor : public ProjectionFunctor {
+      public:
+        CompositeProjectionFunctor(int offset, int numBounds, int id) {
+          mOffset = offset;
+          mNumBounds = numBounds;
+          mID = id;
+        }
+        
+        virtual LogicalRegion project(const Mappable *mappable, unsigned index,
+                                      LogicalPartition upperBound,
+                                      const DomainPoint &point) {
+          int launchDomainLayer = point[2];
+          DomainPoint remappedPoint = point;
+          int remappedLayer = launchDomainLayer * NUM_FRAGMENTS_PER_COMPOSITE_TASK + mOffset;
+          // handle non-power of 2 simulation size
+          if(remappedLayer < mNumBounds) {
+            remappedPoint[2] = remappedLayer;
+          }
+          
+          std::cout << to_string() << " " << point << " remapped to " << remappedPoint << std::endl;
+          
+          
+          LogicalRegion result = Legion::Runtime::get_runtime()->get_logical_subregion_by_color(upperBound, remappedPoint);
+          return result;
+        }
+        
+        int id() const{ return mID; }
+        std::string to_string() const {
+          char buffer[256];
+          sprintf(buffer, "CompositeProjectionFunctor id %d offset %d", mID, mOffset);
+          return std::string(buffer);
+        }
+        
+        virtual bool is_exclusive(void) const{ return true; }
+        virtual unsigned get_depth(void) const{ return 0; }
+        
+      private:
+        int mOffset;
+        int mNumBounds;
+        int mID;
+      };
+      
+      static CompositeProjectionFunctor* getCompositeProjectionFunctor(int nodeID, int maxTreeLevel, int level);
+
+      static CompositeProjectionFunctor* makeCompositeProjectionFunctor(int offset, int numBounds, int nodeID, int level, int numLevels, Runtime* runtime);
       
       
       static void storeMySimulationBounds(SimulationBoundsCoordinate* values, int nodeID, int numNodes);
@@ -230,14 +291,13 @@ namespace Legion {
       static SimulationBoundsCoordinate* retrieveMySimulationBounds(int nodeID);
       
       static void storeMyNodeID(int nodeID, int numNodes);
+            
+      static void storeMyAccessorProjectionFunctor(int functorID, AccessorProjectionFunctor* functor, int numNodes, int nodeID);
       
-      static int retrieveMyNodeID(int nodeID);
+      static AccessorProjectionFunctor* retrieveMyAccessorProjectionFunctor(int nodeID);
       
-      static void storeMyProjectionFunctor(int functorID, AccessorProjectionFunctor* functor, int numNodes, int nodeID);
+      static void createProjectionFunctors(int nodeID, int numBounds, Runtime* runtime, ImageSize imageSize);
       
-      static AccessorProjectionFunctor* retrieveMyProjectionFunctor(int nodeID);
-      
-      static void createProjectionFunctor(int nodeID, int numBounds, Runtime* runtime);
       
       static void initial_task(const Task *task,
                                const std::vector<PhysicalRegion> &regions,
@@ -252,9 +312,11 @@ namespace Legion {
                                  Context ctx, Runtime *runtime);
       
       
-
+      
       
       void initializeNodes();
+      void initializeViewMatrix();
+      void createTreeDomains(int nodeID, int numTreeLevels, Runtime* runtime, ImageSize mImageSize);
       FieldSpace imageFields();
       void createImage(LogicalRegion &region, Domain &domain);
       void partitionImageByDepth(LogicalRegion image, Domain &domain, LogicalPartition &partition);
@@ -281,7 +343,11 @@ namespace Legion {
       
       static int subtreeHeight(ImageSize imageSize);
       
-      static FutureMap launchTreeReduction(ImageSize imageSize, int treeLevel, int maxTreeLevel);
+      static FutureMap launchTreeReduction(ImageSize imageSize, int treeLevel, int functorLevel, int offset,
+                                           GLenum depthFunc, GLenum blendFuncSource, GLenum blendFuncDestination,
+                                           int compositeTaskID, LogicalPartition sourceFragmentPartition, LogicalRegion image,
+                                           Runtime* runtime, Context context,
+                                           int nodeID, int maxTreeLevel);
       
       static void launchPipelineReduction(ScreenSpaceArguments args);
       
@@ -318,10 +384,13 @@ namespace Legion {
       static int* mNodeID;
       static SimulationBoundsCoordinate *mMySimulationBounds;
       static SimulationBoundsCoordinate *mSimulationBounds;
-      static int mNumSimulationBounds[IMAGE_REDUCTION_DIMENSIONS];
+      static int mNumSimulationBounds;
       static SimulationBoundsCoordinate mXMax, mXMin, mYMax, mYMin, mZMax, mZMin;
-      static AccessorProjectionFunctor **mAccessorFunctor;
-      static int mNumFunctors;
+      static AccessorProjectionFunctor **mAccessorProjectionFunctor;
+      static int mNodeCount;
+      static std::vector<CompositeProjectionFunctor*> mCompositeProjectionFunctor;
+      static std::vector<Domain> mHierarchicalTreeDomain;
+      static GLfloat mViewMatrix[16];
     };
     
   }

@@ -107,25 +107,23 @@ namespace Legion {
     
     typedef PixelField* Image;
     
+    static bool verifyPixelField(int pixelID, char *fieldName, PixelField expected, PixelField actual) {
+      if(expected != actual) {
+        std::cerr << "verification failue at pixel " << pixelID << " field " << fieldName << " expected " << expected << " saw " << actual << std::endl;
+        return false;
+      }
+      return true;
+    }
+    
     static void verifyImage(ImageSize imageSize, Image expected, PixelField *r, PixelField *g, PixelField *b, PixelField *a, PixelField *z, PixelField *userdata, ByteOffset stride[]) {
       
-      //    for(int i = 0; i < imageSize.pixelsPerLayer(); ++i) {
-      //        cout << i << ")\t" << r[i] << "\t" << g[i] << "\t" << b[i] << "\t" << a[i] << "\t" << z[i] << "\t" << userdata[i] << endl;
-      //        cout << "\t" << expected[i*6] << "\t" << expected[i*6+1] << "\t" << expected[i*6+2] << "\t" << expected[i*6+3] << "\t" << expected[i*6+4] << "\t" << expected[i*6+5] << endl;
-      //    }
-      //    cout << "-----------------------" << endl;
-      
       for(int i = 0; i < imageSize.pixelsPerLayer(); ++i) {
-        ///
-        //        cout << i << ")\t" << r[i] << "\t" << g[i] << "\t" << b[i] << "\t" << a[i] << "\t" << z[i] << "\t" << userdata[i] << endl;
-        //        cout << "\t" << expected[i*6] << "\t" << expected[i*6+1] << "\t" << expected[i*6+2] << "\t" << expected[i*6+3] << "\t" << expected[i*6+4] << "\t" << expected[i*6+5] << endl;
-        ///
-        assert(*expected++ == *r); r += stride[0];
-        assert(*expected++ == *g); g += stride[0];
-        assert(*expected++ == *b); b += stride[0];
-        assert(*expected++ == *a); a += stride[0];
-        assert(*expected++ == *z); z += stride[0];
-        assert(*expected++ == *userdata); userdata += stride[0];
+        assert(verifyPixelField(i, (char*)"r", *expected++, *r)); r += stride[0];
+        assert(verifyPixelField(i, (char*)"g", *expected++, *g)); g += stride[0];
+        assert(verifyPixelField(i, (char*)"b", *expected++, *b)); b += stride[0];
+        assert(verifyPixelField(i, (char*)"a", *expected++, *a)); a += stride[0];
+        assert(verifyPixelField(i, (char*)"z", *expected++, *z)); z += stride[0];
+        assert(verifyPixelField(i, (char*)"userdata", *expected++, *userdata)); userdata += stride[0];
       }
     }
     
@@ -161,6 +159,18 @@ namespace Legion {
     }
     
     
+    
+    ///debugging
+    static void dumpImage(PixelField *image, char *text) {
+      std::cout << std::endl;
+      std::cout << text << std::endl;
+      PixelField *foo = image;
+      for(int i = 0; i < 10; ++i) {
+        std::cout << text << " pixel " << i << ": ";
+        std::cout << foo[0] << "\t" << foo[1] << "\t" << foo[2] << "\t" << foo[3] << "\t" << foo[4] << "\t" << foo[5] << std::endl;
+      }
+    }
+    
     static void compositeTwoImages(Image image0, Image image1, ImageSize imageSize, GLenum depthFunc, GLenum blendFuncSource, GLenum blendFuncDestination) {
       // Use the composite functions from the ImageReductionComposite class.
       // These functions are simple enough to be verified by inspection.
@@ -184,8 +194,13 @@ namespace Legion {
       PixelField *a1In = b1In + 1;
       PixelField *z1In = a1In + 1;
       PixelField *userdata1In = z1In + 1;
+      
+//      dumpImage(image0, "image 0"); dumpImage(image1, "image 1");
+      
       int numPixels = imageSize.numPixelsPerFragment() * imageSize.numFragmentsPerLayer;
       compositeFunction(r0In, g0In, b0In, a0In, z0In, userdata0In, r1In, g1In, b1In, a1In, z1In, userdata1In, rOut, gOut, bOut, zOut, aOut, userdataOut, numPixels);
+      
+//      dumpImage(image0, "result");
     }
     
     
@@ -336,6 +351,7 @@ static void preregisterSimulationBounds(int numSimulationBoundsX, int numSimulat
   float *bounds = new float[numDomainNodes * fieldsPerBound];
   float *boundsPtr = bounds;
   
+  // construct a simple regular simulation domain
   for(int x = 0; x < numDomainNodesX; ++x) {
     for(int y = 0; y < numDomainNodesY; ++y) {
       for(int z = 0; z < numDomainNodesZ; ++z) {
@@ -349,7 +365,8 @@ static void preregisterSimulationBounds(int numSimulationBoundsX, int numSimulat
     }
   }
   
-  Legion::Visualization::ImageReduction::preregisterSimulationBounds(bounds, numSimulationBoundsX, numSimulationBoundsY, numSimulationBoundsZ);
+  int numSimulationBounds = numDomainNodesX * numDomainNodesY * numDomainNodesZ;
+  Legion::Visualization::ImageReduction::preregisterSimulationBounds(bounds, numSimulationBounds);
   delete [] bounds;
 }
 
