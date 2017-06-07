@@ -38,6 +38,8 @@ namespace Legion {
     const int numDepthFuncs = sizeof(depthFuncs) / sizeof(depthFuncs[0]);
     const int numBlendFuncs = sizeof(blendFuncs) / sizeof(blendFuncs[0]);
     
+
+    
     
     static char* paintFileName(char *buffer, int taskID) {
       sprintf(buffer, "/tmp/paint.%d", taskID);
@@ -96,10 +98,7 @@ namespace Legion {
       
       PixelField *r, *g, *b, *a, *z, *userdata;
       ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS];
-      int layer = task->get_unique_id() % imageSize.depth;
-      Point<IMAGE_REDUCTION_DIMENSIONS> point = Point<IMAGE_REDUCTION_DIMENSIONS>::ZEROES();
-      point.x[2] = layer;
-      ImageReduction::create_image_field_pointers(imageSize, image, point, r, g, b, a, z, userdata, stride);
+      ImageReduction::create_image_field_pointers(imageSize, image, r, g, b, a, z, userdata, stride, runtime, ctx);
       int taskID = task->get_unique_id() % imageSize.depth;
       paintRegion(imageSize, r, g, b, a, z, userdata, stride, taskID);
       render.stop();
@@ -142,8 +141,7 @@ namespace Legion {
         Image expected = (Image)((char*)task->args + sizeof(imageSize));
         PixelField *r, *g, *b, *a, *z, *userdata;
         ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS];
-        Point<IMAGE_REDUCTION_DIMENSIONS> point = Point<IMAGE_REDUCTION_DIMENSIONS>::ZEROES();
-        ImageReduction::create_image_field_pointers(imageSize, image, point, r, g, b, a, z, userdata, stride);
+        ImageReduction::create_image_field_pointers(imageSize, image, r, g, b, a, z, userdata, stride, runtime, ctx);
         verifyImage(imageSize, expected, r, g, b, a, z, userdata, stride);
       }
     }
@@ -233,14 +231,9 @@ namespace Legion {
     }
     
     
-    static void generateRandomPermutation(int permutation[], int size) {
-      static long maxRandom = 0;
-      if(maxRandom == 0) {
-        maxRandom = powf(2.0f, 31.0f) - 1;
-      }
-      for(int i = 0; i < size; ++i) {
-        permutation[i] = (int)(random() / maxRandom * size);
-      }
+    
+    static void generateOrdering(int ordering[], int numElements) {
+      
     }
     
     
@@ -251,11 +244,11 @@ namespace Legion {
       futureMap = imageReduction.reduce_associative_commutative();
       futureMap.wait_all_results();
       verifyTestResult(imageReduction, NULL, imageSize, depthFunc, blendFuncSource, blendFuncDestination);
-      int permutation[imageSize.depth];
-      generateRandomPermutation(permutation, imageSize.depth);
-      futureMap = imageReduction.reduce_associative_noncommutative(permutation);
+      futureMap = imageReduction.reduce_associative_noncommutative();
       futureMap.wait_all_results();
-      verifyTestResult(imageReduction, permutation, imageSize, depthFunc, blendFuncSource, blendFuncDestination);
+      int ordering[imageSize.depth];
+      generateOrdering(ordering, imageSize.depth);
+      verifyTestResult(imageReduction, ordering, imageSize, depthFunc, blendFuncSource, blendFuncDestination);
     }
     
     
@@ -267,13 +260,18 @@ namespace Legion {
       futureMap = imageReduction.reduce_nonassociative_commutative();
       futureMap.wait_all_results();
       verifyTestResult(imageReduction, NULL, imageSize, depthFunc, blendFuncSource, blendFuncDestination);
-      int permutation[imageSize.depth];
-      generateRandomPermutation(permutation, imageSize.depth);
-      futureMap = imageReduction.reduce_nonassociative_noncommutative(permutation);
+      futureMap = imageReduction.reduce_nonassociative_noncommutative();
       futureMap.wait_all_results();
-      verifyTestResult(imageReduction, permutation, imageSize, depthFunc, blendFuncSource, blendFuncDestination);
+      int ordering[imageSize.depth];
+      generateOrdering(ordering, imageSize.depth);
+      verifyTestResult(imageReduction, ordering, imageSize, depthFunc, blendFuncSource, blendFuncDestination);
       
     }
+    
+    const int numDomainNodesX = 2;
+    const int numDomainNodesY = 2;
+    const int numDomainNodesZ = 1;
+    const int numDomainNodes = numDomainNodesX * numDomainNodesY * numDomainNodesZ;
     
     
     void top_level_task(const Task *task,
@@ -282,12 +280,15 @@ namespace Legion {
       
       {
         // test with multiple fragments per scanline and all reduction operators
-        int width = 64;
-        int rows = 48;
-        int fragmentsPerLayer = rows * 4;
+        const int width = 64;
+        const int rows = 48;
+//        const int fragmentsPerLayer = rows * 4;
         
-        assert(fragmentsPerLayer > rows && width % (fragmentsPerLayer / rows) == 0);
-        ImageSize imageSize = { width, rows, 4, fragmentsPerLayer };
+//        assert(fragmentsPerLayer > rows && width % (fragmentsPerLayer / rows) == 0);
+        
+        const int fragmentsPerLayer = 1;//testing
+        
+        ImageSize imageSize = { width, rows, numDomainNodes, fragmentsPerLayer };
         
         for(int i = 0; i < numDepthFuncs; ++i) {
           GLenum depthFunc = depthFuncs[i];
@@ -305,16 +306,18 @@ namespace Legion {
         }
       }
       
+      const int fewFragmentsPerLayer = 4;
+
       {
         // test with small images
-        ImageSize imageSize = { 320, 200, 4, 4 };
+        ImageSize imageSize = { 320, 200, numDomainNodes, fewFragmentsPerLayer };
         testAssociative(imageSize, ctx, runtime, depthFuncs[0], 0, 0);
         testNonassociative(imageSize, ctx, runtime, depthFuncs[0], 0, 0);
       }
       
       {
         // test with large images
-        ImageSize imageSize = { 3840, 2160, 4, 4 };
+        ImageSize imageSize = { 3840, 2160, numDomainNodes, fewFragmentsPerLayer };
         testAssociative(imageSize, ctx, runtime, depthFuncs[0], 0, 0);
         testNonassociative(imageSize, ctx, runtime, depthFuncs[0], 0, 0);
       }
@@ -323,7 +326,39 @@ namespace Legion {
   }
 }
 
+
+static void preregisterSimulationBounds(int numSimulationBoundsX, int numSimulationBoundsY, int numSimulationBoundsZ) {
+
+  // call this before starting the Legion runtime
+  
+  int numDomainNodes = numDomainNodesX * numDomainNodesY * numDomainNodesZ;
+  const int fieldsPerBound = 6;
+  float *bounds = new float[numDomainNodes * fieldsPerBound];
+  float *boundsPtr = bounds;
+  
+  for(int x = 0; x < numDomainNodesX; ++x) {
+    for(int y = 0; y < numDomainNodesY; ++y) {
+      for(int z = 0; z < numDomainNodesZ; ++z) {
+        *boundsPtr++ = x;
+        *boundsPtr++ = y;
+        *boundsPtr++ = z;
+        *boundsPtr++ = x + 1;
+        *boundsPtr++ = y + 1;
+        *boundsPtr++ = z + 1;
+      }
+    }
+  }
+  
+  Legion::Visualization::ImageReduction::preregisterSimulationBounds(bounds, numSimulationBoundsX, numSimulationBoundsY, numSimulationBoundsZ);
+  delete [] bounds;
+}
+
+
+
 int main(int argc, char *argv[]) {
+  
+  preregisterSimulationBounds(numDomainNodesX, numDomainNodesY, numDomainNodesZ);
+  
   Legion::HighLevelRuntime::set_top_level_task_id(TOP_LEVEL_TASK_ID);
   Legion::HighLevelRuntime::register_legion_task<top_level_task>(TOP_LEVEL_TASK_ID,
                                                                  Legion::Processor::LOC_PROC, true/*single*/, false/*index*/,

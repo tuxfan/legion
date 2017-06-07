@@ -36,13 +36,13 @@
 namespace Legion {
   namespace Visualization {
     
+    
     class ImageReduction {
       
     private:
       
       typedef struct {
         ImageSize imageSize;
-        int totalSize;
         bool isAssociative;
         int compositeTaskID;
         GLenum depthFunction;
@@ -53,10 +53,6 @@ namespace Legion {
       
       typedef struct {
         ImageSize imageSize;
-        int x;
-        int y;
-        int layer0;
-        int layer1;
         GLenum depthFunction;
         GLenum blendFunctionSource;
         GLenum blendFunctionDestination;
@@ -70,6 +66,9 @@ namespace Legion {
       typedef std::vector<Future> FutureSet;
       
     public:
+      
+      typedef float SimulationBoundsCoordinate;
+      static void preregisterSimulationBounds(SimulationBoundsCoordinate *bounds, int numBoundsX, int numBoundsY, int numBoundsZ);
       
       ImageReduction(){}
       /**
@@ -91,7 +90,7 @@ namespace Legion {
        *
        * @param taskID ID of task that has previously been registered with the Legion runtime
        */
-      FutureMap launch_task_by_depth(unsigned taskID, void *args = NULL, int argLen = 0);
+      FutureMap launch_task_by_depth(unsigned taskID, void *args = NULL, int argLen = 0, bool blocking = false);
       /**
        * Perform a tree reduction using an associative commutative operator.
        * Be sure to call either set_blend_func or set_depth_func first.
@@ -100,10 +99,9 @@ namespace Legion {
       /**
        * Perform a tree reduction using an associative noncommutative operator.
        * Be sure to call either set_blend_func or set_depth_func first.
-       *
-       * @param ordering integer permutation that defines ordering by depth index
+       * Be sure to call preregisterSimulationBounds before starting the Legion runtime.
        */
-      FutureMap reduce_associative_noncommutative(int ordering[]);
+      FutureMap reduce_associative_noncommutative();
       /**
        * Perform a pipeline reduction using a nonassociative commutative operator.
        * Be sure to call either set_blend_func or set_depth_func first.
@@ -112,10 +110,9 @@ namespace Legion {
       /**
        * Perform a pipeline reduction using a nonassociative noncommutative operator.
        * Be sure to call either set_blend_func or set_depth_func first.
-       *
-       * @param ordering integer permutation that defines ordering by depth index
+       * Be sure to call preregisterSimulationBounds before starting the Legion runtime.
        */
-      FutureMap reduce_nonassociative_noncommutative(int ordering[]);
+      FutureMap reduce_nonassociative_noncommutative();
       /**
        * Move reduced image result to a display.
        *
@@ -147,7 +144,6 @@ namespace Legion {
        *
        * @param imageSize see legion_visualization.h
        * @param region physical region of image fragment
-       * @param origin origin of image fragment
        * @param r return raw pointer to pixel fields
        * @param g return raw pointer to pixel fields
        * @param b return raw pointer to pixel fields
@@ -158,14 +154,15 @@ namespace Legion {
        */
       static void create_image_field_pointers(ImageSize imageSize,
                                               PhysicalRegion region,
-                                              Point<IMAGE_REDUCTION_DIMENSIONS> origin,
                                               PixelField *&r,
                                               PixelField *&g,
                                               PixelField *&b,
                                               PixelField *&a,
                                               PixelField *&z,
                                               PixelField *&userdata,
-                                              ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS]);
+                                              ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS],
+                                              Runtime *runtime,
+                                              Context context);
       
       /**
        * Utility function to provide descriptive output for messages.
@@ -187,27 +184,87 @@ namespace Legion {
                                const std::vector<PhysicalRegion> &regions,
                                Context ctx, Runtime *runtime);
       
-      static int composite_task(const Task *task,
+    private:
+      
+      class AccessorProjectionFunctor : public ProjectionFunctor {
+      public:
+        AccessorProjectionFunctor(SimulationBoundsCoordinate* bounds, int numBounds, int functorID){
+          mBounds = bounds;
+          mNumBounds = numBounds;
+          mID = functorID;
+        }
+        
+        virtual LogicalRegion project(Context context, Task *task,
+                                      unsigned index,
+                                      LogicalPartition upperBound,
+                                      const DomainPoint &point) {
+          LogicalRegion result = Legion::Runtime::get_runtime()->get_logical_subregion_by_color(context, upperBound, newPoint(point));
+          return result;
+        }
+        
+        int id() const{ return mID; }
+        
+        virtual bool is_exclusive(void) const{ return true; }
+        virtual unsigned get_depth(void) const{ return 0; }
+        
+      private:
+        SimulationBoundsCoordinate* mBounds;
+        int mNumBounds;
+        int mID;
+        
+        DomainPoint newPoint(DomainPoint point) {
+          int nodeID = point[2];
+          SimulationBoundsCoordinate* bounds = mBounds + nodeID * fieldsPerSimulationBounds;
+          
+          std::cout << "point " << point << " bounds in functor " << mID << " are " << bounds[0] << "," << bounds[1] << "," << bounds[2]
+          << " to " << bounds[3] << "," << bounds[4] << "," << bounds[5] << std::endl;
+          
+          point[2] = subdomainToCompositeIndex(bounds, mNumBounds);
+          return point;
+        }
+      };
+      
+      
+      static void storeMySimulationBounds(SimulationBoundsCoordinate* values, int nodeID, int numNodes);
+      
+      static SimulationBoundsCoordinate* retrieveMySimulationBounds(int nodeID);
+      
+      static void storeMyNodeID(int nodeID, int numNodes);
+      
+      static int retrieveMyNodeID(int nodeID);
+      
+      static void storeMyProjectionFunctor(int functorID, AccessorProjectionFunctor* functor, int numNodes, int nodeID);
+      
+      static AccessorProjectionFunctor* retrieveMyProjectionFunctor(int nodeID);
+      
+      static void createProjectionFunctor(int nodeID, int numBounds, Runtime* runtime);
+      
+      static void initial_task(const Task *task,
+                               const std::vector<PhysicalRegion> &regions,
+                               Context ctx, Runtime *runtime);
+      
+      static void accessor_task(const Task *task,
                                 const std::vector<PhysicalRegion> &regions,
                                 Context ctx, Runtime *runtime);
       
-      static void screen_space_task(const Task *task,
-                                    const std::vector<PhysicalRegion> &regions,
-                                    Context ctx, Runtime *runtime);
+      static void composite_task(const Task *task,
+                                 const std::vector<PhysicalRegion> &regions,
+                                 Context ctx, Runtime *runtime);
       
       
-    private:
+
       
+      void initializeNodes();
       FieldSpace imageFields();
-      void createImage();
-      void partitionImageByDepth();
-      void partitionImageByScreenSpace();
+      void createImage(LogicalRegion &region, Domain &domain);
+      void partitionImageByDepth(LogicalRegion image, Domain &domain, LogicalPartition &partition);
+      void partitionImageByFragment(LogicalRegion image, Domain &domain, LogicalPartition &partition);
       
-      char* screenSpaceArguments(int ordering[], bool isAssociative);
-      FutureMap launchScreenSpaceTasks(int ordering[], bool isAssociative);
+      FutureMap launchScreenSpaceTasks(bool isAssociative);
+      FutureMap launchAccessorTasks();
       
-      FutureMap reduceAssociative(int permutation[]);
-      FutureMap reduceNonassociative(int permutation[]);
+      FutureMap reduceAssociative();
+      FutureMap reduceNonassociative();
       
       void addCompositeArgumentsToArgmap(CompositeArguments *&argsPtr, int taskZ, ArgumentMap &argMap, int layer0, int layer1);
       
@@ -224,43 +281,47 @@ namespace Legion {
       
       static int subtreeHeight(ImageSize imageSize);
       
-      static void addSubregionRequirementToFragmentLauncher(TaskLauncher &launcher, DomainPoint origin, int layer,
-                                                            Context context, Runtime* runtime, LogicalPartition partition, LogicalRegion parent);
+      static FutureMap launchTreeReduction(ImageSize imageSize, int treeLevel, int maxTreeLevel);
       
-      static Future launchCompositeTask(DomainPoint origin, int taskNumber, ScreenSpaceArguments args, LogicalRegion parent,
-                                        FutureSet futures, int layer0, int layer1, Context context, Runtime* runtime, LogicalPartition fragmentPartition);
+      static void launchPipelineReduction(ScreenSpaceArguments args);
       
-//      static DomainPointColoring fragmentDomainPointColoring(DomainPoint origin, ImageSize imageSize);
+      static int subdomainToCompositeIndex(SimulationBoundsCoordinate *bounds, int scale);
       
-      static LogicalPartition partitionScreenSpaceByFragment(DomainPoint origin, Runtime* runtime, Context context, LogicalRegion parent, ImageSize imageSize);
-      
-      
-      static FutureSet launchTreeReduction(ScreenSpaceArguments args, int *ordering, LogicalRegion parent, int treeLevel, int maxTreeLevel, DomainPoint origin,
-                                           Context context, Runtime* runtime, LogicalPartition fragmentPartition);
-      
-      static void launchPipelineReduction(ScreenSpaceArguments args, int *ordering);
-      
-      static PhysicalRegion compositeTwoFragments(CompositeArguments args, PhysicalRegion region0, Point<IMAGE_REDUCTION_DIMENSIONS> origin0,
-                                                  PhysicalRegion region1, Point<IMAGE_REDUCTION_DIMENSIONS> origin1);
       
       ImageSize mImageSize;
       Context mContext;
       Runtime *mRuntime;
-      LogicalRegion mImage;
-      Domain mImageDomain;
+      LogicalRegion mSourceImage;
+      LogicalRegion mScratchImage;
+      Domain mSourceImageDomain;
+      Domain mScratchImageDomain;
       Domain mDepthDomain;
       Domain mCompositePipelineDomain;
       Domain mDisplayDomain;
+      Domain mSourceFragmentDomain;
+      Domain mScratchFragmentDomain;
       LogicalPartition mDepthPartition;
-      LogicalPartition mScreenSpacePartition;
-      Domain mScreenSpaceDomain;
-      int *mDefaultPermutation;
-      TaskID mScreenSpaceTaskID;
+      LogicalPartition mSourceFragmentPartition;
+      LogicalPartition mScratchFragmentPartition;
+      TaskID mInitialTaskID;
+      TaskID mAccessorTaskID;
       TaskID mCompositeTaskID;
       TaskID mDisplayTaskID;
       GLenum mDepthFunction;
       GLenum mBlendFunctionSource;
       GLenum mBlendFunctionDestination;
+      int mAccessorFunctorID;
+      int mLocalCopyOfNodeID;
+      
+    public:
+      static const int fieldsPerSimulationBounds = 2 * IMAGE_REDUCTION_DIMENSIONS;
+      static int* mNodeID;
+      static SimulationBoundsCoordinate *mMySimulationBounds;
+      static SimulationBoundsCoordinate *mSimulationBounds;
+      static int mNumSimulationBounds[IMAGE_REDUCTION_DIMENSIONS];
+      static SimulationBoundsCoordinate mXMax, mXMin, mYMax, mYMin, mZMax, mZMin;
+      static AccessorProjectionFunctor **mAccessorFunctor;
+      static int mNumFunctors;
     };
     
   }

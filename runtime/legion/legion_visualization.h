@@ -34,7 +34,7 @@ namespace Legion {
             int numFragmentsPerLayer;
             
             int pixelsPerLayer() const{ return width * height; }
-            
+          
             Point<IMAGE_REDUCTION_DIMENSIONS> origin() const{ return Point<IMAGE_REDUCTION_DIMENSIONS>::ZEROES(); }
             Point<IMAGE_REDUCTION_DIMENSIONS> upperBound() const{
                 Point<IMAGE_REDUCTION_DIMENSIONS> result;
