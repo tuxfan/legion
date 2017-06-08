@@ -24,45 +24,44 @@ using namespace LegionRuntime::Arrays;
 namespace Legion {
     namespace Visualization {
         
-        const int NUM_FRAGMENTS_PER_COMPOSITE_TASK = 2;
-        const int IMAGE_REDUCTION_DIMENSIONS = 3;
+        static const int image_region_dimensions = 3;//(width x height) x layerID
         
         typedef struct {
             int width;
             int height;
-            int depth;
+            int numImageLayers;
             int numFragmentsPerLayer;
             
             int pixelsPerLayer() const{ return width * height; }
           
-            Point<IMAGE_REDUCTION_DIMENSIONS> origin() const{ return Point<IMAGE_REDUCTION_DIMENSIONS>::ZEROES(); }
-            Point<IMAGE_REDUCTION_DIMENSIONS> upperBound() const{
-                Point<IMAGE_REDUCTION_DIMENSIONS> result;
+            Point<image_region_dimensions> origin() const{ return Point<image_region_dimensions>::ZEROES(); }
+            Point<image_region_dimensions> upperBound() const{
+                Point<image_region_dimensions> result;
                 result.x[0] = width;
                 result.x[1] = height;
-                result.x[2] = depth;
+                result.x[2] = numImageLayers;
                 return result;
             }
             
             // launch by depth plane, each depth point is one image
-            Point<IMAGE_REDUCTION_DIMENSIONS> layerSize() const{
-                Point<IMAGE_REDUCTION_DIMENSIONS> result;
+            Point<image_region_dimensions> layerSize() const{
+                Point<image_region_dimensions> result;
                 result.x[0] = width;
                 result.x[1] = height;
                 result.x[2] = 1;
                 return result;
             }
-            Point<IMAGE_REDUCTION_DIMENSIONS> numLayers() const{
-                Point<IMAGE_REDUCTION_DIMENSIONS> result;
+            Point<image_region_dimensions> numLayers() const{
+                Point<image_region_dimensions> result;
                 result.x[0] = 1;
                 result.x[1] = 1;
-                result.x[2] = depth;
+                result.x[2] = numImageLayers;
                 return result;
             }
             
             // launch by composite fragment,
-            Point<IMAGE_REDUCTION_DIMENSIONS> fragmentSize() const{
-                Point<IMAGE_REDUCTION_DIMENSIONS> result;
+            Point<image_region_dimensions> fragmentSize() const{
+                Point<image_region_dimensions> result;
                 if(numFragmentsPerLayer > height) {
                     assert((width * height) % numFragmentsPerLayer == 0);
                     result.x[0] = (width * height) / numFragmentsPerLayer;
@@ -76,16 +75,16 @@ namespace Legion {
                 }
                 return result;
             }
-            Point<IMAGE_REDUCTION_DIMENSIONS> numFragments() const{
-                Point<IMAGE_REDUCTION_DIMENSIONS> result;
-                Point<IMAGE_REDUCTION_DIMENSIONS> size = fragmentSize();
+            Point<image_region_dimensions> numFragments() const{
+                Point<image_region_dimensions> result;
+                Point<image_region_dimensions> size = fragmentSize();
                 result.x[0] = width / size.x[0];
                 result.x[1] = height / size.x[1];
-                result.x[2] = depth;
+                result.x[2] = numImageLayers;
                 return result;
             }
                         
-            Point<IMAGE_REDUCTION_DIMENSIONS> incrementFragment(Point<IMAGE_REDUCTION_DIMENSIONS> point) const {
+            Point<image_region_dimensions> incrementFragment(Point<image_region_dimensions> point) const {
                 point.x[0] += 1;
                 if(point.x[0] >= numFragments().x[0]) {
                     point.x[0] = 0;
@@ -102,27 +101,24 @@ namespace Legion {
             }
             
             int numPixelsPerFragment() const {
-                Point<IMAGE_REDUCTION_DIMENSIONS> size = fragmentSize();
+                Point<image_region_dimensions> size = fragmentSize();
                 int result = 1;
-                for(int i = 0; i < IMAGE_REDUCTION_DIMENSIONS; ++i) {
+                for(int i = 0; i < image_region_dimensions; ++i) {
                     result *= size.x[i];
                 }
                 return result;
             }
-            
+          
+          std::string toString() const {
+            char buffer[512];
+            sprintf(buffer, "(%dx%d) x %d layers, %d fragments per layer (%lldx%lldx%lld)",
+                    width, height, numImageLayers, numFragmentsPerLayer,
+                    fragmentSize().x[0], fragmentSize().x[1], fragmentSize().x[2]);
+            return std::string(buffer);
+          }
+          
         } ImageSize;
-        
-        typedef float PixelField;
-        
-        enum FieldIDs {
-            FID_FIELD_R,
-            FID_FIELD_G,
-            FID_FIELD_B,
-            FID_FIELD_A,
-            FID_FIELD_Z,
-            FID_FIELD_USERDATA,
-        };
-        
+      
     }
 }
 

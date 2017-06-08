@@ -59,7 +59,7 @@ static void paintRegion(ImageSize imageSize,
                         PixelField *a,
                         PixelField *z,
                         PixelField *userdata,
-                        ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS],
+                        ByteOffset stride[image_region_dimensions],
                         int taskID) {
     
     PixelField zValue = taskID % imageSize.depth;
@@ -89,9 +89,9 @@ void render_task(const Task *task,
     ImageSize imageSize = ((ImageSize *)task->args)[0];
     
     PixelField *r, *g, *b, *a, *z, *userdata;
-    ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS];
+    ByteOffset stride[image_region_dimensions];
     int layer = task->get_unique_id() % imageSize.depth;
-    Point<IMAGE_REDUCTION_DIMENSIONS> origin = Point<IMAGE_REDUCTION_DIMENSIONS>::ZEROES();
+    Point<image_region_dimensions> origin = Point<image_region_dimensions>::ZEROES();
     origin.x[2] = layer;
     ImageReduction::create_image_field_pointers(imageSize, image, origin, r, g, b, a, z, userdata, stride);
     paintRegion(imageSize, r, g, b, a, z, userdata, stride, task->get_unique_id());

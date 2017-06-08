@@ -14,6 +14,7 @@
  */
 
 #include "image_reduction.h"
+#include "image_reduction_composite.h"
 
 #include <iostream>
 #include <fstream>
@@ -36,7 +37,6 @@ namespace Legion {
       mBlendFunctionDestination = 0;
       mMySimulationBounds = NULL;
       mNodeID = NULL;
-      mAccessorProjectionFunctor = NULL;
       
       createImage(mSourceImage, mSourceImageDomain);
       partitionImageByDepth(mSourceImage, mDepthDomain, mDepthPartition);
@@ -54,6 +54,7 @@ namespace Legion {
       if(mMySimulationBounds != NULL) {
         delete [] mMySimulationBounds;
       }
+      deleteProjectionFunctors();
     }
     
     
@@ -67,7 +68,6 @@ namespace Legion {
     ImageReduction::SimulationBoundsCoordinate ImageReduction::mYMin;
     ImageReduction::SimulationBoundsCoordinate ImageReduction::mZMax;
     ImageReduction::SimulationBoundsCoordinate ImageReduction::mZMin;
-    ImageReduction::AccessorProjectionFunctor **ImageReduction::mAccessorProjectionFunctor;
     std::vector<ImageReduction::CompositeProjectionFunctor*> ImageReduction::mCompositeProjectionFunctor;
     int ImageReduction::mNodeCount;
     std::vector<Domain> ImageReduction::mHierarchicalTreeDomain;
@@ -115,13 +115,6 @@ namespace Legion {
       mRuntime->register_task_variant<initial_task>(initialRegistrar);
       mRuntime->attach_name(mInitialTaskID, "initialTask");
       
-      mAccessorTaskID = mRuntime->generate_dynamic_task_id();
-      TaskVariantRegistrar accessorRegistrar(mAccessorTaskID, "accessorTask");
-      accessorRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
-      .add_layout_constraint_set(1/*index*/, layoutConstraintID);
-      mRuntime->register_task_variant<accessor_task>(accessorRegistrar);
-      mRuntime->attach_name(mAccessorTaskID, "accessorTask");
-      
       mCompositeTaskID = mRuntime->generate_dynamic_task_id();
       TaskVariantRegistrar compositeRegistrar(mCompositeTaskID, "compositeTask");
       compositeRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
@@ -161,8 +154,8 @@ namespace Legion {
     
     
     void ImageReduction::createImage(LogicalRegion &region, Domain &domain) {
-      Rect<IMAGE_REDUCTION_DIMENSIONS> imageBounds(mImageSize.origin(), mImageSize.upperBound() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES());
-      domain = Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(imageBounds);
+      Rect<image_region_dimensions> imageBounds(mImageSize.origin(), mImageSize.upperBound() - Point<image_region_dimensions>::ONES());
+      domain = Domain::from_rect<image_region_dimensions>(imageBounds);
       IndexSpace pixels = mRuntime->create_index_space(mContext, domain);
       mRuntime->attach_name(pixels, "image index space");
       FieldSpace fields = imageFields();
@@ -172,26 +165,23 @@ namespace Legion {
     
     
     void ImageReduction::partitionImageByDepth(LogicalRegion image, Domain &domain, LogicalPartition &partition) {
-      Blockify<IMAGE_REDUCTION_DIMENSIONS> coloring(mImageSize.layerSize());
+      Blockify<image_region_dimensions> coloring(mImageSize.layerSize());
       IndexPartition imageDepthIndexPartition = mRuntime->create_index_partition(mContext, image.get_index_space(), coloring);
       partition = mRuntime->get_logical_partition(mContext, image, imageDepthIndexPartition);
-      
-      std::cout << "created depth partition " << partition << std::endl;
-      
       mRuntime->attach_name(partition, "image depth partition");
-      Rect<IMAGE_REDUCTION_DIMENSIONS> depthBounds(mImageSize.origin(), mImageSize.numLayers() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES());
-      domain = Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(depthBounds);
+      Rect<image_region_dimensions> depthBounds(mImageSize.origin(), mImageSize.numLayers() - Point<image_region_dimensions>::ONES());
+      domain = Domain::from_rect<image_region_dimensions>(depthBounds);
     }
     
     
     void ImageReduction::partitionImageByFragment(LogicalRegion image, Domain &domain, LogicalPartition &partition) {
-      Blockify<IMAGE_REDUCTION_DIMENSIONS> coloring(mImageSize.fragmentSize());
+      Blockify<image_region_dimensions> coloring(mImageSize.fragmentSize());
       IndexPartition imageFragmentIndexPartition = mRuntime->create_index_partition(mContext, image.get_index_space(), coloring);
       mRuntime->attach_name(imageFragmentIndexPartition, "image fragment index");
       partition = mRuntime->get_logical_partition(mContext, image, imageFragmentIndexPartition);
       mRuntime->attach_name(partition, "image fragment partition");
-      Rect<IMAGE_REDUCTION_DIMENSIONS> fragmentBounds(mImageSize.origin(), mImageSize.numFragments() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES());
-      domain = Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(fragmentBounds);
+      Rect<image_region_dimensions> fragmentBounds(mImageSize.origin(), mImageSize.numFragments() - Point<image_region_dimensions>::ONES());
+      domain = Domain::from_rect<image_region_dimensions>(fragmentBounds);
     }
     
     /// these store* and retrieve* methods are due to simulation issues on single or multi nodes
@@ -210,9 +200,6 @@ namespace Legion {
       }
       SimulationBoundsCoordinate* myPtr = retrieveMySimulationBounds(nodeID);
       memcpy(myPtr, values, fieldsPerSimulationBounds * sizeof(SimulationBoundsCoordinate));
-      
-      std::cout << "node id " << nodeID << " stored my bounds " << myPtr[0] << ","
-      << myPtr[1] << "," << myPtr[2] << "," << myPtr[3] << "," << myPtr[4] << "," << myPtr[5] << std::endl;
     }
     
     
@@ -238,33 +225,14 @@ namespace Legion {
     }
     
     
-    
-    void ImageReduction::storeMyAccessorProjectionFunctor(int functorID, AccessorProjectionFunctor *functor, int numNodes, int nodeID) {
-#ifdef RUNNING_MULTINODE
-      nodeID = 0;
-      numNodes = 1;
-#endif
-      if(mAccessorProjectionFunctor == NULL) {
-        mAccessorProjectionFunctor = new AccessorProjectionFunctor*[numNodes];
-      }
-      mAccessorProjectionFunctor[nodeID] = functor;
-    }
-    
-    ImageReduction::AccessorProjectionFunctor* ImageReduction::retrieveMyAccessorProjectionFunctor(int nodeID) {
-#ifdef RUNNING_MULTINODE
-      nodeID = 0;
-#endif
-      assert(mAccessorProjectionFunctor != NULL);
-      return mAccessorProjectionFunctor[nodeID];
-    }
-    
+      
     
     
     ////////////////
     
     int ImageReduction::numTreeLevels(ImageSize imageSize) {
-      int numTreeLevels = log2f(imageSize.depth);
-      if(powf(2.0f, numTreeLevels) < imageSize.depth) {
+      int numTreeLevels = log2f(imageSize.numImageLayers);
+      if(powf(2.0f, numTreeLevels) < imageSize.numImageLayers) {
         numTreeLevels++;
       }
       return numTreeLevels;
@@ -279,10 +247,9 @@ namespace Legion {
     
     
     static int compositeProjectionFunctorID(int numNodes, int numLevels, int level, int nodeID) {
-      int accessorFunctorRangeMax = 1 + numNodes;
+      // TO DO make this an array of dynamically generated ids to avoid conflicts with other functors
       int compositeFunctorIndex = nodeID * (numLevels + 1) + level;
-      int result = accessorFunctorRangeMax + compositeFunctorIndex;
-      return result;
+      return 1 + compositeFunctorIndex;
     }
     
     
@@ -315,16 +282,7 @@ namespace Legion {
     
     
     
-    static int accessorFunctorID(int nodeID) {
-      return 1 + nodeID;
-    }
-    
-    
     void ImageReduction::createProjectionFunctors(int nodeID, int numBounds, Runtime* runtime, ImageSize imageSize) {
-      
-      AccessorProjectionFunctor* accessorFunctor = new AccessorProjectionFunctor(mSimulationBounds, numBounds, accessorFunctorID(nodeID));
-      runtime->register_projection_functor(accessorFunctorID(nodeID), accessorFunctor);
-      storeMyAccessorProjectionFunctor(accessorFunctorID(nodeID), accessorFunctor, numBounds, nodeID);
       
       int numLevels = numTreeLevels(imageSize);
       if(mCompositeProjectionFunctor.empty()) {
@@ -343,7 +301,13 @@ namespace Legion {
     }
     
     
-    
+    void ImageReduction::deleteProjectionFunctors() {
+      if(!mCompositeProjectionFunctor.empty()) {
+        for(int i = 0; i < mCompositeProjectionFunctor.size(); ++i) {
+          CompositeProjectionFunctor* functor = mCompositeProjectionFunctor[i];
+        }
+      }
+    }
     
     
     
@@ -358,7 +322,10 @@ namespace Legion {
       // this task initializes some per-node static state for use by subsequent tasks
       
       // set the node ID
-      int nodeID = task->get_unique_id() % numNodes;
+      Domain indexSpaceDomain = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
+      Rect<image_region_dimensions> imageBounds = indexSpaceDomain.get_rect<image_region_dimensions>();
+
+      int nodeID = imageBounds.lo.x[2];//TODO abstract the use of [2] throughout this code
       storeMyNodeID(nodeID, numNodes);
       
       // load the bounds of the local simulation subdomain (axis aligned bounding box)
@@ -386,12 +353,12 @@ namespace Legion {
     
     void ImageReduction::createTreeDomains(int nodeID, int numTreeLevels, Runtime* runtime, ImageSize imageSize) {
       mHierarchicalTreeDomain = std::vector<Domain>();
-      Point<IMAGE_REDUCTION_DIMENSIONS> numFragments = imageSize.numFragments() - Point<IMAGE_REDUCTION_DIMENSIONS>::ONES();
+      Point<image_region_dimensions> numFragments = imageSize.numFragments() - Point<image_region_dimensions>::ONES();
       int numLeaves = 1;
       for(int level = 0; level < numTreeLevels; ++level) {
         numFragments.x[2] = numLeaves - 1;
-        Rect<IMAGE_REDUCTION_DIMENSIONS> launchBounds(Point<IMAGE_REDUCTION_DIMENSIONS>::ZEROES(), numFragments);
-        Domain domain = Domain::from_rect<IMAGE_REDUCTION_DIMENSIONS>(launchBounds);
+        Rect<image_region_dimensions> launchBounds(Point<image_region_dimensions>::ZEROES(), numFragments);
+        Domain domain = Domain::from_rect<image_region_dimensions>(launchBounds);
         mHierarchicalTreeDomain.push_back(domain);
         numLeaves *= 2;
       }
@@ -409,11 +376,15 @@ namespace Legion {
     }
     
     
-    void ImageReduction::createImageFieldPointer(RegionAccessor<AccessorType::Generic, PixelField> &acc, int fieldID, PixelField *&field,
-                                                 Rect<IMAGE_REDUCTION_DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]) {
+    void ImageReduction::createImageFieldPointer(RegionAccessor<AccessorType::Generic, PixelField> &acc,
+                                                 int fieldID,
+                                                 PixelField *&field,
+                                                 Rect<image_region_dimensions> imageBounds,
+                                                 PhysicalRegion region,
+                                                 ByteOffset offset[image_region_dimensions]) {
       acc = region.get_field_accessor(fieldID).typeify<PixelField>();
-      Rect<IMAGE_REDUCTION_DIMENSIONS> tempBounds;
-      field = acc.raw_rect_ptr<IMAGE_REDUCTION_DIMENSIONS>(imageBounds, tempBounds, offset);
+      Rect<image_region_dimensions> tempBounds;
+      field = acc.raw_rect_ptr<image_region_dimensions>(imageBounds, tempBounds, offset);
       assert(imageBounds == tempBounds);
     }
     
@@ -426,21 +397,21 @@ namespace Legion {
                                                      PixelField *&a,
                                                      PixelField *&z,
                                                      PixelField *&userdata,
-                                                     ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS],
+                                                     ByteOffset stride[numPixelFields][image_region_dimensions],
                                                      Runtime *runtime,
                                                      Context context) {
       
       Domain indexSpaceDomain = runtime->get_index_space_domain(context, region.get_logical_region().get_index_space());
-      Rect<IMAGE_REDUCTION_DIMENSIONS> imageBounds = indexSpaceDomain.get_rect<IMAGE_REDUCTION_DIMENSIONS>();
+      Rect<image_region_dimensions> imageBounds = indexSpaceDomain.get_rect<image_region_dimensions>();
       
       RegionAccessor<AccessorType::Generic, PixelField> acc_r, acc_g, acc_b, acc_a, acc_z, acc_userdata;
       
-      createImageFieldPointer(acc_r, FID_FIELD_R, r, imageBounds, region, stride);
-      createImageFieldPointer(acc_g, FID_FIELD_G, g, imageBounds, region, stride);
-      createImageFieldPointer(acc_b, FID_FIELD_B, b, imageBounds, region, stride);
-      createImageFieldPointer(acc_a, FID_FIELD_A, a, imageBounds, region, stride);
-      createImageFieldPointer(acc_z, FID_FIELD_Z, z, imageBounds, region, stride);
-      createImageFieldPointer(acc_userdata, FID_FIELD_USERDATA, userdata, imageBounds, region, stride);
+      createImageFieldPointer(acc_r, FID_FIELD_R, r, imageBounds, region, stride[FID_FIELD_R]);
+      createImageFieldPointer(acc_g, FID_FIELD_G, g, imageBounds, region, stride[FID_FIELD_G]);
+      createImageFieldPointer(acc_b, FID_FIELD_B, b, imageBounds, region, stride[FID_FIELD_B]);
+      createImageFieldPointer(acc_a, FID_FIELD_A, a, imageBounds, region, stride[FID_FIELD_A]);
+      createImageFieldPointer(acc_z, FID_FIELD_Z, z, imageBounds, region, stride[FID_FIELD_Z]);
+      createImageFieldPointer(acc_userdata, FID_FIELD_USERDATA, userdata, imageBounds, region, stride[FID_FIELD_USERDATA]);
     }
     
     
@@ -465,6 +436,20 @@ namespace Legion {
     
     
     
+#ifdef DEBUG
+    static void dumpImage(ImageReduction::PixelField *rr, ImageReduction::PixelField*gg, ImageReduction::PixelField*bb, ImageReduction::PixelField*aa, ImageReduction::PixelField*zz, ImageReduction::PixelField*uu, ByteOffset stride[ImageReduction::numPixelFields][image_region_dimensions], char *text) {
+      std::cout << std::endl;
+      std::cout << text << std::endl;
+      for(int i = 0; i < 10; ++i) {
+        std::cout << text << " pixel " << i << ": ";
+        std::cout << rr[0] << "\t" << gg[0] << "\t" << bb[0] << "\t" << aa[0] << "\t" << zz[0] << "\t" << uu[0] << std::endl;
+        ImageReductionComposite::increment(rr, gg, bb, aa, zz, uu, stride);
+      }
+    }
+#endif
+
+    
+    
     
     void ImageReduction::composite_task(const Task *task,
                                         const std::vector<PhysicalRegion> &regions,
@@ -477,9 +462,7 @@ namespace Legion {
       PhysicalRegion fragment0 = regions[0];
       PhysicalRegion fragment1 = regions[1];
       
-      std::cout << describe_task(task) << std::endl;
-      
-      ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS];
+      ByteOffset stride[numPixelFields][image_region_dimensions];
       PixelField *r0, *g0, *b0, *a0, *z0, *userdata0;
       PixelField *r1, *g1, *b1, *a1, *z1, *userdata1;
       ImageReductionComposite::CompositeFunction* compositeFunction;
@@ -487,8 +470,7 @@ namespace Legion {
       create_image_field_pointers(args.imageSize, fragment0, r0, g0, b0, a0, z0, userdata0, stride, runtime, ctx);
       create_image_field_pointers(args.imageSize, fragment1, r1, g1, b1, a1, z1, userdata1, stride, runtime, ctx);
       compositeFunction = ImageReductionComposite::compositeFunctionPointer(args.depthFunction, args.blendFunctionSource, args.blendFunctionDestination);
-      compositeFunction(r0, g0, b0, a0, z0, userdata0, r1, g1, b1, a1, z1, userdata1, r0, g0, b0, a0, z0, userdata0, args.imageSize.numPixelsPerFragment());
-      
+      compositeFunction(r0, g0, b0, a0, z0, userdata0, r1, g1, b1, a1, z1, userdata1, r0, g0, b0, a0, z0, userdata0, args.imageSize.numPixelsPerFragment(), stride);
     }
     
     
@@ -509,9 +491,7 @@ namespace Legion {
       Domain launchDomain = mHierarchicalTreeDomain[treeLevel - 1];
       CompositeProjectionFunctor* functor0 = getCompositeProjectionFunctor(nodeID, maxTreeLevel, maxTreeLevel);
       CompositeProjectionFunctor* functor1 = getCompositeProjectionFunctor(nodeID, maxTreeLevel, treeLevel - 1);
-      
-      std::cout << "launch tree level " << treeLevel - 1 << " with functors " << functor0->to_string() << " and " << functor1->to_string() << " domain " << launchDomain << std::endl;
-      
+            
       ArgumentMap argMap;
       CompositeArguments args = { imageSize, depthFunc, blendFuncSource, blendFuncDestination };
       IndexTaskLauncher treeCompositeLauncher(compositeTaskID, launchDomain, TaskArgument(&args, sizeof(args)), argMap);
@@ -520,7 +500,7 @@ namespace Legion {
       addImageFieldsToRequirement(req0);
       treeCompositeLauncher.add_region_requirement(req0);
       
-      RegionRequirement req1(sourceFragmentPartition, functor1->id(), READ_ONLY, SIMULTANEOUS, image);
+      RegionRequirement req1(sourceFragmentPartition, functor1->id(), READ_ONLY, EXCLUSIVE, image);
       addImageFieldsToRequirement(req1);
       treeCompositeLauncher.add_region_requirement(req1);
       
@@ -533,54 +513,6 @@ namespace Legion {
       
     }
     
-    
-    // this task sorts the data from the source image into the scratch image
-    
-    void ImageReduction::accessor_task(const Task *task,
-                                       const std::vector<PhysicalRegion> &regions,
-                                       Context ctx, HighLevelRuntime *runtime) {
-      
-      ImageSize imageSize = ((ImageSize*)task->args)[0];
-      PhysicalRegion source = regions[0];
-      PhysicalRegion destination = regions[1];
-      
-      Domain sourceDomain = runtime->get_index_space_domain(ctx, source.get_logical_region().get_index_space());
-      Domain destinationDomain = runtime->get_index_space_domain(ctx, destination.get_logical_region().get_index_space());
-      std::cout << describe_task(task) << " copy fragment from source " << sourceDomain.get_rect<IMAGE_REDUCTION_DIMENSIONS>() << " to scratch " << destinationDomain.get_rect<IMAGE_REDUCTION_DIMENSIONS>() << std::endl;
-      
-      ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS];
-      PixelField *r0, *g0, *b0, *a0, *z0, *userdata0;
-      PixelField *r1, *g1, *b1, *a1, *z1, *userdata1;
-      ImageReductionComposite::CompositeFunction* compositeFunction;
-      
-      create_image_field_pointers(imageSize, source, r0, g0, b0, a0, z0, userdata0, stride, runtime, ctx);
-      create_image_field_pointers(imageSize, destination, r1, g1, b1, a1, z1, userdata1, stride, runtime, ctx);
-      compositeFunction = ImageReductionComposite::compositeFunctionPointer(GL_ALWAYS, 0, 0);
-      compositeFunction(r0, g0, b0, a0, z0, userdata0, r1, g1, b1, a1, z1, userdata1, r1, g1, b1, a1, z1, userdata1, imageSize.numPixelsPerFragment());
-    }
-    
-    
-    FutureMap ImageReduction::launchAccessorTasks() {
-      ArgumentMap argMap;
-      IndexTaskLauncher accessorLauncher(mAccessorTaskID, mSourceFragmentDomain, TaskArgument(&mImageSize, sizeof(mImageSize)), argMap);
-      
-      AccessorProjectionFunctor *functor = retrieveMyAccessorProjectionFunctor(accessorFunctorID(mLocalCopyOfNodeID));
-      
-      std::cout << "launch accessors localNodeID " << mLocalCopyOfNodeID
-      << " functor id " << functor->id() << std::endl;
-      
-      RegionRequirement sourceRequirement(mSourceFragmentPartition, functor->id(), READ_ONLY, SIMULTANEOUS, mSourceImage);
-      addImageFieldsToRequirement(sourceRequirement);
-      accessorLauncher.add_region_requirement(sourceRequirement);
-      
-      RegionRequirement scratchRequirement(mScratchFragmentPartition, 0, WRITE_DISCARD, EXCLUSIVE, mScratchImage);
-      addImageFieldsToRequirement(scratchRequirement);
-      accessorLauncher.add_region_requirement(scratchRequirement);
-      
-      FutureMap futures = mRuntime->execute_index_space(mContext, accessorLauncher);
-      return futures;
-      
-    }
     
     
     FutureMap ImageReduction::reduceAssociative() {
@@ -861,12 +793,12 @@ namespace Legion {
       UsecTimer display(describe_task(task) + " write to " + outputFileName + ":");
       display.start();
       PhysicalRegion displayPlane = regions[0];
-      ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS];
+      ByteOffset stride[numPixelFields][image_region_dimensions];
       PixelField *r, *g, *b, *a, *z, *userdata;
       create_image_field_pointers(args.imageSize, displayPlane, r, g, b, a, z, userdata, stride, runtime, ctx);
       
       FILE *outputFile = fopen(outputFileName.c_str(), "wb");
-      fwrite(r, 6 * sizeof(*r), args.imageSize.pixelsPerLayer(), outputFile);
+      fwrite(r, numPixelFields * sizeof(*r), args.imageSize.pixelsPerLayer(), outputFile);
       fclose(outputFile);
       
       display.stop();
@@ -878,7 +810,7 @@ namespace Legion {
     Future ImageReduction::display(int t) {
       DisplayArguments args = { mImageSize, t };
       TaskLauncher taskLauncher(mDisplayTaskID, TaskArgument(&args, sizeof(args)));
-      DomainPoint origin = DomainPoint::from_point<IMAGE_REDUCTION_DIMENSIONS>(Point<IMAGE_REDUCTION_DIMENSIONS>::ZEROES());
+      DomainPoint origin = DomainPoint::from_point<image_region_dimensions>(Point<image_region_dimensions>::ZEROES());
       LogicalRegion displayPlane = mRuntime->get_logical_subregion_by_color(mDepthPartition, origin);
       RegionRequirement req(displayPlane, READ_ONLY, EXCLUSIVE, mSourceImage);
       addImageFieldsToRequirement(req);

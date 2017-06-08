@@ -18,7 +18,6 @@
 #define image_reduction_h
 
 #include "legion_visualization.h"
-#include "image_reduction_composite.h"
 
 #include "usec_timer.h"
 
@@ -62,10 +61,23 @@ namespace Legion {
         ImageSize imageSize;
         int t;
       } DisplayArguments;
-      
-      typedef std::vector<Future> FutureSet;
-      
+
     public:
+
+      enum FieldIDs {
+        FID_FIELD_R = 0,
+        FID_FIELD_G,
+        FID_FIELD_B,
+        FID_FIELD_A,
+        FID_FIELD_Z,
+        FID_FIELD_USERDATA,
+      };
+      
+
+      typedef float PixelField;
+      static const int numPixelFields = 6;//rgbazu
+      static const int num_fragments_per_composite = 2;
+      
       
       typedef float SimulationBoundsCoordinate;
       /**
@@ -176,7 +188,7 @@ namespace Legion {
                                               PixelField *&a,
                                               PixelField *&z,
                                               PixelField *&userdata,
-                                              ByteOffset stride[IMAGE_REDUCTION_DIMENSIONS],
+                                              ByteOffset stride[numPixelFields][image_region_dimensions],
                                               Runtime *runtime,
                                               Context context);
       
@@ -201,44 +213,7 @@ namespace Legion {
                                Context ctx, Runtime *runtime);
       
     protected:
-      
-      class AccessorProjectionFunctor : public ProjectionFunctor {
-      public:
-        AccessorProjectionFunctor(SimulationBoundsCoordinate* bounds, int numBounds, int functorID){
-          mBounds = bounds;
-          mNumBounds = numBounds;
-          mID = functorID;
-        }
-        
-        virtual LogicalRegion project(const Mappable *mappable, unsigned index,
-                                      LogicalPartition upperBound,
-                                      const DomainPoint &point) {
-          
-          std::cout << "accessor functor " << point << " remap to " << newPoint(point) << std::endl;
-          
-          LogicalRegion result = Legion::Runtime::get_runtime()->get_logical_subregion_by_color(upperBound, newPoint(point));
-          return result;
-        }
-        
-        
-        int id() const{ return mID; }
-        
-        virtual bool is_exclusive(void) const{ return true; }
-        virtual unsigned get_depth(void) const{ return 0; }
-        
-      private:
-        SimulationBoundsCoordinate* mBounds;
-        int mNumBounds;
-        int mID;
-        
-        DomainPoint newPoint(DomainPoint point) {
-          int nodeID = point[2];
-          SimulationBoundsCoordinate* bounds = mBounds + nodeID * fieldsPerSimulationBounds;
-          point[2] = subdomainToCompositeIndex(bounds, mNumBounds);
-          return point;
-        }
-      };
-      
+            
       class CompositeProjectionFunctor : public ProjectionFunctor {
       public:
         CompositeProjectionFunctor(int offset, int numBounds, int id) {
@@ -252,14 +227,11 @@ namespace Legion {
                                       const DomainPoint &point) {
           int launchDomainLayer = point[2];
           DomainPoint remappedPoint = point;
-          int remappedLayer = launchDomainLayer * NUM_FRAGMENTS_PER_COMPOSITE_TASK + mOffset;
+          int remappedLayer = launchDomainLayer * num_fragments_per_composite + mOffset;
           // handle non-power of 2 simulation size
           if(remappedLayer < mNumBounds) {
             remappedPoint[2] = remappedLayer;
           }
-          
-          std::cout << to_string() << " " << point << " remapped to " << remappedPoint << std::endl;
-          
           
           LogicalRegion result = Legion::Runtime::get_runtime()->get_logical_subregion_by_color(upperBound, remappedPoint);
           return result;
@@ -292,20 +264,12 @@ namespace Legion {
       
       static void storeMyNodeID(int nodeID, int numNodes);
             
-      static void storeMyAccessorProjectionFunctor(int functorID, AccessorProjectionFunctor* functor, int numNodes, int nodeID);
-      
-      static AccessorProjectionFunctor* retrieveMyAccessorProjectionFunctor(int nodeID);
-      
       static void createProjectionFunctors(int nodeID, int numBounds, Runtime* runtime, ImageSize imageSize);
       
       
       static void initial_task(const Task *task,
                                const std::vector<PhysicalRegion> &regions,
                                Context ctx, Runtime *runtime);
-      
-      static void accessor_task(const Task *task,
-                                const std::vector<PhysicalRegion> &regions,
-                                Context ctx, Runtime *runtime);
       
       static void composite_task(const Task *task,
                                  const std::vector<PhysicalRegion> &regions,
@@ -314,6 +278,7 @@ namespace Legion {
       
       
       
+      void deleteProjectionFunctors();
       void initializeNodes();
       void initializeViewMatrix();
       void createTreeDomains(int nodeID, int numTreeLevels, Runtime* runtime, ImageSize mImageSize);
@@ -321,9 +286,6 @@ namespace Legion {
       void createImage(LogicalRegion &region, Domain &domain);
       void partitionImageByDepth(LogicalRegion image, Domain &domain, LogicalPartition &partition);
       void partitionImageByFragment(LogicalRegion image, Domain &domain, LogicalPartition &partition);
-      
-      FutureMap launchScreenSpaceTasks(bool isAssociative);
-      FutureMap launchAccessorTasks();
       
       FutureMap reduceAssociative();
       FutureMap reduceNonassociative();
@@ -336,8 +298,15 @@ namespace Legion {
       
       static void addImageFieldsToRequirement(RegionRequirement &req);
       
-      static void createImageFieldPointer(LegionRuntime::Accessor::RegionAccessor<LegionRuntime::Accessor::AccessorType::Generic, PixelField> &acc, int fieldID, PixelField *&field,
-                                          Rect<IMAGE_REDUCTION_DIMENSIONS> imageBounds, PhysicalRegion region, ByteOffset offset[]);
+      
+      static void createImageFieldPointer(LegionRuntime::Accessor::RegionAccessor<LegionRuntime::Accessor::AccessorType::Generic, PixelField> &acc,
+                                          int fieldID,
+                                          PixelField *&field,
+                                          Rect<image_region_dimensions> imageBounds,
+                                          PhysicalRegion region,
+                                          ByteOffset offset[image_region_dimensions]);
+      
+      
       
       static int numTreeLevels(ImageSize imageSize);
       
@@ -360,15 +329,12 @@ namespace Legion {
       LogicalRegion mSourceImage;
       LogicalRegion mScratchImage;
       Domain mSourceImageDomain;
-      Domain mScratchImageDomain;
       Domain mDepthDomain;
       Domain mCompositePipelineDomain;
       Domain mDisplayDomain;
       Domain mSourceFragmentDomain;
-      Domain mScratchFragmentDomain;
       LogicalPartition mDepthPartition;
       LogicalPartition mSourceFragmentPartition;
-      LogicalPartition mScratchFragmentPartition;
       TaskID mInitialTaskID;
       TaskID mAccessorTaskID;
       TaskID mCompositeTaskID;
@@ -380,13 +346,12 @@ namespace Legion {
       int mLocalCopyOfNodeID;
       
     public:
-      static const int fieldsPerSimulationBounds = 2 * IMAGE_REDUCTION_DIMENSIONS;
+      static const int fieldsPerSimulationBounds = 2 * image_region_dimensions;
       static int* mNodeID;
       static SimulationBoundsCoordinate *mMySimulationBounds;
       static SimulationBoundsCoordinate *mSimulationBounds;
       static int mNumSimulationBounds;
       static SimulationBoundsCoordinate mXMax, mXMin, mYMax, mYMin, mZMax, mZMin;
-      static AccessorProjectionFunctor **mAccessorProjectionFunctor;
       static int mNodeCount;
       static std::vector<CompositeProjectionFunctor*> mCompositeProjectionFunctor;
       static std::vector<Domain> mHierarchicalTreeDomain;

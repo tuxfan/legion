@@ -20,8 +20,6 @@
 #include "legion.h"
 #include "legion_visualization.h"
 
-#include "image_reduction.h"
-
 #ifdef __APPLE__
 #include <OpenGL/OpenGL.h>
 #include <OpenGL/gl.h>
@@ -31,31 +29,68 @@
 
 #include <stdio.h>
 
-
-using namespace Legion::Visualization;
-
-class ImageReductionComposite {
-public:
-    typedef void(CompositeFunction)
-    (PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, PixelField*,
-    PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, PixelField*,
-    PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, PixelField*, int);
-
-    static CompositeFunction* compositeFunctionPointer(GLenum depthFunction, GLenum blendFunctionSource, GLenum blendFunctionDestination);
-
+namespace Legion {
+  namespace Visualization {
     
-    static CompositeFunction compositePixelsNever;
-    static CompositeFunction compositePixelsLess;
-    static CompositeFunction compositePixelsEqual;
-    static CompositeFunction compositePixelsLEqual;
-    static CompositeFunction compositePixelsGreater;
-    static CompositeFunction compositePixelsNotEqual;
-    static CompositeFunction compositePixelsGEqual;
-    static CompositeFunction compositePixelsAlways;
-
-private:
-};
-
+    
+    class ImageReductionComposite {
+    public:
+      
+      typedef void(CompositeFunction)
+      (ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      ImageReduction::PixelField*,
+      int,
+      Legion::ByteOffset[ImageReduction::numPixelFields][image_region_dimensions]);
+      
+      static CompositeFunction* compositeFunctionPointer(GLenum depthFunction, GLenum blendFunctionSource, GLenum blendFunctionDestination);
+      
+      
+      static CompositeFunction compositePixelsNever;
+      static CompositeFunction compositePixelsLess;
+      static CompositeFunction compositePixelsEqual;
+      static CompositeFunction compositePixelsLEqual;
+      static CompositeFunction compositePixelsGreater;
+      static CompositeFunction compositePixelsNotEqual;
+      static CompositeFunction compositePixelsGEqual;
+      static CompositeFunction compositePixelsAlways;
+      
+      static inline void increment(ImageReduction::PixelField *&r,
+                                   ImageReduction::PixelField *&g,
+                                   ImageReduction::PixelField *&b,
+                                   ImageReduction::PixelField *&a,
+                                   ImageReduction::PixelField *&z,
+                                   ImageReduction::PixelField *&userdata,
+                                   Legion::ByteOffset stride[ImageReduction::numPixelFields][image_region_dimensions]) {
+        r += stride[ImageReduction::FID_FIELD_R][0];
+        g += stride[ImageReduction::FID_FIELD_G][0];
+        b += stride[ImageReduction::FID_FIELD_B][0];
+        a += stride[ImageReduction::FID_FIELD_A][0];
+        z += stride[ImageReduction::FID_FIELD_Z][0];
+        userdata += stride[ImageReduction::FID_FIELD_USERDATA][0];
+      }
+      
+      
+    private:
+    };
+    
+  }
+}
 
 
 #endif /* ImageReductionComposite_h */
