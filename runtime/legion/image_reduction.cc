@@ -28,15 +28,43 @@ using namespace LegionRuntime::Accessor;
 namespace Legion {
   namespace Visualization {
     
+    
+    // declare module static data
+    
+    int *ImageReduction::mNodeID;
+    ImageReduction::SimulationBoundsCoordinate *ImageReduction::mMySimulationBounds;
+    ImageReduction::SimulationBoundsCoordinate *ImageReduction::mSimulationBounds;
+    int ImageReduction::mNumSimulationBounds;
+    ImageReduction::SimulationBoundsCoordinate ImageReduction::mXMax;
+    ImageReduction::SimulationBoundsCoordinate ImageReduction::mXMin;
+    ImageReduction::SimulationBoundsCoordinate ImageReduction::mYMax;
+    ImageReduction::SimulationBoundsCoordinate ImageReduction::mYMin;
+    ImageReduction::SimulationBoundsCoordinate ImageReduction::mZMax;
+    ImageReduction::SimulationBoundsCoordinate ImageReduction::mZMin;
+    std::vector<ImageReduction::CompositeProjectionFunctor*> *ImageReduction::mCompositeProjectionFunctor = NULL;
+    int ImageReduction::mNodeCount;
+    std::vector<Domain> *ImageReduction::mHierarchicalTreeDomain = NULL;
+    GLfloat ImageReduction::mGlViewTransform[16];
+    ImageReduction::PixelField ImageReduction::mGlConstantColor[numPixelFields];
+    GLenum ImageReduction::mGlBlendEquation;
+    GLenum ImageReduction::mGlBlendFunctionSource;
+    GLenum ImageReduction::mGlBlendFunctionDestination;
+    
+    
     ImageReduction::ImageReduction(ImageSize imageSize, Context context, HighLevelRuntime *runtime) {
       mImageSize = imageSize;
       mContext = context;
       mRuntime = runtime;
       mDepthFunction = 0;
-      mBlendFunctionSource = 0;
-      mBlendFunctionDestination = 0;
+      mGlBlendFunctionSource = 0;
+      mGlBlendFunctionDestination = 0;
       mMySimulationBounds = NULL;
       mNodeID = NULL;
+      
+      mGlBlendEquation = GL_FUNC_ADD;
+      mGlBlendFunctionSource = 0;
+      mGlBlendFunctionDestination = 0;
+      mDepthFunction = 0;
       
       createImage(mSourceImage, mSourceImageDomain);
       partitionImageByDepth(mSourceImage, mDepthDomain, mDepthPartition);
@@ -53,25 +81,17 @@ namespace Legion {
     ImageReduction::~ImageReduction() {
       if(mMySimulationBounds != NULL) {
         delete [] mMySimulationBounds;
+        mMySimulationBounds = NULL;
       }
-      deleteProjectionFunctors();
+      if(mHierarchicalTreeDomain != NULL) {
+        delete mHierarchicalTreeDomain;
+        mHierarchicalTreeDomain = NULL;
+      }
+      if(mCompositeProjectionFunctor != NULL) {
+        delete mCompositeProjectionFunctor;
+        mCompositeProjectionFunctor = NULL;
+      }
     }
-    
-    
-    int *ImageReduction::mNodeID;
-    ImageReduction::SimulationBoundsCoordinate *ImageReduction::mMySimulationBounds;
-    ImageReduction::SimulationBoundsCoordinate *ImageReduction::mSimulationBounds;
-    int ImageReduction::mNumSimulationBounds;
-    ImageReduction::SimulationBoundsCoordinate ImageReduction::mXMax;
-    ImageReduction::SimulationBoundsCoordinate ImageReduction::mXMin;
-    ImageReduction::SimulationBoundsCoordinate ImageReduction::mYMax;
-    ImageReduction::SimulationBoundsCoordinate ImageReduction::mYMin;
-    ImageReduction::SimulationBoundsCoordinate ImageReduction::mZMax;
-    ImageReduction::SimulationBoundsCoordinate ImageReduction::mZMin;
-    std::vector<ImageReduction::CompositeProjectionFunctor*> ImageReduction::mCompositeProjectionFunctor;
-    int ImageReduction::mNodeCount;
-    std::vector<Domain> ImageReduction::mHierarchicalTreeDomain;
-    GLfloat ImageReduction::mViewMatrix[16];
     
     
     // this function should be called prior to starting the Legion runtime
@@ -225,7 +245,7 @@ namespace Legion {
     }
     
     
-      
+    
     
     
     ////////////////
@@ -246,70 +266,26 @@ namespace Legion {
     
     
     
-    static int compositeProjectionFunctorID(int numNodes, int numLevels, int level, int nodeID) {
-      // TO DO make this an array of dynamically generated ids to avoid conflicts with other functors
-      int compositeFunctorIndex = nodeID * (numLevels + 1) + level;
-      return 1 + compositeFunctorIndex;
-    }
-    
-    
-    static int numCompositeProjectionFunctorsPerNode(int maxTreeLevel) {
-      return maxTreeLevel * maxTreeLevel / 2 + 1;
-    }
-    
-    
-    static int compositeProjectionFunctorIndex(int maxTreeLevel, int nodeID, int level) {
-      int index = numCompositeProjectionFunctorsPerNode(maxTreeLevel) * (nodeID + 1) - (level + 1);
-      return index;
-    }
-    
-    
-    ImageReduction::CompositeProjectionFunctor* ImageReduction::getCompositeProjectionFunctor(int nodeID, int maxTreeLevel, int level) {
-      
-      int index = compositeProjectionFunctorIndex(maxTreeLevel, nodeID, level);
-      CompositeProjectionFunctor* result = mCompositeProjectionFunctor[index];
-      return result;
-    }
-    
-    
-    
-    ImageReduction::CompositeProjectionFunctor* ImageReduction::makeCompositeProjectionFunctor(int offset, int numBounds, int nodeID, int level, int numLevels, Runtime* runtime) {
-      int id = compositeProjectionFunctorID(numBounds, numLevels, level, nodeID);
-      CompositeProjectionFunctor* functor = new CompositeProjectionFunctor(offset, numBounds, id);
-      runtime->register_projection_functor(id, functor);
-      return functor;
-    }
-    
-    
-    
     void ImageReduction::createProjectionFunctors(int nodeID, int numBounds, Runtime* runtime, ImageSize imageSize) {
       
+      if(mCompositeProjectionFunctor == NULL) {
+        mCompositeProjectionFunctor = new std::vector<CompositeProjectionFunctor*>();
+      }
+      
       int numLevels = numTreeLevels(imageSize);
-      if(mCompositeProjectionFunctor.empty()) {
-        int numFunctors = numCompositeProjectionFunctorsPerNode(numLevels) * numBounds;
-        mCompositeProjectionFunctor = std::vector<CompositeProjectionFunctor*>(numFunctors);
-      }
       
-      
-      int offset = (int)powf(2.0f, numLevels - 1);
-      for(int level = 0; level <= numLevels; level++) {
-        CompositeProjectionFunctor* functor = makeCompositeProjectionFunctor(offset, numBounds, nodeID, level, numLevels, runtime);
-        int index = compositeProjectionFunctorIndex(numLevels, nodeID, level);
-        mCompositeProjectionFunctor[index] = functor;
-        offset /= 2;
-      }
-    }
-    
-    
-    void ImageReduction::deleteProjectionFunctors() {
-      if(!mCompositeProjectionFunctor.empty()) {
-        for(int i = 0; i < mCompositeProjectionFunctor.size(); ++i) {
-          CompositeProjectionFunctor* functor = mCompositeProjectionFunctor[i];
+      for(int level = 0; level <= numLevels; ++level) {
+        if(level >= mCompositeProjectionFunctor->size()) {
+          int offset = (level == 0) ? 0 : (int)powf(2.0f, level - 1);
+          ProjectionID id = runtime->generate_dynamic_projection_id();
+          CompositeProjectionFunctor* functor = new CompositeProjectionFunctor(offset, numBounds, id);
+          runtime->register_projection_functor(id, functor);
+          mCompositeProjectionFunctor->push_back(functor);
+          
+          std::cout << "made a new functor level " << level << " offset " << offset << " vectorsize " << mCompositeProjectionFunctor->size() << std::endl;
         }
       }
     }
-    
-    
     
     
     void ImageReduction::initial_task(const Task *task,
@@ -324,7 +300,7 @@ namespace Legion {
       // set the node ID
       Domain indexSpaceDomain = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
       Rect<image_region_dimensions> imageBounds = indexSpaceDomain.get_rect<image_region_dimensions>();
-
+      
       int nodeID = imageBounds.lo.x[2];//TODO abstract the use of [2] throughout this code
       storeMyNodeID(nodeID, numNodes);
       
@@ -346,20 +322,29 @@ namespace Legion {
     
     
     void ImageReduction::initializeViewMatrix() {
-      memset(mViewMatrix, 0, sizeof(mViewMatrix));
-      mViewMatrix[0] = mViewMatrix[5] = mViewMatrix[10] = mViewMatrix[15] = 1.0f;
+      memset(mGlViewTransform, 0, sizeof(mGlViewTransform));
+      mGlViewTransform[0] = mGlViewTransform[5] = mGlViewTransform[10] = mGlViewTransform[15] = 1.0f;
     }
     
     
     void ImageReduction::createTreeDomains(int nodeID, int numTreeLevels, Runtime* runtime, ImageSize imageSize) {
-      mHierarchicalTreeDomain = std::vector<Domain>();
+      if(mHierarchicalTreeDomain == NULL) {
+        mHierarchicalTreeDomain = new std::vector<Domain>();
+      }
+      
       Point<image_region_dimensions> numFragments = imageSize.numFragments() - Point<image_region_dimensions>::ONES();
       int numLeaves = 1;
+      
       for(int level = 0; level < numTreeLevels; ++level) {
-        numFragments.x[2] = numLeaves - 1;
-        Rect<image_region_dimensions> launchBounds(Point<image_region_dimensions>::ZEROES(), numFragments);
-        Domain domain = Domain::from_rect<image_region_dimensions>(launchBounds);
-        mHierarchicalTreeDomain.push_back(domain);
+        if(level >= mHierarchicalTreeDomain->size()) {
+          numFragments.x[2] = numLeaves - 1;
+          Rect<image_region_dimensions> launchBounds(Point<image_region_dimensions>::ZEROES(), numFragments);
+          Domain domain = Domain::from_rect<image_region_dimensions>(launchBounds);
+          mHierarchicalTreeDomain->push_back(domain);
+          
+          std::cout << "domain level " << level << " " << domain.get_rect<image_region_dimensions>() << std::endl;
+          
+        }
         numLeaves *= 2;
       }
       
@@ -397,7 +382,7 @@ namespace Legion {
                                                      PixelField *&a,
                                                      PixelField *&z,
                                                      PixelField *&userdata,
-                                                     ByteOffset stride[numPixelFields][image_region_dimensions],
+                                                     Stride stride,
                                                      Runtime *runtime,
                                                      Context context) {
       
@@ -418,7 +403,7 @@ namespace Legion {
     FutureMap ImageReduction::launch_task_by_depth(unsigned taskID, void *args, int argLen, bool blocking){
       ArgumentMap argMap;
       int totalArgLen = sizeof(mImageSize) + argLen;
-      char argsBuffer[totalArgLen];
+      char *argsBuffer = new char[totalArgLen];
       memcpy(argsBuffer, &mImageSize, sizeof(mImageSize));
       if(argLen > 0) {
         memcpy(argsBuffer + sizeof(mImageSize), args, argLen);
@@ -431,13 +416,14 @@ namespace Legion {
       if(blocking) {
         futures.wait_all_results();
       }
+      delete [] argsBuffer;
       return futures;
     }
     
     
     
 #ifdef DEBUG
-    static void dumpImage(ImageReduction::PixelField *rr, ImageReduction::PixelField*gg, ImageReduction::PixelField*bb, ImageReduction::PixelField*aa, ImageReduction::PixelField*zz, ImageReduction::PixelField*uu, ByteOffset stride[ImageReduction::numPixelFields][image_region_dimensions], char *text) {
+    static void dumpImage(ImageReduction::PixelField *rr, ImageReduction::PixelField*gg, ImageReduction::PixelField*bb, ImageReduction::PixelField*aa, ImageReduction::PixelField*zz, ImageReduction::PixelField*uu, ImageReduction::Stride stride, char *text) {
       std::cout << std::endl;
       std::cout << text << std::endl;
       for(int i = 0; i < 10; ++i) {
@@ -447,7 +433,7 @@ namespace Legion {
       }
     }
 #endif
-
+    
     
     
     
@@ -462,38 +448,33 @@ namespace Legion {
       PhysicalRegion fragment0 = regions[0];
       PhysicalRegion fragment1 = regions[1];
       
-      ByteOffset stride[numPixelFields][image_region_dimensions];
+      Stride stride;
       PixelField *r0, *g0, *b0, *a0, *z0, *userdata0;
       PixelField *r1, *g1, *b1, *a1, *z1, *userdata1;
       ImageReductionComposite::CompositeFunction* compositeFunction;
       
       create_image_field_pointers(args.imageSize, fragment0, r0, g0, b0, a0, z0, userdata0, stride, runtime, ctx);
       create_image_field_pointers(args.imageSize, fragment1, r1, g1, b1, a1, z1, userdata1, stride, runtime, ctx);
-      compositeFunction = ImageReductionComposite::compositeFunctionPointer(args.depthFunction, args.blendFunctionSource, args.blendFunctionDestination);
+      compositeFunction = ImageReductionComposite::compositeFunctionPointer(args.depthFunction, args.blendFunctionSource, args.blendFunctionDestination, args.blendEquation);
       compositeFunction(r0, g0, b0, a0, z0, userdata0, r1, g1, b1, a1, z1, userdata1, r0, g0, b0, a0, z0, userdata0, args.imageSize.numPixelsPerFragment(), stride);
     }
     
     
     
     
-    void ImageReduction::launchPipelineReduction(ScreenSpaceArguments args) {
-      
-    }
-    
-    
-    
     
     FutureMap ImageReduction::launchTreeReduction(ImageSize imageSize, int treeLevel, int functorLevel, int offset,
-                                                  GLenum depthFunc, GLenum blendFuncSource, GLenum blendFuncDestination,
+                                                  GLenum depthFunc, GLenum blendFuncSource, GLenum blendFuncDestination, GLenum blendEquation,
                                                   int compositeTaskID, LogicalPartition sourceFragmentPartition, LogicalRegion image,
                                                   Runtime* runtime, Context context,
                                                   int nodeID, int maxTreeLevel) {
-      Domain launchDomain = mHierarchicalTreeDomain[treeLevel - 1];
-      CompositeProjectionFunctor* functor0 = getCompositeProjectionFunctor(nodeID, maxTreeLevel, maxTreeLevel);
-      CompositeProjectionFunctor* functor1 = getCompositeProjectionFunctor(nodeID, maxTreeLevel, treeLevel - 1);
-            
+      
+      Domain launchDomain = (*mHierarchicalTreeDomain)[treeLevel - 1];
+      CompositeProjectionFunctor* functor0 = (*mCompositeProjectionFunctor)[0];
+      CompositeProjectionFunctor* functor1 = (*mCompositeProjectionFunctor)[functorLevel];
+      
       ArgumentMap argMap;
-      CompositeArguments args = { imageSize, depthFunc, blendFuncSource, blendFuncDestination };
+      CompositeArguments args = { imageSize, depthFunc, blendFuncSource, blendFuncDestination, blendEquation };
       IndexTaskLauncher treeCompositeLauncher(compositeTaskID, launchDomain, TaskArgument(&args, sizeof(args)), argMap);
       
       RegionRequirement req0(sourceFragmentPartition, functor0->id(), READ_WRITE, EXCLUSIVE, image);
@@ -507,7 +488,7 @@ namespace Legion {
       FutureMap futures = runtime->execute_index_space(context, treeCompositeLauncher);
       
       if(treeLevel > 1) {
-        futures = launchTreeReduction(imageSize, treeLevel - 1, functorLevel + 1, offset * 2, depthFunc, blendFuncSource, blendFuncDestination, compositeTaskID, sourceFragmentPartition, image, runtime, context, nodeID, maxTreeLevel);
+        futures = launchTreeReduction(imageSize, treeLevel - 1, functorLevel + 1, offset * 2, depthFunc, blendFuncSource, blendFuncDestination, blendEquation, compositeTaskID, sourceFragmentPartition, image, runtime, context, nodeID, maxTreeLevel);
       }
       return futures;
       
@@ -517,15 +498,11 @@ namespace Legion {
     
     FutureMap ImageReduction::reduceAssociative() {
       int maxTreeLevel = numTreeLevels(mImageSize);
-      int offset = 1;
-      
-      std::cout << "reduce associative node " << mLocalCopyOfNodeID << std::endl;
-      assert(mLocalCopyOfNodeID >= 0 && mLocalCopyOfNodeID < 4);
-      
-      return launchTreeReduction(mImageSize, maxTreeLevel, 0, offset, mDepthFunction, mBlendFunctionSource, mBlendFunctionDestination,
+      return launchTreeReduction(mImageSize, maxTreeLevel, 1, 1, mDepthFunction, mGlBlendFunctionSource, mGlBlendFunctionDestination, mGlBlendEquation,
                                  mCompositeTaskID, mSourceFragmentPartition, mSourceImage,
                                  mRuntime, mContext, mLocalCopyOfNodeID, maxTreeLevel);
     }
+    
     
     FutureMap ImageReduction::reduce_associative_commutative(){
       return reduceAssociative();
@@ -536,8 +513,15 @@ namespace Legion {
     }
     
     
+    
+    FutureMap ImageReduction::launchPipelineReduction() {
+      
+    }
+    
+    
+    
     FutureMap ImageReduction::reduceNonassociative() {
-      //      return launchScreenSpaceTasks(false);
+      return launchPipelineReduction();
     }
     
     FutureMap ImageReduction::reduce_nonassociative_commutative(){
@@ -761,7 +745,7 @@ namespace Legion {
       const int numHomgeneousCoordinates = 4;
       SimulationBoundsCoordinate *projection = homogeneousOrthographicProjectionMatrix(mXMax, mXMin, mYMax, mYMin, mZMax, mZMin);
       SimulationBoundsCoordinate viewProjection[16];
-      matrixMultiply4x4(projection, mViewMatrix, viewProjection);
+      matrixMultiply4x4(projection, mGlViewTransform, viewProjection);
       
       // apply view and projection matrices to center of this fragment
       for(int i = 0; i < numHomgeneousCoordinates; ++i) {
@@ -793,7 +777,7 @@ namespace Legion {
       UsecTimer display(describe_task(task) + " write to " + outputFileName + ":");
       display.start();
       PhysicalRegion displayPlane = regions[0];
-      ByteOffset stride[numPixelFields][image_region_dimensions];
+      Stride stride;
       PixelField *r, *g, *b, *a, *z, *userdata;
       create_image_field_pointers(args.imageSize, displayPlane, r, g, b, a, z, userdata, stride, runtime, ctx);
       

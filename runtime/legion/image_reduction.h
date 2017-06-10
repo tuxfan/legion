@@ -55,6 +55,7 @@ namespace Legion {
         GLenum depthFunction;
         GLenum blendFunctionSource;
         GLenum blendFunctionDestination;
+        GLenum blendEquation;
       } CompositeArguments;
       
       typedef struct {
@@ -73,13 +74,12 @@ namespace Legion {
         FID_FIELD_USERDATA,
       };
       
-
       typedef float PixelField;
       static const int numPixelFields = 6;//rgbazu
       static const int num_fragments_per_composite = 2;
-      
-      
       typedef float SimulationBoundsCoordinate;
+      typedef ByteOffset Stride[ImageReduction::numPixelFields][image_region_dimensions];
+      
       /**
        * Preregister an array of simulation bounds in 3D
        * Be sure to call this *before* starting the Legion runtime.
@@ -145,24 +145,47 @@ namespace Legion {
        * @param view a 4x4 homogeneous view matrix, typically from gluLookAt
        */
       void set_view_matrix(GLfloat view[]) {
-        memcpy(mViewMatrix, view, sizeof(mViewMatrix));
+        memcpy(mGlViewTransform, view, sizeof(mGlViewTransform));
       }
       
       /**
-       * Define a blend operator to use in subsequent reductions.
-       * For definition of blend factors see glBlendFunc (OpenGL).
+       * Define blend source and destination functions to use in subsequent reductions
+       * (see glBlendFunc).
        *
        * @param sfactor source blend factor
        * @param dfactor destination blend factor
        */
       void set_blend_func(GLenum sfactor, GLenum dfactor) {
-        mBlendFunctionSource = sfactor;
-        mBlendFunctionDestination = dfactor;
+        mGlBlendFunctionSource = sfactor;
+        mGlBlendFunctionDestination = dfactor;
+      }
+      
+      /**
+       * Specify the constant color to use with certain blend functions (see glBlendFunc)
+       * @param red constant color
+       * @param green constant color
+       * @param blue constant color
+       * @param alpha constant alpha
+       */
+      void set_blend_color(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha) {
+        mGlConstantColor[FID_FIELD_R] = red;
+        mGlConstantColor[FID_FIELD_G] = green;
+        mGlConstantColor[FID_FIELD_B] = blue;
+        mGlConstantColor[FID_FIELD_A] = alpha;
+      }
+      
+      /**
+       * Specify the use with blending (this is not common, see glBlendEquation)
+       * @param mode must be one of GL_FUNC_ADD, GL_FUNC_SUBTRACT, GL_FUNC_REVERSE_SUBTRACT, GL_MIN, GL_MAX
+       */
+      void set_blend_equation(GLenum mode) {
+        assert(mode == GL_FUNC_ADD || mode == GL_FUNC_SUBTRACT || mode == GL_FUNC_REVERSE_SUBTRACT || mode == GL_MIN || mode == GL_MAX);
+        mGlBlendEquation = mode;
       }
       
       /**
        * Define a depth operator to use in subsequent reductions.
-       * For definition of depth factors see glDepthFunc (OpenGL).
+       * For definition of depth factors (see glDepthFunc).
        * @param func depth comparison factor
        */
       void set_depth_func(GLenum func){ mDepthFunction = func; }
@@ -188,7 +211,7 @@ namespace Legion {
                                               PixelField *&a,
                                               PixelField *&z,
                                               PixelField *&userdata,
-                                              ByteOffset stride[numPixelFields][image_region_dimensions],
+                                              Stride stride,
                                               Runtime *runtime,
                                               Context context);
       
@@ -212,6 +235,8 @@ namespace Legion {
                                const std::vector<PhysicalRegion> &regions,
                                Context ctx, Runtime *runtime);
       
+      static int numTreeLevels(ImageSize imageSize);
+
     protected:
             
       class CompositeProjectionFunctor : public ProjectionFunctor {
@@ -278,7 +303,6 @@ namespace Legion {
       
       
       
-      void deleteProjectionFunctors();
       void initializeNodes();
       void initializeViewMatrix();
       void createTreeDomains(int nodeID, int numTreeLevels, Runtime* runtime, ImageSize mImageSize);
@@ -306,19 +330,15 @@ namespace Legion {
                                           PhysicalRegion region,
                                           ByteOffset offset[image_region_dimensions]);
       
-      
-      
-      static int numTreeLevels(ImageSize imageSize);
-      
       static int subtreeHeight(ImageSize imageSize);
       
       static FutureMap launchTreeReduction(ImageSize imageSize, int treeLevel, int functorLevel, int offset,
-                                           GLenum depthFunc, GLenum blendFuncSource, GLenum blendFuncDestination,
+                                           GLenum depthFunc, GLenum blendFuncSource, GLenum blendFuncDestination, GLenum blendEquation,
                                            int compositeTaskID, LogicalPartition sourceFragmentPartition, LogicalRegion image,
                                            Runtime* runtime, Context context,
                                            int nodeID, int maxTreeLevel);
       
-      static void launchPipelineReduction(ScreenSpaceArguments args);
+      static FutureMap launchPipelineReduction();
       
       static int subdomainToCompositeIndex(SimulationBoundsCoordinate *bounds, int scale);
       
@@ -340,8 +360,6 @@ namespace Legion {
       TaskID mCompositeTaskID;
       TaskID mDisplayTaskID;
       GLenum mDepthFunction;
-      GLenum mBlendFunctionSource;
-      GLenum mBlendFunctionDestination;
       int mAccessorFunctorID;
       int mLocalCopyOfNodeID;
       
@@ -353,9 +371,13 @@ namespace Legion {
       static int mNumSimulationBounds;
       static SimulationBoundsCoordinate mXMax, mXMin, mYMax, mYMin, mZMax, mZMin;
       static int mNodeCount;
-      static std::vector<CompositeProjectionFunctor*> mCompositeProjectionFunctor;
-      static std::vector<Domain> mHierarchicalTreeDomain;
-      static GLfloat mViewMatrix[16];
+      static std::vector<CompositeProjectionFunctor*> *mCompositeProjectionFunctor;
+      static std::vector<Domain> *mHierarchicalTreeDomain;
+      static GLfloat mGlViewTransform[16];
+      static PixelField mGlConstantColor[numPixelFields];
+      static GLenum mGlBlendEquation;
+      static GLenum mGlBlendFunctionSource;
+      static GLenum mGlBlendFunctionDestination;
     };
     
   }
