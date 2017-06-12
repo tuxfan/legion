@@ -493,14 +493,15 @@ namespace Legion {
         ProjectionAnalysisConstraint *simplify(void);
         ProjectionAnalysisConstraint *substitute(DomainPoint &left_point,
                                                  DomainPoint &right_point);
-        std::vector<DomainPoint> get_dependent_points(DomainPoint &point,
-            Domain &bounding_domain);
+        void get_dependent_points(DomainPoint &point,
+            Domain &bounding_domain, OrderingFunctor *ord_func,
+            std::vector<DomainPoint> &dep_points);
         std::vector<DomainPoint> get_dependent_points2(DomainPoint &point,
             Domain &bounding_domain);
         std::string stringify(void) const;
       private:
         std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> >
-            get_dependent_points_helper(DomainPoint &point);
+            get_dependent_points_helper(DomainPoint &point, bool subst_to_lhs);
         SolutionSet solve_linear(DomainPoint &point, bool subst_to_lhs);
         std::vector<SolutionSet> intersect_helper(std::vector<SolutionSet>,
           std::vector<SolutionSet>);

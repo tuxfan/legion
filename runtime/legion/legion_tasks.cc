@@ -4231,6 +4231,7 @@ namespace Legion {
         exit(ERROR_INVALID_MAPPER_DOMAIN_SLICE);
       }
 #endif
+      analyze_structured_slices();
       trigger_slices(); 
       // If we succeeded and this is an intermediate slice task
       // then we can reclaim it, otherwise, if it is the original
@@ -4291,6 +4292,80 @@ namespace Legion {
           if (IS_NO_ACCESS(regions[idx]))
             continue;
           this->version_infos[idx] = rhs->version_infos[idx];
+        }
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    void MultiTask::analyze_structured_slices(void)
+    //--------------------------------------------------------------------------
+    {
+      // Only necessary for structured index space launches
+      if (constraint_equations.size() == 0) {
+        return;
+      }
+      int dim = internal_domain.get_dim();
+      for(std::list<SliceTask*>::const_iterator it1 = slices.begin();
+          it1 != slices.end(); ++it1)
+      {
+        std::set<RtEvent> slice_dependency_events;
+        SliceTask *slice = *it1;
+        switch (dim)
+        {
+          case 1:
+            assert(false);  // To be removed, just want to start testing with case 2
+            break;
+          case 2:
+          {
+            LegionRuntime::Arrays::Rect<2> rect =
+                slice->internal_domain.get_rect<2>();
+            DomainPoint p1 = DomainPoint::from_point<2>(rect.lo);
+            DomainPoint p2 = DomainPoint::from_point<2>(
+                LegionRuntime::Arrays::make_point(rect.lo[0], rect.hi[1]));
+            DomainPoint p3 = DomainPoint::from_point<2>(
+                LegionRuntime::Arrays::make_point(rect.hi[0], rect.lo[1]));
+            DomainPoint p4 = DomainPoint::from_point<2>(rect.hi);
+            std::vector<DomainPoint> dependent_points;
+
+            for (unsigned idx_p = 0; idx_p < constraint_equations.size(); idx_p++)
+            {
+              ProjectionAnalysisConstraint* constraintEq =
+                  constraint_equations[idx_p];
+              OrderingFunctor *ordering_func =
+                runtime->find_ordering_functor(oid);
+                // make this into a domain point
+              constraintEq->get_dependent_points(p1,
+                  internal_domain, ordering_func, dependent_points);
+              constraintEq->get_dependent_points(p2,
+                  internal_domain, ordering_func, dependent_points);
+              constraintEq->get_dependent_points(p3,
+                  internal_domain, ordering_func, dependent_points);
+              constraintEq->get_dependent_points(p4,
+                  internal_domain, ordering_func, dependent_points);
+            }
+            for (unsigned idx_p = 0; idx_p < dependent_points.size(); idx_p++)
+            {
+              for(std::list<SliceTask*>::const_iterator it2 = slices.begin();
+                  it2 != slices.end(); ++it2)
+              {
+                if (it2 == it1)
+                  continue;
+                const SliceTask *other_slice = *it2;
+                if (other_slice->internal_domain.contains(dependent_points[idx_p])) {
+                  slice_dependency_events.insert(other_slice->mapped_event);
+                  break;
+                }
+              }
+            }
+            slice->set_slice_deps_mapped_event(Runtime::merge_events(slice_dependency_events));
+            break;
+          }
+          case 3:
+            assert(false);  // To be removed, just want to start testing with case 2
+            break;
+          default:
+            // note this should also catch the 0 (unstructured) case
+            assert(false);
         }
       }
     }
@@ -6000,6 +6075,9 @@ namespace Legion {
         // doesn't exist already
         // add that to our mapping constraints
         std::set<RtEvent> map_preconditions;
+        // Any slices that our entire slice depends on is treated like an
+        // interlaunch dependency
+        map_preconditions.insert(slice_owner->slice_deps_mapped_event);
         for (unsigned idx1 = 0; idx1 < slice_owner->index_owner->constraint_equations.size();
             idx1++) {
           ProjectionAnalysisConstraint* constraintEq = slice_owner->index_owner->constraint_equations[idx1];
@@ -6007,21 +6085,14 @@ namespace Legion {
           /*std::vector<DomainPoint> dependentPoints =
               constraintEq->get_dependent_points2(index_point,
               slice_owner->index_owner->internal_domain);*/
-          // TODO here - change the get_dependent_points function to return all of the points (use both sides of the equation, and then use the ordering function to only track the points that we actually depend on.
-          std::vector<DomainPoint> dependentPoints =
-              constraintEq->get_dependent_points(index_point,
-              slice_owner->index_owner->internal_domain);
-          OrderingFunctor *ord_func = runtime->find_ordering_functor(slice_owner->index_owner->oid);
-          int point_val = ord_func->get_order_value(index_point);
-          for (unsigned idx2 = 0; idx2 < dependentPoints.size(); idx2++) {
-            DomainPoint dep_point = dependentPoints[idx2];
-            int dep_point_val = ord_func->get_order_value(dep_point);
-            if (dep_point_val < point_val) {
-              map_preconditions.insert(slice_owner->index_owner->point_task_events[dep_point]);
-            }
-#ifdef DEBUG_LEGION
-            assert(dep_point_val != point_val);
-#endif
+          OrderingFunctor *ord_func =
+            runtime->find_ordering_functor(slice_owner->index_owner->oid);
+          std::vector<DomainPoint> dependent_points;
+          constraintEq->get_dependent_points(index_point,
+              slice_owner->index_owner->internal_domain, ord_func, dependent_points);
+          for (unsigned idx2 = 0; idx2 < dependent_points.size(); idx2++) {
+            DomainPoint dep_point = dependent_points[idx2];
+            map_preconditions.insert(slice_owner->index_owner->point_task_events[dep_point]);
           }
         }
         RtEvent done = Runtime::merge_events(map_preconditions);

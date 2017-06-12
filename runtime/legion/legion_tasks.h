@@ -513,6 +513,7 @@ namespace Legion {
       void trigger_slices(void);
       void clone_multi_from(MultiTask *task, const Domain &d, Processor p,
                             bool recurse, bool stealable);
+      void analyze_structured_slices(void);
     public:
       virtual void activate(void) = 0;
       virtual void deactivate(void) = 0;
@@ -559,6 +560,7 @@ namespace Legion {
       void initialize_reduction_state(void);
       void fold_reduction_future(const void *result, size_t result_size,
                                  bool owner, bool exclusive); 
+    public:
     protected:
       std::list<SliceTask*> slices;
       std::vector<VersionInfo> version_infos;
@@ -567,7 +569,9 @@ namespace Legion {
       bool sliced;
     public:
       Domain internal_domain; // twarsz change this back to protected
-      OrderingID oid; // twarsz change this back to protected
+    public: // Should also be protected
+      std::vector<ProjectionAnalysisConstraint*> constraint_equations;
+      OrderingID oid;
     protected:
       ReductionOpID redop;
       const ReductionOp *reduction_op;
@@ -906,8 +910,6 @@ namespace Legion {
     protected:
       std::vector<RegionTreePath> privilege_paths;
       std::deque<SliceTask*> locally_mapped_slices;
-    public:
-      std::vector<ProjectionAnalysisConstraint*> constraint_equations;
     protected:
       std::set<RtEvent> map_applied_conditions;
       std::set<ApEvent> restrict_postconditions;
@@ -1048,6 +1050,13 @@ namespace Legion {
       unsigned num_unmapped_points;
       unsigned num_uncomplete_points;
       unsigned num_uncommitted_points;
+    public:
+      inline RtEvent get_slice_deps_mapped_event(void) const
+        { return slice_deps_mapped_event; }
+      inline void set_slice_deps_mapped_event(RtEvent e)
+        { slice_deps_mapped_event = e; }
+    protected:
+      RtEvent slice_deps_mapped_event;
     protected:
       // For knowing which fraction of the
       // domain we have (1/denominator)

@@ -2238,21 +2238,30 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    std::vector<DomainPoint> ProjectionAnalysisConstraint::get_dependent_points(
-        DomainPoint &point, Domain &bounding_domain)
+    void ProjectionAnalysisConstraint::get_dependent_points(
+        DomainPoint &point, Domain &bounding_domain, OrderingFunctor *ord_func,
+        std::vector<DomainPoint> &dep_points)
     //--------------------------------------------------------------------------
     {
-      std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> > constraint_pairs =
-          get_dependent_points_helper(point);
-      std::vector<DomainPoint> ret_vec;
+      std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> > constraint_pairs_lhs =
+          get_dependent_points_helper(point, true);
+      std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> > constraint_pairs_rhs =
+          get_dependent_points_helper(point, false);
+      std::vector<SolutionSet> yes_subset = constraint_pairs_lhs.first;
+      std::vector<SolutionSet> no_subset = constraint_pairs_lhs.second;
+      yes_subset.insert(yes_subset.end(), constraint_pairs_rhs.first.begin(),
+          constraint_pairs_rhs.first.end());
+      no_subset.insert(no_subset.end(), constraint_pairs_rhs.second.begin(),
+          constraint_pairs_rhs.second.end());
 #ifdef DEBUG_LEGION
-      assert(constraint_pairs.first.size() == 0 || constraint_pairs.second.size() == 0);
+      assert(yes_subset.size() == 0 || no_subset.size() == 0);
 #endif
       int dim = point.get_dim();
-      if (constraint_pairs.first.size() != 0) {
+      int point_order = ord_func->get_order_value(point);
+      if (yes_subset.size() != 0) {
         DomainPoint new_point(point);
-        for (unsigned idx = 0; idx < constraint_pairs.first.size(); idx++) {
-          SolutionSet solver_helper = constraint_pairs.first[idx];
+        for (unsigned idx = 0; idx < yes_subset.size(); idx++) {
+          SolutionSet solver_helper = yes_subset[idx];
 #ifdef DEBUG_LEGION
           assert(!(solver_helper.first_wildcard && solver_helper.second_wildcard &&
               solver_helper.third_wildcard));
@@ -2265,21 +2274,29 @@ namespace Legion {
           if (dim == 3) {
             new_point[2] = solver_helper.second_value;
           }
-          if (new_point != point) {
-            ret_vec.push_back(new_point);
+          int new_point_order = ord_func->get_order_value(new_point);
+          if (new_point != point && bounding_domain.contains(new_point) &&
+              new_point_order < point_order) {
+            dep_points.push_back(new_point);
           }
+#ifdef DEBUG_LEGION
+          // Two points with a potential dependency should never have the same
+          // value
+          assert(new_point == point || !bounding_domain.contains(new_point) ||
+              new_point_order != point_order);
+#endif
         }
       }
       else {
         //TODO maybe implement this eventually!
         // But highly constrained and possibly something we don't want to handle
       }
-      return ret_vec;
     }
 
     //--------------------------------------------------------------------------
     std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> >
-      ProjectionAnalysisConstraint::get_dependent_points_helper(DomainPoint &point)
+      ProjectionAnalysisConstraint::get_dependent_points_helper(DomainPoint &point,
+      bool subst_to_lhs)
     //--------------------------------------------------------------------------
     {
       std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> > left_pair;
@@ -2299,8 +2316,8 @@ namespace Legion {
         case FALSE:
           return std::make_pair(empty1, empty2);
         case OR:
-          left_pair = lhs->get_dependent_points_helper(point);
-          right_pair = rhs->get_dependent_points_helper(point);
+          left_pair = lhs->get_dependent_points_helper(point, subst_to_lhs);
+          right_pair = rhs->get_dependent_points_helper(point, subst_to_lhs);
           set_intersection = intersect_helper(left_pair.second,
               right_pair.second);
           set_union = union_helper(left_pair.first, right_pair.first);
@@ -2314,8 +2331,8 @@ namespace Legion {
             return std::make_pair(set_union, empty1);
           }
         case AND:
-          left_pair = lhs->get_dependent_points_helper(point);
-          right_pair = rhs->get_dependent_points_helper(point);
+          left_pair = lhs->get_dependent_points_helper(point, subst_to_lhs);
+          right_pair = rhs->get_dependent_points_helper(point, subst_to_lhs);
           set_intersection = intersect_helper(left_pair.first,
               right_pair.first);
           set_union = union_helper(left_pair.second, right_pair.second);
@@ -2329,11 +2346,10 @@ namespace Legion {
             return std::make_pair(empty1, set_union);
           }
         case NOT:
-          left_pair = lhs->get_dependent_points_helper(point);
+          left_pair = lhs->get_dependent_points_helper(point, subst_to_lhs);
           return std::make_pair(left_pair.second, left_pair.first);
         case EQ:
-          new_constraint_vec.push_back(solve_linear(point, true));
-          new_constraint_vec.push_back(solve_linear(point, false));
+          new_constraint_vec.push_back(solve_linear(point, subst_to_lhs));
           return std::make_pair(new_constraint_vec, empty1);
           //evaluate the point.
           //solve for the relevant domain points
@@ -2341,8 +2357,7 @@ namespace Legion {
           //return that as the "yes" vector
           break;
         case NEQ:
-          new_constraint_vec.push_back(solve_linear(point, true));
-          new_constraint_vec.push_back(solve_linear(point, false));
+          new_constraint_vec.push_back(solve_linear(point, subst_to_lhs));
           return std::make_pair(empty1, new_constraint_vec);
           //evaluate the point.
           //solve for the relevant domain points

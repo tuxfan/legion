@@ -532,6 +532,7 @@ void compute_task_angle(const Task *task,
       else {
         computed_val = y_diff_val + 1;
       }
+      //printf("about to write %d to (%lld, %lld)\n", computed_val, cur_point[0], cur_point[1]);
       curr_acc.write(DomainPoint::from_point<2>(cur_point), computed_val);
     }
   }
@@ -660,7 +661,7 @@ void check_task(const Task *task,
     
     if (expected != val) {
       all_passed = false;
-      //break;
+      break;
     }
   }
   if (all_passed)
