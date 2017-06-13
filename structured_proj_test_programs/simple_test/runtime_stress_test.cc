@@ -18,7 +18,11 @@
 #include <cassert>
 #include <cstdlib>
 #include "legion.h"
+
+#include "default_mapper.h"
+
 using namespace Legion;
+using namespace Legion::Mapping;
 using namespace LegionRuntime::Accessor;
 using namespace LegionRuntime::Arrays;
 
@@ -66,6 +70,83 @@ struct ComputeArgs {
   int angle;
   int parallel_length;
 };
+
+// A new mapper to control how the index space is sliced
+// for testing out performance and correctness with interslice
+// dependencies
+class SliceMapper : public DefaultMapper {
+public:
+  SliceMapper(Machine machine, Runtime *rt, Processor local);
+public:
+  virtual void slice_task(const MapperContext ctx,
+                          const Task& task,
+                          const SliceTaskInput& input,
+                                SliceTaskOutput& output);
+};
+
+SliceMapper::SliceMapper(Machine m, Runtime *rt, Processor p)
+  : DefaultMapper(rt->get_mapper_runtime(), m, p) // pass arguments through to Default
+{
+}
+
+void SliceMapper::slice_task(const MapperContext      ctx,
+                             const Task&              task,
+                             const SliceTaskInput&    input,
+                                   SliceTaskOutput&   output)
+{
+  // Iterate over all the points and send them all over the world
+  output.slices.resize(input.domain.get_volume());
+  unsigned idx = 0;
+
+  Machine::ProcessorQuery all_procs(machine);
+  all_procs.only_kind(local_cpus[0].kind());
+  std::vector<Processor> procs(all_procs.begin(), all_procs.end());
+
+  switch (input.domain.get_dim())
+  {
+    case 1:
+      {
+        Rect<1> rect = input.domain.get_rect<1>();
+        for (GenericPointInRectIterator<1> pir(rect);
+              pir; pir++, idx++)
+        {
+          Rect<1> slice(pir.p, pir.p);
+          output.slices[idx] = TaskSlice(Domain::from_rect<1>(slice),
+              procs[idx % procs.size()],
+              false/*recurse*/, true/*stealable*/);
+        }
+        break;
+      }
+    case 2:
+      {
+        Rect<2> rect = input.domain.get_rect<2>();
+        for (GenericPointInRectIterator<2> pir(rect);
+              pir; pir++, idx++)
+        {
+          Rect<2> slice(pir.p, pir.p);
+          output.slices[idx] = TaskSlice(Domain::from_rect<2>(slice),
+              procs[idx % procs.size()],
+              false/*recurse*/, true/*stealable*/);
+        }
+        break;
+      }
+    case 3:
+      {
+        Rect<3> rect = input.domain.get_rect<3>();
+        for (GenericPointInRectIterator<3> pir(rect);
+              pir; pir++, idx++)
+        {
+          Rect<3> slice(pir.p, pir.p);
+          output.slices[idx] = TaskSlice(Domain::from_rect<3>(slice),
+              procs[idx % procs.size()],
+              false/*recurse*/, true/*stealable*/);
+        }
+        break;
+      }
+    default:
+      assert(false);
+  }
+}
 
 class FromTopRightOrderFunctor : public OrderingFunctor
 {
@@ -670,6 +751,18 @@ void check_task(const Task *task,
     printf("FAILURE!\n");
 }
 
+void mapper_registration(Machine machine, Runtime *rt,
+                          const std::set<Processor> &local_procs)
+{
+  for (std::set<Processor>::const_iterator it = local_procs.begin();
+        it != local_procs.end(); it++)
+  {
+    rt->replace_default_mapper(
+        new SliceMapper(machine, rt, *it), *it);
+  }
+}
+
+
 void registration_callback(Machine machine, HighLevelRuntime *rt,
                                const std::set<Processor> &local_procs)
 {
@@ -692,6 +785,14 @@ int main(int argc, char **argv)
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(true,false,false), "compute axis aligned task");
   Runtime::register_legion_task<check_task>(CHECK_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID, TaskConfigOptions(), "check task");
+
+  // If using the slicing mapper, add it's callback
+  for (int i = 1; i < argc; i++)
+  {
+    if (!strcmp(argv[i],"-sm"))
+      Runtime::add_registration_callback(mapper_registration);
+  }
+  // Add the callback for the projection function
   HighLevelRuntime::set_registration_callback(registration_callback);
 
   return Runtime::start(argc, argv);
