@@ -632,7 +632,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void Operation::log_temporary_instance(PhysicalManager *result, 
-                           unsigned index, const FieldMask &needed_fields) const 
+                           unsigned index, const FieldMask &needed_fields) const
     //--------------------------------------------------------------------------
     {
       std::vector<FieldID> fields;

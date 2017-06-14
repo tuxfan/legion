@@ -985,7 +985,7 @@ namespace Legion {
     bool OrderingConstraint::conflicts(const OrderingConstraint &other) const
     //--------------------------------------------------------------------------
     {
-      // If they both must be contiguous there is a slightly different check      
+      // If they both must be contiguous there is a slightly different check
       if (contiguous && other.contiguous)
       {
         int previous_idx = -1;

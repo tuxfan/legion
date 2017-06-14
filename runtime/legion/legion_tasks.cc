@@ -2340,7 +2340,8 @@ namespace Legion {
                 req.partition.tree_id,
           req.privilege, req.prop, req.redop, req.parent.index_space.id);
       LegionSpy::log_requirement_fields(uid, idx, req.privilege_fields);
-      if (proj) {
+      if (proj)
+      {
         LegionSpy::log_requirement_projection(uid, idx, req.projection);
         /**ProjectionFunction *function = 
           runtime->find_projection_function(req.projection);
@@ -2370,7 +2371,8 @@ namespace Legion {
                 req.partition.tree_id,
           req.privilege, req.prop, req.redop, req.parent.index_space.id);
       LegionSpy::log_requirement_fields(uid, idx, req.privilege_fields);
-      if (proj) {
+      if (proj)
+      {
         LegionSpy::log_requirement_projection(uid, idx, req.projection);
       }
     }
@@ -3974,7 +3976,7 @@ namespace Legion {
       }
 #endif
       ApEvent task_launch_event = variant->dispatch_task(launch_processor, this,
-                                 execution_context, start_condition, true_guard, 
+                                 execution_context, start_condition, true_guard,
                                  task_priority, profiling_requests);
       // Finish the chaining optimization if we're doing it
       if (perform_chaining_optimization)
@@ -4301,7 +4303,8 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       // Only necessary for structured index space launches
-      if (constraint_equations.size() == 0) {
+      if (constraint_equations.size() == 0)
+      {
         return;
       }
       int dim = internal_domain.get_dim();
@@ -4313,7 +4316,7 @@ namespace Legion {
         switch (dim)
         {
           case 1:
-            assert(false);  // To be removed, just want to start testing with case 2
+            assert(false);  // To be removed, want to start testing with case 2
             break;
           case 2:
           {
@@ -4327,7 +4330,8 @@ namespace Legion {
             DomainPoint p4 = DomainPoint::from_point<2>(rect.hi);
             std::vector<DomainPoint> dependent_points;
 
-            for (unsigned idx_p = 0; idx_p < constraint_equations.size(); idx_p++)
+            for (unsigned idx_p = 0; idx_p < constraint_equations.size();
+                idx_p++)
             {
               ProjectionAnalysisConstraint* constraintEq =
                   constraint_equations[idx_p];
@@ -4351,17 +4355,20 @@ namespace Legion {
                 if (it2 == it1)
                   continue;
                 const SliceTask *other_slice = *it2;
-                if (other_slice->internal_domain.contains(dependent_points[idx_p])) {
+                if (other_slice->internal_domain.contains(
+                  dependent_points[idx_p]))
+                {
                   slice_dependency_events.insert(other_slice->mapped_event);
                   break;
                 }
               }
             }
-            slice->set_slice_deps_mapped_event(Runtime::merge_events(slice_dependency_events));
+            slice->set_slice_deps_mapped_event(
+                Runtime::merge_events(slice_dependency_events));
             break;
           }
           case 3:
-            assert(false);  // To be removed, just want to start testing with case 2
+            assert(false);  // To be removed, want to start testing with case 2
             break;
           default:
             // note this should also catch the 0 (unstructured) case
@@ -6069,7 +6076,8 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       // We have a structured index task launch
-      if (slice_owner->index_owner->constraint_equations.size() > 0) {
+      if (slice_owner->index_owner->constraint_equations.size() > 0)
+      {
         // for each point in the constraint equations that we depend on
         // get it's mapping event from the index task, or create one if it
         // doesn't exist already
@@ -6078,9 +6086,12 @@ namespace Legion {
         // Any slices that our entire slice depends on is treated like an
         // interlaunch dependency
         map_preconditions.insert(slice_owner->slice_deps_mapped_event);
-        for (unsigned idx1 = 0; idx1 < slice_owner->index_owner->constraint_equations.size();
-            idx1++) {
-          ProjectionAnalysisConstraint* constraintEq = slice_owner->index_owner->constraint_equations[idx1];
+        for (unsigned idx1 = 0;
+            idx1 < slice_owner->index_owner->constraint_equations.size();
+            idx1++)
+        {
+          ProjectionAnalysisConstraint* constraintEq =
+          slice_owner->index_owner->constraint_equations[idx1];
           // USE THIS TO TEST THAT APPLICATION IS CORRECT! EVENTUALLY DELETE
           /*std::vector<DomainPoint> dependentPoints =
               constraintEq->get_dependent_points2(index_point,
@@ -6089,10 +6100,13 @@ namespace Legion {
             runtime->find_ordering_functor(slice_owner->index_owner->oid);
           std::vector<DomainPoint> dependent_points;
           constraintEq->get_dependent_points(index_point,
-              slice_owner->index_owner->internal_domain, ord_func, dependent_points);
-          for (unsigned idx2 = 0; idx2 < dependent_points.size(); idx2++) {
+              slice_owner->index_owner->internal_domain,
+              ord_func, dependent_points);
+          for (unsigned idx2 = 0; idx2 < dependent_points.size(); idx2++)
+          {
             DomainPoint dep_point = dependent_points[idx2];
-            map_preconditions.insert(slice_owner->index_owner->point_task_events[dep_point]);
+            map_preconditions.insert(
+            slice_owner->index_owner->point_task_events[dep_point]);
           }
         }
         RtEvent done = Runtime::merge_events(map_preconditions);
@@ -6127,7 +6141,8 @@ namespace Legion {
       std::set<RtEvent> ready_events;
       perform_versioning_analysis(ready_events);
       RtEvent map_event = perform_mapping();
-      if (map_event.exists() && !map_event.has_triggered()) {
+      if (map_event.exists() && !map_event.has_triggered())
+      {
         defer_launch_task(map_event);
       }
       else {
@@ -6949,13 +6964,15 @@ namespace Legion {
       proj_funcs.reserve(regions.size());
       for (unsigned idx = 0; idx < regions.size(); idx++)
       {
-        if (regions[idx].handle_type != SINGULAR) {
+        if (regions[idx].handle_type != SINGULAR)
+        {
           proj_reqs.push_back(regions[idx]);
           proj_funcs.push_back(
               runtime->find_projection_function(regions[idx].projection));
         }
       }
-      if (proj_reqs.size() == 0) {
+      if (proj_reqs.size() == 0)
+      {
         return;
       }
 
@@ -6979,7 +6996,8 @@ namespace Legion {
 
       int structured_depth = structured_funcs[0].depth;
       ProjectionType handle_type = proj_reqs[0].handle_type;
-      for (unsigned idx = 1; idx < proj_reqs.size(); idx++) {
+      for (unsigned idx = 1; idx < proj_reqs.size(); idx++)
+      {
         assert(structured_depth == structured_funcs[idx].depth);
         assert(handle_type == proj_reqs[idx].handle_type);
         if (handle_type == REG_PROJECTION)
@@ -6995,10 +7013,12 @@ namespace Legion {
         upper_bound = runtime->forest->get_node(proj_reqs[0].region);
       else
         upper_bound = runtime->forest->get_node(proj_reqs[0].partition);
-      for (unsigned idx1 = 0; idx1 < proj_reqs.size(); idx1++) {
+      for (unsigned idx1 = 0; idx1 < proj_reqs.size(); idx1++)
+      {
         RegionUsage usage1(proj_reqs[idx1]);
         StructuredProjection proj1 = structured_funcs[idx1];
-        for (unsigned idx2 = idx1; idx2 < proj_reqs.size(); idx2++) {
+        for (unsigned idx2 = idx1; idx2 < proj_reqs.size(); idx2++)
+        {
           RegionUsage usage2(proj_reqs[idx2]);
           StructuredProjection proj2 = structured_funcs[idx2];
           DependenceType dtype = check_dependence_type(usage1, usage2);
@@ -7012,7 +7032,6 @@ namespace Legion {
             runtime->forest->compute_proj_constraint(proj1, proj2,
                 sample_region)->simplify();
           constraints.push_back(constraint);
-          //fprintf(stderr, "Constraint is %s\n", constraint->stringify().c_str());
         }
       }
       constraint_equations = constraints;
@@ -8195,7 +8214,8 @@ namespace Legion {
       {
         PointTask *next_point = *it;
         RtEvent dep_event = next_point->find_interlaunch_dependencies();
-        if (dep_event.exists() && !dep_event.has_triggered()) {
+        if (dep_event.exists() && !dep_event.has_triggered())
+        {
           next_point->defer_map_and_launch(dep_event);
         }
         else {
@@ -8203,7 +8223,8 @@ namespace Legion {
           RtEvent map_event = next_point->perform_mapping();
           // Once we call this function on the last point it
           // is possible that this slice task object can be recycled
-          if (map_event.exists() && !map_event.has_triggered()) {
+          if (map_event.exists() && !map_event.has_triggered())
+          {
             next_point->defer_launch_task(map_event);
           }
           else {
@@ -8513,10 +8534,12 @@ namespace Legion {
       points.resize(num_points);
       // Enumerate all the points in our slice and make point tasks
       for (Domain::DomainPointIterator itr(internal_domain); 
-            itr; itr++, point_idx++) {
+            itr; itr++, point_idx++)
+      {
         points[point_idx] = clone_as_point_task(itr.p);
         // if is structured, add the point task map_applied event
-        if (index_owner->constraint_equations.size() > 0) {
+        if (index_owner->constraint_equations.size() > 0)
+        {
           index_owner->point_task_events[itr.p] =
             points[point_idx]->mapped_event;
         }

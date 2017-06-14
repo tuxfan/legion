@@ -1071,7 +1071,7 @@ namespace Legion {
           && (tag == rhs.tag) && (flags == rhs.flags))
       {
         if (((handle_type == SINGULAR) && (region == rhs.region)) ||
-            ((handle_type == PART_PROJECTION) && (partition == rhs.partition) && 
+            ((handle_type == PART_PROJECTION) && (partition == rhs.partition) &&
              (projection == rhs.projection)) ||
             ((handle_type == REG_PROJECTION) && (region == rhs.region)))
         {
@@ -1368,8 +1368,9 @@ namespace Legion {
       : task_id(0), launch_domain(Domain::NO_DOMAIN), 
         global_arg(TaskArgument()), argument_map(ArgumentMap()), 
         predicate(Predicate::TRUE_PRED), must_parallelism(false), 
-        map_id(0), tag(0), oid(0), static_dependences(NULL), enable_inlining(false),
-        independent_requirements(false), silence_warnings(false)
+        map_id(0), tag(0), oid(0), static_dependences(NULL),
+        enable_inlining(false), independent_requirements(false),
+        silence_warnings(false)
     //--------------------------------------------------------------------------
     {
     }
@@ -2340,18 +2341,21 @@ namespace Legion {
     {
       if (dim == 1) {
         int val = mul_const[0] * p[var_id[0]] + add_const[0];
-        return DomainPoint::from_point<1>(LegionRuntime::Arrays::make_point(val)); 
+        return DomainPoint::from_point<1>(
+            LegionRuntime::Arrays::make_point(val)); 
       }
       if (dim == 2) {
         int val0 = mul_const[0] * p[var_id[0]] + add_const[0];
         int val1 = mul_const[1] * p[var_id[1]] + add_const[1];
-        return DomainPoint::from_point<2>(LegionRuntime::Arrays::make_point(val0, val1)); 
+        return DomainPoint::from_point<2>(
+            LegionRuntime::Arrays::make_point(val0, val1)); 
       }
       if (dim == 3) {
         int val0 = mul_const[0] * p[var_id[0]] + add_const[0];
         int val1 = mul_const[1] * p[var_id[1]] + add_const[1];
         int val2 = mul_const[2] * p[var_id[2]] + add_const[2];
-        return DomainPoint::from_point<3>(LegionRuntime::Arrays::make_point(val0, val1, val2)); 
+        return DomainPoint::from_point<3>(
+            LegionRuntime::Arrays::make_point(val0, val1, val2)); 
       }
       assert(0); // Unexpected Dimension
     }
@@ -3357,7 +3361,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     LogicalPartition Runtime::get_logical_partition_by_tree(
                                             Context ctx, IndexPartition handle, 
-                                            FieldSpace fspace, RegionTreeID tid) 
+                                            FieldSpace fspace, RegionTreeID tid)
     //--------------------------------------------------------------------------
     {
       return runtime->get_logical_partition_by_tree(ctx, handle, fspace, tid);
@@ -3366,7 +3370,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     LogicalPartition Runtime::get_logical_partition_by_tree(
                                             IndexPartition handle, 
-                                            FieldSpace fspace, RegionTreeID tid) 
+                                            FieldSpace fspace, RegionTreeID tid)
     //--------------------------------------------------------------------------
     {
       return runtime->get_logical_partition_by_tree(handle, fspace, tid);
@@ -3879,7 +3883,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     Predicate Runtime::predicate_or(Context ctx,
-                                       const Predicate &p1, const Predicate &p2)  
+                                       const Predicate &p1, const Predicate &p2)
     //--------------------------------------------------------------------------
     {
       PredicateLauncher launcher(false/*and*/);
@@ -4763,7 +4767,8 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    VariantID Runtime::register_task_variant(const TaskVariantRegistrar &registrar,
+    VariantID Runtime::register_task_variant(
+                  const TaskVariantRegistrar &registrar,
 		  const CodeDescriptor &codedesc,
 		  const void *user_data /*= NULL*/,
 		  size_t user_len /*= 0*/)

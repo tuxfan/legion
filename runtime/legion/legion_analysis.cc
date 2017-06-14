@@ -2035,7 +2035,8 @@ namespace Legion {
     long int ProjectionExpression::evaluate(DomainPoint &point) const
     //--------------------------------------------------------------------------
     {
-      switch(expression_type) {
+      switch(expression_type)
+      {
         case CONST:
           return value;
         case VAR:
@@ -2060,7 +2061,8 @@ namespace Legion {
     {
       std::string ret_string;
       std::ostringstream stringStream;
-      switch(expression_type) {
+      switch(expression_type)
+      {
         case CONST:
           stringStream << value;
           ret_string = stringStream.str();
@@ -2137,7 +2139,8 @@ namespace Legion {
         new ProjectionAnalysisConstraint(TRUE);
       ProjectionAnalysisConstraint *newRhs =
         new ProjectionAnalysisConstraint(TRUE);
-      switch(constraint_type) {
+      switch(constraint_type)
+      {
         case EQ:
           if (lhs_exp->expression_type == CONST &&
             rhs_exp->expression_type == CONST)
@@ -2206,7 +2209,8 @@ namespace Legion {
         new ProjectionAnalysisConstraint(TRUE);
       ProjectionAnalysisConstraint *newRhs =
         new ProjectionAnalysisConstraint(TRUE);
-      switch(constraint_type) {
+      switch(constraint_type)
+      {
         case EQ:
           left_evaled = lhs_exp->evaluate(left_point);
           right_evaled = rhs_exp->evaluate(right_point);
@@ -2228,7 +2232,8 @@ namespace Legion {
         case OR:
           newLhs = lhs->substitute(left_point, right_point);
           newRhs = rhs->substitute(left_point, right_point);
-          return new ProjectionAnalysisConstraint(constraint_type, newLhs, newRhs);
+          return new ProjectionAnalysisConstraint(
+              constraint_type, newLhs, newRhs);
         case TRUE:
         case FALSE:
           return new ProjectionAnalysisConstraint(constraint_type);
@@ -2243,10 +2248,10 @@ namespace Legion {
         std::vector<DomainPoint> &dep_points)
     //--------------------------------------------------------------------------
     {
-      std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> > constraint_pairs_lhs =
-          get_dependent_points_helper(point, true);
-      std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> > constraint_pairs_rhs =
-          get_dependent_points_helper(point, false);
+      std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> >
+          constraint_pairs_lhs = get_dependent_points_helper(point, true);
+      std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> >
+          constraint_pairs_rhs = get_dependent_points_helper(point, false);
       std::vector<SolutionSet> yes_subset = constraint_pairs_lhs.first;
       std::vector<SolutionSet> no_subset = constraint_pairs_lhs.second;
       yes_subset.insert(yes_subset.end(), constraint_pairs_rhs.first.begin(),
@@ -2258,25 +2263,30 @@ namespace Legion {
 #endif
       int dim = point.get_dim();
       int point_order = ord_func->get_order_value(point);
-      if (yes_subset.size() != 0) {
+      if (yes_subset.size() != 0)
+      {
         DomainPoint new_point(point);
-        for (unsigned idx = 0; idx < yes_subset.size(); idx++) {
+        for (unsigned idx = 0; idx < yes_subset.size(); idx++)
+        {
           SolutionSet solver_helper = yes_subset[idx];
 #ifdef DEBUG_LEGION
-          assert(!(solver_helper.first_wildcard && solver_helper.second_wildcard &&
-              solver_helper.third_wildcard));
+          assert(!(solver_helper.first_wildcard &&
+              solver_helper.second_wildcard && solver_helper.third_wildcard));
 #endif
           // copy the point to get the right dimensions
           new_point[0] = solver_helper.first_value;
-          if (dim == 2) {
+          if (dim == 2)
+          {
             new_point[1] = solver_helper.second_value;
           }
-          if (dim == 3) {
+          if (dim == 3)
+          {
             new_point[2] = solver_helper.second_value;
           }
           int new_point_order = ord_func->get_order_value(new_point);
           if (new_point != point && bounding_domain.contains(new_point) &&
-              new_point_order < point_order) {
+              new_point_order < point_order)
+          {
             dep_points.push_back(new_point);
           }
 #ifdef DEBUG_LEGION
@@ -2295,8 +2305,8 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> >
-      ProjectionAnalysisConstraint::get_dependent_points_helper(DomainPoint &point,
-      bool subst_to_lhs)
+        ProjectionAnalysisConstraint::get_dependent_points_helper(
+        DomainPoint &point, bool subst_to_lhs)
     //--------------------------------------------------------------------------
     {
       std::pair<std::vector<SolutionSet>, std::vector<SolutionSet> > left_pair;
@@ -2321,7 +2331,8 @@ namespace Legion {
           set_intersection = intersect_helper(left_pair.second,
               right_pair.second);
           set_union = union_helper(left_pair.first, right_pair.first);
-          if (set_intersection.size() > 0) {
+          if (set_intersection.size() > 0)
+          {
             /* By the invarianct that only one of the pair can be non-empty
              * we know that the union is empty
              */
@@ -2336,7 +2347,8 @@ namespace Legion {
           set_intersection = intersect_helper(left_pair.first,
               right_pair.first);
           set_union = union_helper(left_pair.second, right_pair.second);
-          if (set_intersection.size() > 0) {
+          if (set_intersection.size() > 0)
+          {
             /* By the invarianct that only one of the pair can be non-empty
              * we know that the union is empty
              */
@@ -2389,7 +2401,8 @@ namespace Legion {
 #endif
       ProjectionExpression* subst_exp;
       ProjectionExpression* solve_exp;
-      if (subst_to_lhs) {
+      if (subst_to_lhs)
+      {
         subst_exp = lhs_exp;
         solve_exp = rhs_exp;
       }
@@ -2402,7 +2415,8 @@ namespace Legion {
       value = value / solve_exp->lhs->lhs->value;
       SolutionSet solver_helper;
       int var = solve_exp->lhs->rhs->value;
-      switch (var) {
+      switch (var)
+      {
         case 0:
           solver_helper.first_value = value;
           solver_helper.first_wildcard = false;
@@ -2428,51 +2442,62 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       std::vector<SolutionSet> ret_vec;
-      for (unsigned idx1 = 0; idx1 < first.size(); idx1++) {
-        for (unsigned idx2 = 0; idx2 < second.size(); idx2++) {
+      for (unsigned idx1 = 0; idx1 < first.size(); idx1++)
+      {
+        for (unsigned idx2 = 0; idx2 < second.size(); idx2++)
+        {
           SolutionSet to_append;
           SolutionSet first_set = first[idx1];
           SolutionSet second_set = second[idx1];
-          if (first_set.first_value == second_set.first_value) {
+          if (first_set.first_value == second_set.first_value)
+          {
             to_append.first_value = first_set.first_value;
             to_append.first_wildcard =
                 first_set.first_wildcard && second_set.first_wildcard;
           }
-          else if (first_set.first_wildcard) {
+          else if (first_set.first_wildcard)
+          {
             to_append.first_value = second_set.first_value;
             to_append.first_wildcard = second_set.first_wildcard;
           }
-          else if (second_set.first_wildcard) {
+          else if (second_set.first_wildcard)
+          {
             to_append.first_value = first_set.first_value;
             to_append.first_wildcard = first_set.first_wildcard;
           } else {
             continue;
           }
-          if (first_set.second_value == second_set.second_value) {
+          if (first_set.second_value == second_set.second_value)
+          {
             to_append.second_value = first_set.second_value;
             to_append.second_wildcard =
                 first_set.second_wildcard && second_set.second_wildcard;
           }
-          else if (first_set.second_wildcard) {
+          else if (first_set.second_wildcard)
+          {
             to_append.second_value = second_set.second_value;
             to_append.second_wildcard = second_set.second_wildcard;
           }
-          else if (second_set.second_wildcard) {
+          else if (second_set.second_wildcard)
+          {
             to_append.second_value = first_set.second_value;
             to_append.second_wildcard = first_set.second_wildcard;
           } else {
             continue;
           }
-          if (first_set.third_value == second_set.third_value) {
+          if (first_set.third_value == second_set.third_value)
+          {
             to_append.third_value = first_set.third_value;
             to_append.third_wildcard =
                 first_set.third_wildcard && second_set.third_wildcard;
           }
-          else if (first_set.third_wildcard) {
+          else if (first_set.third_wildcard)
+          {
             to_append.third_value = second_set.third_value;
             to_append.third_wildcard = second_set.third_wildcard;
           }
-          else if (second_set.third_wildcard) {
+          else if (second_set.third_wildcard)
+          {
             to_append.third_value = first_set.third_value;
             to_append.third_wildcard = first_set.third_wildcard;
           } else {
@@ -2492,43 +2517,57 @@ namespace Legion {
       std::vector<SolutionSet> ret_vec;
       std::vector<bool> to_add(second.size(), true);
 
-      for (unsigned idx1 = 0; idx1 < first.size(); idx1++) {
+      for (unsigned idx1 = 0; idx1 < first.size(); idx1++)
+      {
         SolutionSet first_set = first[idx1];
         bool first_is_dominated = false;
         bool second_is_dominated = true;
-        for (unsigned idx2 = 0; idx2 < second.size(); idx2++) {
+        for (unsigned idx2 = 0; idx2 < second.size(); idx2++)
+        {
           SolutionSet to_append;
           SolutionSet second_set = second[idx1];
 
-          if (first_set.first_value != second_set.first_value && !first_set.first_wildcard) {
+          if (first_set.first_value != second_set.first_value &&
+              !first_set.first_wildcard)
+              {
             second_is_dominated = false;
           }
-          if (first_set.second_value != second_set.second_value && !first_set.second_wildcard) {
+          if (first_set.second_value != second_set.second_value &&
+              !first_set.second_wildcard)
+              {
             second_is_dominated = false;
           }
-          if (first_set.third_value != second_set.third_value && !first_set.third_wildcard) {
+          if (first_set.third_value != second_set.third_value &&
+              !first_set.third_wildcard)
+              {
             second_is_dominated = false;
           }
 
-          if (!first_set.first_wildcard && second_set.first_wildcard) {
+          if (!first_set.first_wildcard && second_set.first_wildcard)
+          {
             first_is_dominated = true;
           }
-          if (!first_set.second_wildcard && second_set.second_wildcard) {
+          if (!first_set.second_wildcard && second_set.second_wildcard)
+          {
             first_is_dominated = true;
           }
-          if (!first_set.third_wildcard && second_set.third_wildcard) {
+          if (!first_set.third_wildcard && second_set.third_wildcard)
+          {
             first_is_dominated = true;
           }
           to_add[idx2] = to_add[idx2] && second_is_dominated;
         }
 
-        if (!first_is_dominated) {
+        if (!first_is_dominated)
+        {
           ret_vec.push_back(first_set);
         }
       }
 
-      for (unsigned idx = 0; idx < second.size(); idx++) {
-        if (to_add[idx]) {
+      for (unsigned idx = 0; idx < second.size(); idx++)
+      {
+        if (to_add[idx])
+        {
           ret_vec.push_back(second[idx]);
         }
       }
@@ -2537,7 +2576,8 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    std::vector<DomainPoint> ProjectionAnalysisConstraint::get_dependent_points2(
+    std::vector<DomainPoint>
+        ProjectionAnalysisConstraint::get_dependent_points2(
         DomainPoint &point, Domain &bounding_domain)
     //--------------------------------------------------------------------------
     {
@@ -2567,7 +2607,8 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       std::string ret_string;
-      switch(constraint_type) {
+      switch(constraint_type)
+      {
         case EQ:
           ret_string = "(";
           ret_string += lhs_exp->stringify();
@@ -7484,7 +7525,7 @@ namespace Legion {
                                                 AddressSpaceID source,
                                                 RtUserEvent to_trigger,
                                                 const FieldMask &request_mask, 
-                                                VersionRequestKind request_kind) 
+                                                VersionRequestKind request_kind)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
