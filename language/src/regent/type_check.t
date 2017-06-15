@@ -212,14 +212,15 @@ end
 function type_check.privilege(cx, node)
   local privileges = type_check.privilege_kinds(cx, node.privileges)
   local region_fields = type_check.regions(cx, node.regions)
-  return privileges:map(
-    function(privilege) return std.privileges(privilege, region_fields) end)
+  return data.flatmap(
+    function(privilege) return std.privileges(privilege, region_fields) end,
+    privileges)
 end
 
 function type_check.privileges(cx, node)
   local result = terralib.newlist()
   for _, privilege in ipairs(node) do
-    result:insertall(type_check.privilege(cx, privilege))
+    result:insert(type_check.privilege(cx, privilege))
   end
   return result
 end
@@ -876,7 +877,7 @@ function type_check.expr_call(cx, node)
                   " for arguments " .. data.newtuple(unpack(arg_types)):mkstring(", "))
       end
     elseif std.is_task(fn.value) then
-      fn_type = fn.value:gettype()
+      fn_type = fn.value:get_type()
     elseif type(fn.value) == "function" then
       fn_type = untyped_fn
     else
@@ -923,7 +924,7 @@ function type_check.expr_call(cx, node)
       mapping[param_type] = arg_symbol
     end
 
-    local privileges = fn.value:getprivileges()
+    local privileges = fn.value:get_privileges()
     for _, privilege_list in ipairs(privileges) do
       for _, privilege in ipairs(privilege_list) do
         local privilege_type = privilege.privilege
@@ -1497,7 +1498,7 @@ function type_check.expr_partition(cx, node)
   if region:is(ast.typed.expr.ID) then
     region_symbol = region.value
   else
-    region_symbol = terralib.newsymbol()
+    region_symbol = std.newsymbol()
   end
   local colors_symbol
   if colors and colors:is(ast.typed.expr.ID) then
@@ -1608,7 +1609,7 @@ function type_check.expr_partition_by_field(cx, node)
   if region.region:is(ast.typed.expr.ID) then
     region_symbol = region.region.value
   else
-    region_symbol = terralib.newsymbol()
+    region_symbol = std.newsymbol()
   end
   local colors_symbol
   if colors:is(ast.typed.expr.ID) then
@@ -1673,7 +1674,7 @@ function type_check.expr_image(cx, node)
   if region.region:is(ast.typed.expr.ID) then
     region_symbol = region.region.value
   else
-    region_symbol = terralib.newsymbol(region_type)
+    region_symbol = std.newsymbol(region_type)
   end
 
   if not std.check_privilege(cx, std.reads, region_type, region.fields[1]) then
@@ -1687,7 +1688,7 @@ function type_check.expr_image(cx, node)
   if parent:is(ast.typed.expr.ID) then
     parent_symbol = parent.value
   else
-    parent_symbol = terralib.newsymbol()
+    parent_symbol = std.newsymbol()
   end
   local expr_type = std.partition(std.aliased, parent_symbol, partition_type.colors_symbol)
 
@@ -1743,7 +1744,12 @@ function type_check.expr_image_by_task(cx, node)
   local partition = type_check.expr(cx, node.partition)
   local partition_type = std.check_read(cx, partition)
   local task = type_check.expr_function(cx, node.region.region)
-  local task_type = task.value:gettype()
+  local task_type
+  if std.is_task(task.value) then
+    task_type = task.value:get_type()
+  else
+    task_type = task.value:gettype()
+  end
 
   if parent_type:is_opaque() then
     report.error(node, "type mismatch in argument 1: expected region with structured indexspace " ..
@@ -1781,7 +1787,7 @@ function type_check.expr_image_by_task(cx, node)
   if parent:is(ast.typed.expr.ID) then
     parent_symbol = parent.value
   else
-    parent_symbol = terralib.newsymbol()
+    parent_symbol = std.newsymbol()
   end
   local expr_type = std.partition(std.aliased, parent_symbol, partition_type.colors_symbol)
 
@@ -1827,7 +1833,7 @@ function type_check.expr_preimage(cx, node)
   if region.region:is(ast.typed.expr.ID) then
     region_symbol = region.region.value
   else
-    region_symbol = terralib.newsymbol(region_type)
+    region_symbol = std.newsymbol(region_type)
   end
 
   if not std.check_privilege(cx, std.reads, region_type, region.fields[1]) then
@@ -1841,7 +1847,7 @@ function type_check.expr_preimage(cx, node)
   if parent:is(ast.typed.expr.ID) then
     parent_symbol = parent.value
   else
-    parent_symbol = terralib.newsymbol()
+    parent_symbol = std.newsymbol()
   end
   local expr_type = std.partition(partition_type.disjointness, parent_symbol, partition_type.colors_symbol)
 
@@ -1911,7 +1917,7 @@ function type_check.expr_cross_product(cx, node)
       if arg:is(ast.typed.expr.ID) then
         return arg.value
       else
-        return terralib.newsymbol(std.as_read(arg.expr_type))
+        return std.newsymbol(std.as_read(arg.expr_type))
       end
   end)
   local expr_type = std.cross_product(unpack(arg_symbols))
@@ -2706,7 +2712,7 @@ function type_check.expr_with_scratch_fields(cx, node)
   local field_ids_type = std.check_read(cx, field_ids)
 
   local expr_type = std.region(
-    terralib.newsymbol(region_type:ispace()),
+    std.newsymbol(region_type:ispace()),
     region_type:fspace())
   if std.is_list_of_regions(region_type) then
     for i = 1, region_type:list_depth() do
@@ -3618,7 +3624,7 @@ function type_check.stat(cx, node)
   end
 end
 
-function type_check.top_task_param(cx, node, mapping)
+function type_check.top_task_param(cx, node, mapping, is_defined)
   local param_type = node.symbol:gettype()
   cx.type_env:insert(node, node.symbol, std.rawref(&param_type))
 
@@ -3632,9 +3638,15 @@ function type_check.top_task_param(cx, node, mapping)
     mapping[param_type] = node.symbol
   end
 
+  -- Check for use of futures in a defined task.
+  if node.future and is_defined then
+    report.error(node, "futures may be used as parameters only when a task is defined externally")
+  end
+
   return ast.typed.top.TaskParam {
     symbol = node.symbol,
     param_type = param_type,
+    future = node.future,
     annotations = node.annotations,
     span = node.span,
   }
@@ -3643,18 +3655,24 @@ end
 function type_check.top_task(cx, node)
   local return_type = node.return_type
   local cx = cx:new_task_scope(return_type)
-  cx:set_external(node.prototype:getexternal())
+
+  local is_defined = node.prototype:has_primary_variant()
+  if is_defined then
+    cx:set_external(node.prototype:get_primary_variant():is_external())
+  end
 
   local mapping = {}
   local params = node.params:map(
-    function(param) return type_check.top_task_param(cx, param, mapping) end)
+    function(param)
+      return type_check.top_task_param(cx, param, mapping, is_defined)
+    end)
   local prototype = node.prototype
   prototype:set_param_symbols(
     params:map(function(param) return param.symbol end))
 
   local task_type = terralib.types.functype(
     params:map(function(param) return param.param_type end), return_type, false)
-  prototype:settype(task_type)
+  prototype:set_type(task_type)
 
   local privileges = type_check.privileges(cx, node.privileges)
   for _, privilege_list in ipairs(privileges) do
@@ -3667,7 +3685,7 @@ function type_check.top_task(cx, node)
       cx:intern_region(region:gettype())
     end
   end
-  prototype:setprivileges(privileges)
+  prototype:set_privileges(privileges)
 
   local coherence_modes = type_check.coherence_modes(cx, node.coherence_modes)
   prototype:set_coherence_modes(coherence_modes)
@@ -3682,7 +3700,7 @@ function type_check.top_task(cx, node)
   std.add_constraints(cx, constraints)
   prototype:set_param_constraints(constraints)
 
-  local body = type_check.block(cx, node.body)
+  local body = node.body and type_check.block(cx, node.body)
 
   return_type = cx:get_return_type()
   if std.type_eq(return_type, std.untyped) then
@@ -3690,7 +3708,7 @@ function type_check.top_task(cx, node)
   end
   task_type = terralib.types.functype(
     params:map(function(param) return param.param_type end), return_type, false)
-  prototype:settype(task_type, true)
+  prototype:set_type(task_type, true)
 
   for _, fixup_node in ipairs(cx.fixup_nodes) do
     if fixup_node:is(ast.typed.expr.Call) then
@@ -3719,6 +3737,7 @@ function type_check.top_task(cx, node)
       leaf = false,
       inner = false,
       idempotent = false,
+      alloc = true,
     },
     region_divergence = false,
     prototype = prototype,

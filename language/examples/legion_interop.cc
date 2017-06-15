@@ -13,23 +13,24 @@
  * limitations under the License.
  */
 
-#ifndef __MANUAL_CAPI_TASK_RESULT_REDUCE_H__
-#define __MANUAL_CAPI_TASK_RESULT_REDUCE_H__
+#include "legion_interop.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "legion.h"
 
-#include "legion_c.h"
+using namespace Legion;
 
-// struct for types
-typedef struct { int    value[1 ]; }    int_1 ;
-
-// register plus on scalars
-void register_reduction_global_plus_int32(legion_reduction_op_id_t redop);
-
-#ifdef __cplusplus
+void task_f(const Task *task,
+            const std::vector<PhysicalRegion> &regions,
+            Context ctx, Runtime *runtime)
+{
+  printf("Hello Legion!\n");
 }
-#endif
 
-#endif // __MANUAL_CAPI_TASK_RESULT_REDUCE_H__
+void register_tasks()
+{
+  {
+    TaskVariantRegistrar registrar(TID_F, "f");
+    registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
+    Runtime::preregister_task_variant<task_f>(registrar, "f");
+  }
+}
