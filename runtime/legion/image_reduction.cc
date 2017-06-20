@@ -289,7 +289,7 @@ namespace Legion {
     void ImageReduction::createProjectionFunctors(int nodeID, int numBounds, Runtime* runtime, ImageSize imageSize) {
       
       int numLevels = numTreeLevels(imageSize);
-      int numFunctorsPerNode = numLevels + 1;
+      unsigned numFunctorsPerNode = numLevels + 1;
       
       if(mCompositeProjectionFunctor == NULL) {
         if(nodeID == 0) {
