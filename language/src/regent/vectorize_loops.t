@@ -69,7 +69,18 @@ local function join(fact1, fact2)
 end
 
 local context = {}
-context.__index = context
+
+function context:__index (field)
+  local value = context [field]
+  if value ~= nil then
+    return value
+  end
+  error ("context has no field '" .. field .. "' (in lookup)", 2)
+end
+
+function context:__newindex (field, value)
+  error ("context has no field '" .. field .. "' (in assignment)", 2)
+end
 
 function context:new_local_scope()
   local cx = {
@@ -960,9 +971,6 @@ function check_vectorizability.expr(cx, node)
       cx:report_error_when_demanded(node,
         error_prefix .. "an isnull expression")
 
-    elseif node:is(ast.typed.expr.New) then
-      cx:report_error_when_demanded(node, error_prefix .. "a new expression")
-
     elseif node:is(ast.typed.expr.Null) then
       cx:report_error_when_demanded(node, error_prefix .. "a null expression")
 
@@ -1200,7 +1208,7 @@ function vectorize_loops.stat(node)
 end
 
 function vectorize_loops.top_task(node)
-  local body = vectorize_loops.block(node.body)
+  local body = node.body and vectorize_loops.block(node.body)
 
   return node { body = body }
 end

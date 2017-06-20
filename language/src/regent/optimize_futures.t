@@ -23,7 +23,18 @@ local data = require("common/data")
 local std = require("regent/std")
 
 local context = {}
-context.__index = context
+
+function context:__index (field)
+  local value = context [field]
+  if value ~= nil then
+    return value
+  end
+  error ("context has no field '" .. field .. "' (in lookup)", 2)
+end
+
+function context:__newindex (field, value)
+  error ("context has no field '" .. field .. "' (in assignment)", 2)
+end
 
 function context:new_task_scope()
   local cx = {
@@ -138,9 +149,6 @@ function analyze_var_flow.expr(cx, node)
     return nil
 
   elseif node:is(ast.typed.expr.Isnull) then
-    return nil
-
-  elseif node:is(ast.typed.expr.New) then
     return nil
 
   elseif node:is(ast.typed.expr.Null) then
@@ -644,11 +652,6 @@ function optimize_futures.expr_isnull(cx, node)
   return node { pointer = pointer }
 end
 
-function optimize_futures.expr_new(cx, node)
-  local region = concretize(optimize_futures.expr(cx, node.region))
-  return node { region = region }
-end
-
 function optimize_futures.expr_null(cx, node)
   return node
 end
@@ -1060,9 +1063,6 @@ function optimize_futures.expr(cx, node)
 
   elseif node:is(ast.typed.expr.Isnull) then
     return optimize_futures.expr_isnull(cx, node)
-
-  elseif node:is(ast.typed.expr.New) then
-    return optimize_futures.expr_new(cx, node)
 
   elseif node:is(ast.typed.expr.Null) then
     return optimize_futures.expr_null(cx, node)
@@ -1577,6 +1577,8 @@ function optimize_futures.top_task_params(cx, node)
 end
 
 function optimize_futures.top_task(cx, node)
+  if not node.body then return node end
+
   local cx = cx:new_task_scope()
   analyze_var_flow.block(cx, node.body)
   compute_var_futures(cx)

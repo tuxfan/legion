@@ -18,7 +18,18 @@ local ast = require("regent/ast")
 local std = require("regent/std_base")
 
 local context = {}
-context.__index = context
+
+function context:__index (field)
+  local value = context [field]
+  if value ~= nil then
+    return value
+  end
+  error ("context has no field '" .. field .. "' (in lookup)", 2)
+end
+
+function context:__newindex (field, value)
+  error ("context has no field '" .. field .. "' (in assignment)", 2)
+end
 
 function context.new_global_scope()
   return setmetatable({
@@ -199,7 +210,7 @@ end
 function pretty.expr_function(cx, node)
   local name
   if std.is_task(node.value) then
-    name = node.value:getname():mkstring(".")
+    name = node.value:get_name():mkstring(".")
   elseif terralib.isfunction(node.value) then
     name = node.value:getname()
   else
@@ -285,14 +296,6 @@ end
 
 function pretty.expr_isnull(cx, node)
   return join({"isnull(", pretty.expr(cx, node.pointer), ")"})
-end
-
-function pretty.expr_new(cx, node)
-  return join({
-      "new(",
-      commas({tostring(node.pointer_type), pretty.expr(cx, node.region),
-              node.extent and pretty.expr(cx, node.extent)}),
-      ")"})
 end
 
 function pretty.expr_null(cx, node)
@@ -643,9 +646,6 @@ function pretty.expr(cx, node)
 
   elseif node:is(ast.typed.expr.Isnull) then
     return pretty.expr_isnull(cx, node)
-
-  elseif node:is(ast.typed.expr.New) then
-    return pretty.expr_new(cx, node)
 
   elseif node:is(ast.typed.expr.Null) then
     return pretty.expr_null(cx, node)
@@ -1163,15 +1163,24 @@ function pretty.top_task(cx, node)
   local config_options = pretty.task_config_options(cx, node.config_options)
 
   local lines = terralib.newlist()
-  lines:insert(join({"task " .. name, "(", params, ")", return_type }))
-  lines:insert(join({"-- ", commas(config_options) }))
+  lines:insert(join({((node.body and "") or "extern ") ..
+                     "task " .. name, "(", params, ")", return_type }))
+  if node.body then
+    lines:insert(join({"-- ", commas(config_options) }))
+  end
   if #meta > 0 then
     lines:insert(text.Line { value = "where" })
     lines:insert(text.Indent { value = commas(meta) })
-    lines:insert(text.Line { value = "do" })
+    if node.body then
+      lines:insert(text.Line { value = "do" })
+    else
+      lines:insert(text.Line { value = "end" })
+    end
   end
-  lines:insert(pretty.block(cx, node.body))
-  lines:insert(text.Line { value = "end" })
+  if node.body then
+    lines:insert(pretty.block(cx, node.body))
+    lines:insert(text.Line { value = "end" })
+  end
 
   return text.Lines { lines = lines }
 end

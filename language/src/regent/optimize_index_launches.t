@@ -23,7 +23,18 @@ local report = require("common/report")
 local std = require("regent/std")
 
 local context = {}
-context.__index = context
+
+function context:__index (field)
+  local value = context [field]
+  if value ~= nil then
+    return value
+  end
+  error ("context has no field '" .. field .. "' (in lookup)", 2)
+end
+
+function context:__newindex (field, value)
+  error ("context has no field '" .. field .. "' (in assignment)", 2)
+end
 
 function context:new_local_scope()
   local cx = {
@@ -65,14 +76,10 @@ local function check_privilege_noninterference(cx, task, arg,
 
   local privileges_by_field_path, coherence_modes_by_field_path =
     std.group_task_privileges_by_field_path(
-      std.find_task_privileges(
-        param_region_type, task:getprivileges(),
-        task:get_coherence_modes(), task:get_flags()))
+      std.find_task_privileges(param_region_type, task))
   local other_privileges_by_field_path, other_coherence_modes_by_field_path =
     std.group_task_privileges_by_field_path(
-      std.find_task_privileges(
-        other_param_region_type,
-        task:getprivileges(), task:get_coherence_modes(), task:get_flags()))
+      std.find_task_privileges(other_param_region_type, task))
 
   for field_path, privilege in pairs(privileges_by_field_path) do
     local other_privilege = other_privileges_by_field_path[field_path]
@@ -122,8 +129,7 @@ local function analyze_noninterference_self(
   assert(param_region_type)
   local privileges, privilege_field_paths, privilege_field_types,
         privilege_coherence_modes, privilege_flags = std.find_task_privileges(
-    param_region_type, task:getprivileges(),
-    task:get_coherence_modes(), task:get_flags())
+    param_region_type, task)
   for i, privilege in ipairs(privileges) do
     local field_paths = privilege_field_paths[i]
     local coherence = privilege_coherence_modes[i]
@@ -150,7 +156,6 @@ local function analyze_is_side_effect_free_node(cx)
     elseif node:is(ast.typed.expr.RawContext) or
       node:is(ast.typed.expr.RawPhysical) or
       node:is(ast.typed.expr.RawRuntime) or
-      node:is(ast.typed.expr.New) or
       node:is(ast.typed.expr.Ispace) or
       node:is(ast.typed.expr.Region) or
       node:is(ast.typed.expr.Partition) or
@@ -239,7 +244,6 @@ local function analyze_is_loop_invariant_node(cx)
     elseif node:is(ast.typed.expr.IndexAccess) then
       return not std.is_ref(node.expr_type)
     elseif node:is(ast.typed.expr.Call) or
-      node:is(ast.typed.expr.New) or
       node:is(ast.typed.expr.Ispace) or
       node:is(ast.typed.expr.Region) or
       node:is(ast.typed.expr.Partition) or
@@ -459,7 +463,7 @@ local function optimize_loop_body(cx, node, report_pass, report_fail)
   --     they come from a disjoint partition, as long as indexing into
   --     said partition is provably disjoint.
 
-  local param_types = task:gettype().parameters
+  local param_types = task:get_type().parameters
   local args = call.args
   local args_provably = ast.IndexLaunchArgsProvably {
     invariant = terralib.newlist(),
@@ -657,6 +661,8 @@ function optimize_index_launches.block(cx, node)
 end
 
 function optimize_index_launches.top_task(cx, node)
+  if not node.body then return node end
+
   local cx = cx:new_task_scope(node.prototype:get_constraints())
   local body = optimize_index_launches.block(cx, node.body)
 
