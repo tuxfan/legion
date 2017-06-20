@@ -171,9 +171,9 @@ namespace Legion {
     
     
     
-    static void generate_image_data_task(const Task *task,
-                                         const std::vector<PhysicalRegion> &regions,
-                                         Context ctx, HighLevelRuntime *runtime) {
+    void generate_image_data_task(const Task *task,
+                                  const std::vector<PhysicalRegion> &regions,
+                                  Context ctx, Runtime *runtime) {
       
       UsecTimer render(ImageReduction::describe_task(task) + ":");
       render.start();
@@ -237,9 +237,9 @@ namespace Legion {
     
     
     
-    static int verify_composited_image_data_task(const Task *task,
-                                                 const std::vector<PhysicalRegion> &regions,
-                                                 Context ctx, HighLevelRuntime *runtime) {
+    int verify_composited_image_data_task(const Task *task,
+                                          const std::vector<PhysicalRegion> &regions,
+                                          Context ctx, Runtime *runtime) {
       coord_t layer = task->index_point[2];
       if(layer == 0) {
         PhysicalRegion image = regions[0];
@@ -457,7 +457,7 @@ namespace Legion {
     
     void top_level_task(const Task *task,
                         const std::vector<PhysicalRegion> &regions,
-                        Context ctx, HighLevelRuntime *runtime) {
+                        Context ctx, Runtime *runtime) {
       
       {
         // test with multiple fragments per scanline and all reduction operators

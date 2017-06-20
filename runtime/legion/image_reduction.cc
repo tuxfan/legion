@@ -301,7 +301,6 @@ namespace Legion {
           while(mCompositeProjectionFunctor == NULL){
             usleep(100);
           }
-          std::cout << "node " << nodeID << " proceeding" << std::endl;
         }
       }
       
@@ -319,9 +318,6 @@ namespace Legion {
           id = (*mProjectionID)[level];
         }
         CompositeProjectionFunctor* functor = new CompositeProjectionFunctor(offset, numBounds, id);
-        
-        std::cout << "node " << nodeID << " register projection functor id " << id << std::endl;
-        
         runtime->register_projection_functor(id, functor);
         storeMyProjectionFunctor(nodeID, level, numBounds, functor);
       }
