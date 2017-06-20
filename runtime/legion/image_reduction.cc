@@ -564,7 +564,7 @@ namespace Legion {
     
     
     FutureMap ImageReduction::launchPipelineReduction() {
-      
+      return FutureMap();
     }
     
     
