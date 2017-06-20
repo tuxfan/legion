@@ -68,16 +68,16 @@ namespace Legion {
       mDepthFunction = 0;
       
       createImage(mSourceImage, mSourceImageDomain);
-//      partitionImageByDepth(mSourceImage, mDepthDomain, mDepthPartition);
-//      partitionImageByFragment(mSourceImage, mSourceFragmentDomain, mSourceFragmentPartition);
+      partitionImageByDepth(mSourceImage, mDepthDomain, mDepthPartition);
+      partitionImageByFragment(mSourceImage, mSourceFragmentDomain, mSourceFragmentPartition);
       
       
-//      registerTasks();
-//      initializeNodes();
-//      assert(mNodeCount > 0);
-//      mLocalCopyOfNodeID = mNodeID[mNodeCount - 1];//written by initial_task
-//      initializeViewMatrix();
-//      createTreeDomains(mLocalCopyOfNodeID, numTreeLevels(imageSize), runtime, imageSize);
+      registerTasks();
+      initializeNodes();
+      assert(mNodeCount > 0);
+      mLocalCopyOfNodeID = mNodeID[mNodeCount - 1];//written by initial_task
+      initializeViewMatrix();
+      createTreeDomains(mLocalCopyOfNodeID, numTreeLevels(imageSize), runtime, imageSize);
     }
     
     ImageReduction::~ImageReduction() {
@@ -96,10 +96,10 @@ namespace Legion {
 
       mRuntime->destroy_index_space(mContext, mSourceImage.get_index_space());
       mRuntime->destroy_logical_region(mContext, mSourceImage);
-//      mRuntime->destroy_index_partition(mContext, mDepthPartition.get_index_partition());
-//      mRuntime->destroy_logical_partition(mContext, mDepthPartition);
-//      mRuntime->destroy_index_partition(mContext, mSourceFragmentPartition.get_index_partition());
-//      mRuntime->destroy_logical_partition(mContext, mSourceFragmentPartition);
+      mRuntime->destroy_index_partition(mContext, mDepthPartition.get_index_partition());
+      mRuntime->destroy_logical_partition(mContext, mDepthPartition);
+      mRuntime->destroy_index_partition(mContext, mSourceFragmentPartition.get_index_partition());
+      mRuntime->destroy_logical_partition(mContext, mSourceFragmentPartition);
     }
     
     
@@ -186,10 +186,8 @@ namespace Legion {
       Rect<image_region_dimensions> imageBounds(mImageSize.origin(), mImageSize.upperBound() - Point<image_region_dimensions>::ONES());
       domain = Domain::from_rect<image_region_dimensions>(imageBounds);
       IndexSpace pixels = mRuntime->create_index_space(mContext, domain);
-//      mRuntime->attach_name(pixels, "image index space");
       FieldSpace fields = imageFields();
       region = mRuntime->create_logical_region(mContext, pixels, fields);
-//      mRuntime->attach_name(region, "image");
     }
     
     

@@ -396,49 +396,46 @@ namespace Legion {
       std::cout << testDescription(testLabel, imageReduction, imageSize, depthFunc, blendFuncSource, blendFuncDestination, blendEquation) << std::endl;
       
       paintImages(imageSize, context, runtime, imageReduction);
-      if(depthFunc != 0) {
-        imageReduction.set_depth_func(depthFunc);
-      } else {
-        imageReduction.set_blend_func(blendFuncSource, blendFuncDestination);
-        imageReduction.set_blend_equation(blendEquation);
-      }
+      imageReduction.set_depth_func(depthFunc);
+      imageReduction.set_blend_func(blendFuncSource, blendFuncDestination);
+      imageReduction.set_blend_equation(blendEquation);
     }
     
     
     
     
-    static void testAssociative(ImageSize imageSize, Context context, Runtime *runtime,
+    static void testAssociative(ImageReduction &imageReduction,
+                                ImageSize imageSize, Context context, Runtime *runtime,
                                 GLenum depthFunc, GLenum blendFuncSource, GLenum blendFuncDestination, GLenum blendEquation) {
-      ImageReduction imageReduction(imageSize, context, runtime);
       std::string testLabel = "associative,commutative";
       
       std::cout << testDescription(testLabel, imageReduction, imageSize, depthFunc, blendFuncSource, blendFuncDestination, blendEquation) << std::endl;
       
-//      prepareTest(imageReduction, imageSize, context, runtime, depthFunc, blendFuncSource, blendFuncDestination, blendEquation, testLabel);
+      prepareTest(imageReduction, imageSize, context, runtime, depthFunc, blendFuncSource, blendFuncDestination, blendEquation, testLabel);
       UsecTimer reduceCommutative("image reduction " + testLabel);
       reduceCommutative.start();
-//      FutureMap futureMap = imageReduction.reduce_associative_commutative();
-//      futureMap.wait_all_results();
+      FutureMap futureMap = imageReduction.reduce_associative_commutative();
+      futureMap.wait_all_results();
       reduceCommutative.stop();
       std::cout << reduceCommutative.to_string() << std::endl;
-//      verifyAssociativeTestResult(testLabel, imageReduction, imageSize, depthFunc, blendFuncSource, blendFuncDestination, blendEquation);
+      verifyAssociativeTestResult(testLabel, imageReduction, imageSize, depthFunc, blendFuncSource, blendFuncDestination, blendEquation);
       
       return;//stop here
       
       testLabel = "associative,noncommutative";
-//      futureMap = imageReduction.reduce_associative_noncommutative();
-//      futureMap.wait_all_results();
-//      verifyAssociativeTestResult(testLabel, imageReduction, imageSize, depthFunc, blendFuncSource, blendFuncDestination, blendEquation);
+      futureMap = imageReduction.reduce_associative_noncommutative();
+      futureMap.wait_all_results();
+      verifyAssociativeTestResult(testLabel, imageReduction, imageSize, depthFunc, blendFuncSource, blendFuncDestination, blendEquation);
     }
     
     
     
-    static void testNonassociative(ImageSize imageSize, Context context, Runtime *runtime,
+    static void testNonassociative(ImageReduction &imageReduction,
+                                   ImageSize imageSize, Context context, Runtime *runtime,
                                    GLenum depthFunc, GLenum blendFuncSource, GLenum blendFuncDestination, GLenum blendEquation) {
       
       return;//not working
       
-      ImageReduction imageReduction(imageSize, context, runtime);
       std::string testLabel = "nonassociative,commutative";
       prepareTest(imageReduction, imageSize, context, runtime, depthFunc, blendFuncSource, blendFuncDestination, blendEquation, testLabel);
       FutureMap futureMap;
@@ -470,11 +467,12 @@ namespace Legion {
         
         assert(fragmentsPerLayer > rows && width % (fragmentsPerLayer / rows) == 0);
         ImageSize imageSize = { width, rows, numDomainNodes, fragmentsPerLayer };
+        ImageReduction imageReduction(imageSize, ctx, runtime);
         
         for(int i = 0; i < numDepthFuncs; ++i) {
           GLenum depthFunc = depthFuncs[i];
-          testAssociative(imageSize, ctx, runtime, depthFunc, 0, 0, 0);
-          testNonassociative(imageSize, ctx, runtime, depthFunc, 0, 0, 0);
+          testAssociative(imageReduction, imageSize, ctx, runtime, depthFunc, 0, 0, blendEquations[0]);
+          testNonassociative(imageReduction, imageSize, ctx, runtime, depthFunc, 0, 0, blendEquations[0]);
         }
         
         for(int i = 0; i < numBlendFuncs; ++i) {
@@ -483,8 +481,8 @@ namespace Legion {
             GLenum destinationFunc = blendFuncs[j];
             for(int k = 0; k < numBlendEquations; ++k) {
               GLenum blendEquation = blendEquations[k];
-              testAssociative(imageSize, ctx, runtime, 0, sourceFunc, destinationFunc, blendEquation);
-              testNonassociative(imageSize, ctx, runtime, 0, sourceFunc, destinationFunc, blendEquation);
+              testAssociative(imageReduction, imageSize, ctx, runtime, 0, sourceFunc, destinationFunc, blendEquation);
+              testNonassociative(imageReduction, imageSize, ctx, runtime, 0, sourceFunc, destinationFunc, blendEquation);
             }
           }
         }
@@ -495,15 +493,17 @@ namespace Legion {
       {
         // test with small images
         ImageSize imageSize = { 320, 200, numDomainNodes, fewFragmentsPerLayer };
-        testAssociative(imageSize, ctx, runtime, depthFuncs[0], 0, 0, 0);
-        testNonassociative(imageSize, ctx, runtime, depthFuncs[0], 0, 0, 0);
+        ImageReduction imageReduction(imageSize, ctx, runtime);
+        testAssociative(imageReduction, imageSize, ctx, runtime, depthFuncs[0], 0, 0, blendEquations[0]);
+        testNonassociative(imageReduction, imageSize, ctx, runtime, depthFuncs[0], 0, 0, blendEquations[0]);
       }
       
       {
         // test with large images
         ImageSize imageSize = { 3840, 2160, numDomainNodes, fewFragmentsPerLayer };
-        testAssociative(imageSize, ctx, runtime, depthFuncs[0], 0, 0, 0);
-        testNonassociative(imageSize, ctx, runtime, depthFuncs[0], 0, 0, 0);
+        ImageReduction imageReduction(imageSize, ctx, runtime);
+        testAssociative(imageReduction, imageSize, ctx, runtime, depthFuncs[0], 0, 0, blendEquations[0]);
+        testNonassociative(imageReduction, imageSize, ctx, runtime, depthFuncs[0], 0, 0, blendEquations[0]);
       }
       
     }
