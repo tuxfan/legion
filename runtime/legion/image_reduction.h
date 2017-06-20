@@ -254,7 +254,7 @@ namespace Legion {
           DomainPoint remappedPoint = point;
           int remappedLayer = launchDomainLayer * num_fragments_per_composite + mOffset;
           // handle non-power of 2 simulation size
-          if(remappedLayer < mNumBounds) {
+          if(mNumBounds == 0 || remappedLayer < mNumBounds) {
             remappedPoint[2] = remappedLayer;
           }
           
@@ -373,7 +373,8 @@ namespace Legion {
       static int mNodeCount;
       static std::vector<CompositeProjectionFunctor*> *mCompositeProjectionFunctor;
       static std::vector<Domain> *mHierarchicalTreeDomain;
-      static GLfloat mGlViewTransform[16];
+      static const int numMatrixElements4x4 = 16;
+      static GLfloat mGlViewTransform[numMatrixElements4x4];
       static PixelField mGlConstantColor[numPixelFields];
       static GLenum mGlBlendEquation;
       static GLenum mGlBlendFunctionSource;

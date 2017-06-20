@@ -34,9 +34,9 @@ TREE_REDUCTION ?= 1
 
 
 # Put the binary file name here
-OUTFILE		?= prototype1
+OUTFILE		?= visualization
 # List all the application source files here
-GEN_SRC		?= prototype1.cc 		# .cc files
+GEN_SRC		?= visualization.cc 		# .cc files
 GEN_GPU_SRC	?=		# .cu files
 
 # You can modify these variables, some will be appended to by the runtime makefile

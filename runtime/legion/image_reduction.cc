@@ -44,7 +44,7 @@ namespace Legion {
     std::vector<ImageReduction::CompositeProjectionFunctor*> *ImageReduction::mCompositeProjectionFunctor = NULL;
     int ImageReduction::mNodeCount;
     std::vector<Domain> *ImageReduction::mHierarchicalTreeDomain = NULL;
-    GLfloat ImageReduction::mGlViewTransform[16];
+    GLfloat ImageReduction::mGlViewTransform[numMatrixElements4x4];
     ImageReduction::PixelField ImageReduction::mGlConstantColor[numPixelFields];
     GLenum ImageReduction::mGlBlendEquation;
     GLenum ImageReduction::mGlBlendFunctionSource;
@@ -93,7 +93,7 @@ namespace Legion {
         delete mCompositeProjectionFunctor;
         mCompositeProjectionFunctor = NULL;
       }
-
+      
       mRuntime->destroy_index_space(mContext, mSourceImage.get_index_space());
       mRuntime->destroy_logical_region(mContext, mSourceImage);
       mRuntime->destroy_index_partition(mContext, mDepthPartition.get_index_partition());
@@ -298,7 +298,7 @@ namespace Legion {
                                       Context ctx, HighLevelRuntime *runtime) {
       ImageSize imageSize = ((ImageSize*)task->args)[0];
       SimulationBoundsCoordinate *domainBounds = (SimulationBoundsCoordinate*)((char*)task->args + sizeof(ImageSize));
-      int numNodes = task->arglen / (fieldsPerSimulationBounds * sizeof(SimulationBoundsCoordinate));
+      int numNodes = imageSize.numImageLayers;
       
       // this task initializes some per-node static state for use by subsequent tasks
       
@@ -311,8 +311,10 @@ namespace Legion {
       
       // load the bounds of the local simulation subdomain (axis aligned bounding box)
       // TODO do we just have to save a pointer here, or actually copy the data?
-      SimulationBoundsCoordinate *myBounds = domainBounds + nodeID * fieldsPerSimulationBounds;
-      storeMySimulationBounds(myBounds, nodeID, numNodes);
+      if(domainBounds != NULL) {
+        SimulationBoundsCoordinate *myBounds = domainBounds + nodeID * fieldsPerSimulationBounds;
+        storeMySimulationBounds(myBounds, nodeID, numNodes);
+      }
       
       // projection functors
       createProjectionFunctors(nodeID, numNodes, runtime, imageSize);
@@ -455,10 +457,14 @@ namespace Legion {
       PixelField *r1, *g1, *b1, *a1, *z1, *userdata1;
       ImageReductionComposite::CompositeFunction* compositeFunction;
       
+//      UsecTimer composite("composite time:");
+//      composite.start();
       create_image_field_pointers(args.imageSize, fragment0, r0, g0, b0, a0, z0, userdata0, stride, runtime, ctx);
       create_image_field_pointers(args.imageSize, fragment1, r1, g1, b1, a1, z1, userdata1, stride, runtime, ctx);
       compositeFunction = ImageReductionComposite::compositeFunctionPointer(args.depthFunction, args.blendFunctionSource, args.blendFunctionDestination, args.blendEquation);
       compositeFunction(r0, g0, b0, a0, z0, userdata0, r1, g1, b1, a1, z1, userdata1, r0, g0, b0, a0, z0, userdata0, args.imageSize.numPixelsPerFragment(), stride);
+//      composite.stop();
+//      std::cout << composite.to_string() << std::endl;
     }
     
     
@@ -545,7 +551,7 @@ namespace Legion {
                                                                                                ImageReduction::SimulationBoundsCoordinate near) {
       static ImageReduction::SimulationBoundsCoordinate *result = NULL;
       if(result == NULL) {
-        result = new ImageReduction::SimulationBoundsCoordinate[16];
+        result = new ImageReduction::SimulationBoundsCoordinate[ImageReduction::numMatrixElements4x4];
         // row major
         result[0] = (2.0f / (right - left));
         result[1] = 0.0f;
@@ -579,7 +585,7 @@ namespace Legion {
                                                                                            ImageReduction::SimulationBoundsCoordinate far) {
       static ImageReduction::SimulationBoundsCoordinate *result = NULL;
       if(result == NULL) {
-        result = new ImageReduction::SimulationBoundsCoordinate[16];
+        result = new ImageReduction::SimulationBoundsCoordinate[ImageReduction::numMatrixElements4x4];
         ImageReduction::SimulationBoundsCoordinate* matrix = homogeneousOrthographicProjectionMatrix(right, left, top, bottom, near, far);
         
         // copied from MESA implementation of gluInvertMatrix
@@ -706,7 +712,7 @@ namespace Legion {
         
         det = 1.0 / det;
         
-        for (i = 0; i < 16; i++)
+        for (i = 0; i < numMatrixElements4x4; i++)
           result[i] = result[i] * det;
       }
       return result;
@@ -746,7 +752,7 @@ namespace Legion {
       SimulationBoundsCoordinate projected[] = { 0.0f, 0.0f, 0.0f, 0.0f };
       const int numHomgeneousCoordinates = 4;
       SimulationBoundsCoordinate *projection = homogeneousOrthographicProjectionMatrix(mXMax, mXMin, mYMax, mYMin, mZMax, mZMin);
-      SimulationBoundsCoordinate viewProjection[16];
+      SimulationBoundsCoordinate viewProjection[numMatrixElements4x4];
       matrixMultiply4x4(projection, mGlViewTransform, viewProjection);
       
       // apply view and projection matrices to center of this fragment
