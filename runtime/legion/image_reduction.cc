@@ -517,7 +517,13 @@ namespace Legion {
     }
     
     FutureMap ImageReduction::reduce_associative_noncommutative(){
-      return reduceAssociative();
+      if(mNumSimulationBounds == mImageSize.numImageLayers) {
+        return reduceAssociative();
+      } else {
+        std::cout << "cannot reduce noncommutatively until simulation bounds are provided" << std::endl;
+        std::cout << "call preregisterSimulationBounds(SimulationBoundsCoordinate *bounds, int numBounds) before startings Legion runtime" << std::endl;
+        return FutureMap();
+      }
     }
     
     
