@@ -236,6 +236,16 @@ namespace Legion {
                                Context ctx, Runtime *runtime);
       
       static int numTreeLevels(ImageSize imageSize);
+      
+      static void initial_task(const Task *task,
+                               const std::vector<PhysicalRegion> &regions,
+                               Context ctx, Runtime *runtime);
+      
+      static void composite_task(const Task *task,
+                                 const std::vector<PhysicalRegion> &regions,
+                                 Context ctx, Runtime *runtime);
+      
+
 
     protected:
             
@@ -290,16 +300,6 @@ namespace Legion {
       static void storeMyNodeID(int nodeID, int numNodes);
             
       static void createProjectionFunctors(int nodeID, int numBounds, Runtime* runtime, ImageSize imageSize);
-      
-      
-      static void initial_task(const Task *task,
-                               const std::vector<PhysicalRegion> &regions,
-                               Context ctx, Runtime *runtime);
-      
-      static void composite_task(const Task *task,
-                                 const std::vector<PhysicalRegion> &regions,
-                                 Context ctx, Runtime *runtime);
-      
       
       
       
