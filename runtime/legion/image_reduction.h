@@ -298,7 +298,11 @@ namespace Legion {
       static SimulationBoundsCoordinate* retrieveMySimulationBounds(int nodeID);
       
       static void storeMyNodeID(int nodeID, int numNodes);
-            
+      
+      static void storeMyProjectionFunctor(int nodeID, int level, int numNodes, CompositeProjectionFunctor* functor);
+      
+      static CompositeProjectionFunctor* retrieveMyProjectionFunctor(int nodeID, int level, int numNodes);
+        
       static void createProjectionFunctors(int nodeID, int numBounds, Runtime* runtime, ImageSize imageSize);
       
       
@@ -372,6 +376,7 @@ namespace Legion {
       static SimulationBoundsCoordinate mXMax, mXMin, mYMax, mYMin, mZMax, mZMin;
       static int mNodeCount;
       static std::vector<CompositeProjectionFunctor*> *mCompositeProjectionFunctor;
+      static std::vector<ProjectionID> *mProjectionID;
       static std::vector<Domain> *mHierarchicalTreeDomain;
       static const int numMatrixElements4x4 = 16;
       static GLfloat mGlViewTransform[numMatrixElements4x4];

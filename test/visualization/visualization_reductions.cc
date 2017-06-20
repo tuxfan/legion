@@ -550,12 +550,10 @@ int main(int argc, char *argv[]) {
                                                                                         AUTO_GENERATE_ID, Legion::TaskConfigOptions(false/*leaf*/), "top_level_task");
   
   Legion::HighLevelRuntime::register_legion_task<Legion::Visualization::generate_image_data_task>(Legion::Visualization::GENERATE_IMAGE_DATA_TASK_ID,
-                                                                                                  Legion::Processor::LOC_PROC, false/*single*/, true/*index*/,
-                                                                                                  AUTO_GENERATE_ID, Legion::TaskConfigOptions(true/*leaf*/), "generate_image_data_task");
+                                                                                                  Legion::Processor::LOC_PROC, false/*single*/, true/*index*/,                                                                                                  AUTO_GENERATE_ID, Legion::TaskConfigOptions(true/*leaf*/), "generate_image_data_task");
   
   Legion::HighLevelRuntime::register_legion_task<int, Legion::Visualization::verify_composited_image_data_task>(Legion::Visualization::VERIFY_COMPOSITED_IMAGE_DATA_TASK_ID,
-                                                                                                                Legion::Processor::LOC_PROC, false/*single*/, true/*index*/,
-                                                                                                                AUTO_GENERATE_ID, Legion::TaskConfigOptions(true/*leaf*/), "verify_composited_image_data_task");
+                                                                                                                Legion::Processor::LOC_PROC, false/*single*/, true/*index*/,                                                                                                                AUTO_GENERATE_ID, Legion::TaskConfigOptions(true/*leaf*/), "verify_composited_image_data_task");
   
   return Legion::HighLevelRuntime::start(argc, argv);
 }

@@ -42,6 +42,7 @@ namespace Legion {
     ImageReduction::SimulationBoundsCoordinate ImageReduction::mZMax;
     ImageReduction::SimulationBoundsCoordinate ImageReduction::mZMin;
     std::vector<ImageReduction::CompositeProjectionFunctor*> *ImageReduction::mCompositeProjectionFunctor = NULL;
+    std::vector<ProjectionID> *ImageReduction::mProjectionID;
     int ImageReduction::mNodeCount;
     std::vector<Domain> *ImageReduction::mHierarchicalTreeDomain = NULL;
     GLfloat ImageReduction::mGlViewTransform[numMatrixElements4x4];
@@ -252,7 +253,18 @@ namespace Legion {
     }
     
     
+    void ImageReduction::storeMyProjectionFunctor(int nodeID, int level, int numNodes, CompositeProjectionFunctor* functor) {
+      int functorsPerNode = mCompositeProjectionFunctor->size() / numNodes;
+      int functorID = nodeID * functorsPerNode + level;
+      (*mCompositeProjectionFunctor)[functorID] = functor;
+    }
     
+    
+    ImageReduction::CompositeProjectionFunctor* ImageReduction::retrieveMyProjectionFunctor(int nodeID, int level, int numNodes) {
+      int functorsPerNode = mCompositeProjectionFunctor->size() / numNodes;
+      int functorID = nodeID * functorsPerNode + level;
+      return (*mCompositeProjectionFunctor)[functorID];
+    }
     
     
     ////////////////
@@ -273,22 +285,45 @@ namespace Legion {
     
     
     
+    
     void ImageReduction::createProjectionFunctors(int nodeID, int numBounds, Runtime* runtime, ImageSize imageSize) {
       
+      int numLevels = numTreeLevels(imageSize);
+      int numFunctorsPerNode = numLevels + 1;
+      
       if(mCompositeProjectionFunctor == NULL) {
-        mCompositeProjectionFunctor = new std::vector<CompositeProjectionFunctor*>();
+        if(nodeID == 0) {
+          int totalFunctors = numFunctorsPerNode * numBounds;
+          mCompositeProjectionFunctor = new std::vector<CompositeProjectionFunctor*>(totalFunctors);
+          mProjectionID = new std::vector<ProjectionID>();
+        } else {
+          std::cout << "node " << nodeID << " waiting for projection functor vector allocation" << std::endl;
+          while(mCompositeProjectionFunctor == NULL){
+            usleep(100);
+          }
+          std::cout << "node " << nodeID << " proceeding" << std::endl;
+        }
       }
       
-      int numLevels = numTreeLevels(imageSize);
+      while((nodeID != 0) && (mProjectionID == NULL || mProjectionID->size() < numFunctorsPerNode)) {
+        usleep(500);
+      }
       
       for(int level = 0; level <= numLevels; ++level) {
-        if(level >= mCompositeProjectionFunctor->size()) {
-          int offset = (level == 0) ? 0 : (int)powf(2.0f, level - 1);
-          ProjectionID id = runtime->generate_dynamic_projection_id();
-          CompositeProjectionFunctor* functor = new CompositeProjectionFunctor(offset, numBounds, id);
-          runtime->register_projection_functor(id, functor);
-          mCompositeProjectionFunctor->push_back(functor);
+        int offset = (level == 0) ? 0 : (int)powf(2.0f, level - 1);
+        ProjectionID id;
+        if(true || nodeID == 0) {
+          id = runtime->generate_dynamic_projection_id();
+          mProjectionID->push_back(id);
+        } else {
+          id = (*mProjectionID)[level];
         }
+        CompositeProjectionFunctor* functor = new CompositeProjectionFunctor(offset, numBounds, id);
+        
+        std::cout << "node " << nodeID << " register projection functor id " << id << std::endl;
+        
+        runtime->register_projection_functor(id, functor);
+        storeMyProjectionFunctor(nodeID, level, numBounds, functor);
       }
     }
     
@@ -343,7 +378,7 @@ namespace Legion {
       int numLeaves = 1;
       
       for(int level = 0; level < numTreeLevels; ++level) {
-        if(level >= mHierarchicalTreeDomain->size()) {
+        if((unsigned)level >= mHierarchicalTreeDomain->size()) {
           numFragments.x[2] = numLeaves - 1;
           Rect<image_region_dimensions> launchBounds(Point<image_region_dimensions>::ZEROES(), numFragments);
           Domain domain = Domain::from_rect<image_region_dimensions>(launchBounds);
@@ -457,14 +492,14 @@ namespace Legion {
       PixelField *r1, *g1, *b1, *a1, *z1, *userdata1;
       ImageReductionComposite::CompositeFunction* compositeFunction;
       
-//      UsecTimer composite("composite time:");
-//      composite.start();
+      //      UsecTimer composite("composite time:");
+      //      composite.start();
       create_image_field_pointers(args.imageSize, fragment0, r0, g0, b0, a0, z0, userdata0, stride, runtime, ctx);
       create_image_field_pointers(args.imageSize, fragment1, r1, g1, b1, a1, z1, userdata1, stride, runtime, ctx);
       compositeFunction = ImageReductionComposite::compositeFunctionPointer(args.depthFunction, args.blendFunctionSource, args.blendFunctionDestination, args.blendEquation);
       compositeFunction(r0, g0, b0, a0, z0, userdata0, r1, g1, b1, a1, z1, userdata1, r0, g0, b0, a0, z0, userdata0, args.imageSize.numPixelsPerFragment(), stride);
-//      composite.stop();
-//      std::cout << composite.to_string() << std::endl;
+      //      composite.stop();
+      //      std::cout << composite.to_string() << std::endl;
     }
     
     
@@ -478,8 +513,8 @@ namespace Legion {
                                                   int nodeID, int maxTreeLevel) {
       
       Domain launchDomain = (*mHierarchicalTreeDomain)[treeLevel - 1];
-      CompositeProjectionFunctor* functor0 = (*mCompositeProjectionFunctor)[0];
-      CompositeProjectionFunctor* functor1 = (*mCompositeProjectionFunctor)[functorLevel];
+      CompositeProjectionFunctor* functor0 = retrieveMyProjectionFunctor(0, 0, imageSize.numImageLayers);
+      CompositeProjectionFunctor* functor1 = retrieveMyProjectionFunctor(0, functorLevel, imageSize.numImageLayers);
       
       ArgumentMap argMap;
       CompositeArguments args = { imageSize, depthFunc, blendFuncSource, blendFuncDestination, blendEquation };
