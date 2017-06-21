@@ -81,7 +81,14 @@ namespace Legion {
       typedef ByteOffset Stride[ImageReduction::numPixelFields][image_region_dimensions];
       
       /**
-       * Preregister an array of simulation bounds in 3D
+       * Initialize the image reduction framework.
+       * Be sure to call this before starting the Legion runtime.
+       */
+      static void initialize();
+
+      /**
+       * Preregister an array of simulation bounds in 3D.
+       * This is optional, required if you plan to use noncommutative reductions.
        * Be sure to call this *before* starting the Legion runtime.
        *
        * @param bounds array of 6xGLfloatxnumNodes
@@ -317,8 +324,8 @@ namespace Legion {
       void addCompositeArgumentsToArgmap(CompositeArguments *&argsPtr, int taskZ, ArgumentMap &argMap, int layer0, int layer1);
       
       void addRegionRequirementToCompositeLauncher(IndexTaskLauncher &launcher, int projectionFunctorID, PrivilegeMode privilege, CoherenceProperty coherence);
-      int *defaultPermutation();
-      void registerTasks();
+
+      static void registerTasks();
       
       static void addImageFieldsToRequirement(RegionRequirement &req);
       
@@ -355,10 +362,6 @@ namespace Legion {
       Domain mSourceFragmentDomain;
       LogicalPartition mDepthPartition;
       LogicalPartition mSourceFragmentPartition;
-      TaskID mInitialTaskID;
-      TaskID mAccessorTaskID;
-      TaskID mCompositeTaskID;
-      TaskID mDisplayTaskID;
       GLenum mDepthFunction;
       int mAccessorFunctorID;
       int mLocalCopyOfNodeID;
@@ -378,6 +381,10 @@ namespace Legion {
       static GLenum mGlBlendEquation;
       static GLenum mGlBlendFunctionSource;
       static GLenum mGlBlendFunctionDestination;
+      static TaskID mInitialTaskID;
+      static TaskID mAccessorTaskID;
+      static TaskID mCompositeTaskID;
+      static TaskID mDisplayTaskID;
     };
     
   }

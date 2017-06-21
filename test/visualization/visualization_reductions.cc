@@ -567,6 +567,7 @@ namespace Legion {
 
 int main(int argc, char *argv[]) {
   
+  Legion::Visualization::ImageReduction::initialize();
   Legion::Visualization::preregisterSimulationBounds(Legion::Visualization::numDomainNodesX, Legion::Visualization::numDomainNodesY, Legion::Visualization::numDomainNodesZ);
   
   Legion::HighLevelRuntime::set_top_level_task_id(Legion::Visualization::TOP_LEVEL_TASK_ID);

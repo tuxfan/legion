@@ -48,8 +48,11 @@ namespace Legion {
     GLenum ImageReduction::mGlBlendEquation;
     GLenum ImageReduction::mGlBlendFunctionSource;
     GLenum ImageReduction::mGlBlendFunctionDestination;
+    TaskID ImageReduction::mInitialTaskID;
+    TaskID ImageReduction::mAccessorTaskID;
+    TaskID ImageReduction::mCompositeTaskID;
+    TaskID ImageReduction::mDisplayTaskID;
     
-#include <unistd.h>//debug
     
     ImageReduction::ImageReduction(ImageSize imageSize, Context context, HighLevelRuntime *runtime) {
       mImageSize = imageSize;
@@ -69,8 +72,6 @@ namespace Legion {
       partitionImageByDepth(mSourceImage, mDepthDomain, mDepthPartition);
       partitionImageByFragment(mSourceImage, mSourceFragmentDomain, mSourceFragmentPartition);
       
-      
-      registerTasks();
       initializeNodes();
       assert(mNodeCount > 0);
       mLocalCopyOfNodeID = mNodeID[mNodeCount - 1];//written by initial_task
@@ -97,7 +98,15 @@ namespace Legion {
     }
     
     
-    // this function should be called prior to starting the Legion runtime
+    // this function should always be called prior to starting the Legion runtime
+
+    void ImageReduction::initialize() {
+      registerTasks();
+    }
+    
+    
+    // this function should be called prior to starting the Legion runtime if you
+    // plan to use commutative reductions
     // its purpose is to copy the domain bounds to all nodes
     
     void ImageReduction::preregisterSimulationBounds(SimulationBoundsCoordinate *bounds, int numBounds) {
@@ -127,33 +136,22 @@ namespace Legion {
       
     }
     
-    
+    // this function should be called prior to starting the Legion runtime
+    // its purpose is to register tasks with the same id on all nodes
     
     void ImageReduction::registerTasks() {
       
-      LayoutConstraintRegistrar layoutRegistrar(imageFields(), "layout");
-      LayoutConstraintID layoutConstraintID = mRuntime->register_layout(layoutRegistrar);
+      mInitialTaskID = Legion::HighLevelRuntime::generate_static_task_id();
+      Legion::HighLevelRuntime::register_legion_task<initial_task>(mInitialTaskID,
+                                                                   Legion::Processor::LOC_PROC, false/*single*/, true/*index*/,                                                                                                  AUTO_GENERATE_ID, Legion::TaskConfigOptions(true/*leaf*/), "initial_task");
       
-      mInitialTaskID = mRuntime->generate_dynamic_task_id();
-      TaskVariantRegistrar initialRegistrar(mInitialTaskID, "initialTask");
-      initialRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
-      .add_layout_constraint_set(1/*index*/, layoutConstraintID);
-      mRuntime->register_task_variant<initial_task>(initialRegistrar);
-      mRuntime->attach_name(mInitialTaskID, "initialTask");
+      mCompositeTaskID = Legion::HighLevelRuntime::generate_static_task_id();
+      Legion::HighLevelRuntime::register_legion_task<composite_task>(mCompositeTaskID,
+                                                                     Legion::Processor::LOC_PROC, false/*single*/, true/*index*/,                                                                                                  AUTO_GENERATE_ID, Legion::TaskConfigOptions(true/*leaf*/), "composite_task");
       
-      mCompositeTaskID = mRuntime->generate_dynamic_task_id();
-      TaskVariantRegistrar compositeRegistrar(mCompositeTaskID, "compositeTask");
-      compositeRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
-      .add_layout_constraint_set(1/*index*/, layoutConstraintID);
-      mRuntime->register_task_variant<composite_task>(compositeRegistrar);
-      mRuntime->attach_name(mCompositeTaskID, "compositeTask");
-      
-      mDisplayTaskID = mRuntime->generate_dynamic_task_id();
-      TaskVariantRegistrar displayRegistrar(mDisplayTaskID, "displayTask");
-      displayRegistrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC))
-      .add_layout_constraint_set(0/*index*/, layoutConstraintID);
-      mRuntime->register_task_variant<display_task>(displayRegistrar);
-      mRuntime->attach_name(mDisplayTaskID, "displayTask");
+      mDisplayTaskID = Legion::HighLevelRuntime::generate_static_task_id();
+      Legion::HighLevelRuntime::register_legion_task<display_task>(mDisplayTaskID,
+                                                                   Legion::Processor::LOC_PROC, true/*single*/, false/*index*/,                                                                                                  AUTO_GENERATE_ID, Legion::TaskConfigOptions(true/*leaf*/), "display_task");
     }
     
     
@@ -278,8 +276,6 @@ namespace Legion {
                                       Context ctx, HighLevelRuntime *runtime) {
       ImageSize imageSize = ((ImageSize*)task->args)[0];
       int numNodes = imageSize.numImageLayers;
-      
-      // this task initializes some per-node static state for use by subsequent tasks
       
       // set the node ID
       Domain indexSpaceDomain = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
@@ -520,11 +516,11 @@ namespace Legion {
     //project pixels from eye space bounded by l,r,t,p,n,f to clip space -1,1
     
     ImageReduction::SimulationBoundsCoordinate *homogeneousOrthographicProjectionMatrix(ImageReduction::SimulationBoundsCoordinate right,
-                                                                                               ImageReduction::SimulationBoundsCoordinate left,
-                                                                                               ImageReduction::SimulationBoundsCoordinate top,
-                                                                                               ImageReduction::SimulationBoundsCoordinate bottom,
-                                                                                               ImageReduction::SimulationBoundsCoordinate far,
-                                                                                               ImageReduction::SimulationBoundsCoordinate near) {
+                                                                                        ImageReduction::SimulationBoundsCoordinate left,
+                                                                                        ImageReduction::SimulationBoundsCoordinate top,
+                                                                                        ImageReduction::SimulationBoundsCoordinate bottom,
+                                                                                        ImageReduction::SimulationBoundsCoordinate far,
+                                                                                        ImageReduction::SimulationBoundsCoordinate near) {
       static ImageReduction::SimulationBoundsCoordinate *result = NULL;
       if(result == NULL) {
         result = new ImageReduction::SimulationBoundsCoordinate[ImageReduction::numMatrixElements4x4];
@@ -556,11 +552,11 @@ namespace Legion {
     // perspective projection
     
     ImageReduction::SimulationBoundsCoordinate *homogeneousPerspectiveProjectionMatrix(                                                                                              ImageReduction::SimulationBoundsCoordinate left,
-                                                                                              ImageReduction::SimulationBoundsCoordinate right,
-                                                                                              ImageReduction::SimulationBoundsCoordinate bottom,
-                                                                                              ImageReduction::SimulationBoundsCoordinate top,
-                                                                                              ImageReduction::SimulationBoundsCoordinate zNear,
-                                                                                              ImageReduction::SimulationBoundsCoordinate zFar)
+                                                                                       ImageReduction::SimulationBoundsCoordinate right,
+                                                                                       ImageReduction::SimulationBoundsCoordinate bottom,
+                                                                                       ImageReduction::SimulationBoundsCoordinate top,
+                                                                                       ImageReduction::SimulationBoundsCoordinate zNear,
+                                                                                       ImageReduction::SimulationBoundsCoordinate zFar)
     {
       static ImageReduction::SimulationBoundsCoordinate *result = NULL;
       if(result == NULL) {
