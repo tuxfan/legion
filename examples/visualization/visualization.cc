@@ -100,7 +100,11 @@ void top_level_task(const Task *task,
   const int numSimulationTasks = 4;
   const int numFragmentsPerLayer = 16;
 
+#ifdef IMAGE_SIZE
+  ImageSize imageSize = (ImageSize){ IMAGE_SIZE };
+#else
   ImageSize imageSize = (ImageSize){ width, height, numSimulationTasks, numFragmentsPerLayer };
+#endif
   ImageReduction imageReduction(imageSize, ctx, runtime);
   imageReduction.set_blend_func(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   imageReduction.set_blend_equation(GL_FUNC_ADD);

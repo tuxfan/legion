@@ -163,7 +163,6 @@ namespace Legion {
                             Legion::Visualization::ImageReduction::Stride stride,
                             int taskID) {
       
-      
       Image image;
       paintImage(imageSize, taskID, image);
       Image imagePtr = image;
@@ -182,7 +181,6 @@ namespace Legion {
       }
       
       delete [] image;
-      
     }
     
     
