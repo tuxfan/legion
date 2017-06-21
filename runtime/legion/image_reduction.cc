@@ -32,7 +32,6 @@ namespace Legion {
     // declare module static data
     
     int *ImageReduction::mNodeID;
-    ImageReduction::SimulationBoundsCoordinate *ImageReduction::mMySimulationBounds;
     ImageReduction::SimulationBoundsCoordinate *ImageReduction::mSimulationBounds;
     int ImageReduction::mNumSimulationBounds;
     ImageReduction::SimulationBoundsCoordinate ImageReduction::mXMax;
@@ -42,7 +41,6 @@ namespace Legion {
     ImageReduction::SimulationBoundsCoordinate ImageReduction::mZMax;
     ImageReduction::SimulationBoundsCoordinate ImageReduction::mZMin;
     std::vector<ImageReduction::CompositeProjectionFunctor*> *ImageReduction::mCompositeProjectionFunctor = NULL;
-    std::vector<ProjectionID> *ImageReduction::mProjectionID;
     int ImageReduction::mNodeCount;
     std::vector<Domain> *ImageReduction::mHierarchicalTreeDomain = NULL;
     GLfloat ImageReduction::mGlViewTransform[numMatrixElements4x4];
@@ -60,7 +58,6 @@ namespace Legion {
       mDepthFunction = 0;
       mGlBlendFunctionSource = 0;
       mGlBlendFunctionDestination = 0;
-      mMySimulationBounds = NULL;
       mNodeID = NULL;
       
       mGlBlendEquation = GL_FUNC_ADD;
@@ -82,10 +79,6 @@ namespace Legion {
     }
     
     ImageReduction::~ImageReduction() {
-      if(mMySimulationBounds != NULL) {
-        delete [] mMySimulationBounds;
-        mMySimulationBounds = NULL;
-      }
       if(mHierarchicalTreeDomain != NULL) {
         delete mHierarchicalTreeDomain;
         mHierarchicalTreeDomain = NULL;
@@ -112,6 +105,9 @@ namespace Legion {
       mNumSimulationBounds = numBounds;
       
       int totalElements = numBounds * fieldsPerSimulationBounds;
+      if(mSimulationBounds != NULL) {
+        delete [] mSimulationBounds;
+      }
       mSimulationBounds = new SimulationBoundsCoordinate[totalElements];
       memcpy(mSimulationBounds, bounds, sizeof(SimulationBoundsCoordinate) * totalElements);
       mXMin = mYMin = mZMin = 1.0e+32;
@@ -212,33 +208,9 @@ namespace Legion {
       domain = Domain::from_rect<image_region_dimensions>(fragmentBounds);
     }
     
-    /// these store* and retrieve* methods are due to simulation issues on single or multi nodes
-    /// on multiple nodes the static data does not overwrite itself
-    /// on single nodes the static data must have as many instances as there are nodes
-    /// TODO get rid of this
     
-    void ImageReduction::storeMySimulationBounds(SimulationBoundsCoordinate* values, int nodeID, int numNodes) {
-#ifdef RUNNING_MULTINODE
-      nodeID = 0;
-      numNodes = 1;
-#endif
-      if(mMySimulationBounds == NULL) {
-        int numElements = numNodes * fieldsPerSimulationBounds;
-        mMySimulationBounds = new SimulationBoundsCoordinate[numElements];
-      }
-      SimulationBoundsCoordinate* myPtr = retrieveMySimulationBounds(nodeID);
-      memcpy(myPtr, values, fieldsPerSimulationBounds * sizeof(SimulationBoundsCoordinate));
-    }
-    
-    
-    ImageReduction::SimulationBoundsCoordinate* ImageReduction::retrieveMySimulationBounds(int nodeID) {
-#ifdef RUNNING_MULTINODE
-      nodeID = 0;
-#endif
-      ImageReduction::SimulationBoundsCoordinate* bounds = mMySimulationBounds + nodeID * fieldsPerSimulationBounds;
-      return bounds;
-    }
-    
+    ///////////////
+    //FIXME awkwardness about running multithreaded bersus multinode can this be removed
     
     void ImageReduction::storeMyNodeID(int nodeID, int numNodes) {
 #ifdef RUNNING_MULTINODE
@@ -253,21 +225,11 @@ namespace Legion {
     }
     
     
-    void ImageReduction::storeMyProjectionFunctor(int nodeID, int level, int numNodes, CompositeProjectionFunctor* functor) {
-      int functorsPerNode = mCompositeProjectionFunctor->size() / numNodes;
-      int functorID = nodeID * functorsPerNode + level;
-      (*mCompositeProjectionFunctor)[functorID] = functor;
-    }
-    
-    
-    ImageReduction::CompositeProjectionFunctor* ImageReduction::retrieveMyProjectionFunctor(int nodeID, int level, int numNodes) {
-      int functorsPerNode = mCompositeProjectionFunctor->size() / numNodes;
-      int functorID = nodeID * functorsPerNode + level;
-      return (*mCompositeProjectionFunctor)[functorID];
-    }
     
     
     ////////////////
+    
+    
     
     int ImageReduction::numTreeLevels(ImageSize imageSize) {
       int numTreeLevels = log2f(imageSize.numImageLayers);
@@ -284,51 +246,37 @@ namespace Legion {
     }
     
     
+    static int level2FunctorID(int level) {
+      return 100 + level;//TODO assign ids dynamically
+    }
     
     
     void ImageReduction::createProjectionFunctors(int nodeID, int numBounds, Runtime* runtime, ImageSize imageSize) {
       
-      int numLevels = numTreeLevels(imageSize);
-      unsigned numFunctorsPerNode = numLevels + 1;
-      
+      // really need a lock here on mCompositeProjectionFunctor when running multithreaded locally
+      // not a problem for multinode runs
       if(mCompositeProjectionFunctor == NULL) {
-        if(nodeID == 0) {
-          int totalFunctors = numFunctorsPerNode * numBounds;
-          mCompositeProjectionFunctor = new std::vector<CompositeProjectionFunctor*>(totalFunctors);
-          mProjectionID = new std::vector<ProjectionID>();
-        } else {
-          std::cout << "node " << nodeID << " waiting for projection functor vector allocation" << std::endl;
-          while(mCompositeProjectionFunctor == NULL){
-            usleep(100);
-          }
+        mCompositeProjectionFunctor = new std::vector<CompositeProjectionFunctor*>();
+        
+        int numLevels = numTreeLevels(imageSize);
+        for(int level = 0; level <= numLevels; ++level) {
+          int offset = (level == 0) ? 0 : (int)powf(2.0f, level - 1);
+          ProjectionID id = level2FunctorID(level);
+          CompositeProjectionFunctor* functor = new CompositeProjectionFunctor(offset, numBounds, id);
+          runtime->register_projection_functor(id, functor);
+          mCompositeProjectionFunctor->push_back(functor);
         }
-      }
-      
-      while((nodeID != 0) && (mProjectionID == NULL || mProjectionID->size() < numFunctorsPerNode)) {
-        usleep(500);
-      }
-      
-      for(int level = 0; level <= numLevels; ++level) {
-        int offset = (level == 0) ? 0 : (int)powf(2.0f, level - 1);
-        ProjectionID id;
-        if(true || nodeID == 0) {
-          id = runtime->generate_dynamic_projection_id();
-          mProjectionID->push_back(id);
-        } else {
-          id = (*mProjectionID)[level];
-        }
-        CompositeProjectionFunctor* functor = new CompositeProjectionFunctor(offset, numBounds, id);
-        runtime->register_projection_functor(id, functor);
-        storeMyProjectionFunctor(nodeID, level, numBounds, functor);
       }
     }
     
+    
+    
+    // this task and everything it calls is invoked on every node during initialization
     
     void ImageReduction::initial_task(const Task *task,
                                       const std::vector<PhysicalRegion> &regions,
                                       Context ctx, HighLevelRuntime *runtime) {
       ImageSize imageSize = ((ImageSize*)task->args)[0];
-      SimulationBoundsCoordinate *domainBounds = (SimulationBoundsCoordinate*)((char*)task->args + sizeof(ImageSize));
       int numNodes = imageSize.numImageLayers;
       
       // this task initializes some per-node static state for use by subsequent tasks
@@ -337,25 +285,17 @@ namespace Legion {
       Domain indexSpaceDomain = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
       Rect<image_region_dimensions> imageBounds = indexSpaceDomain.get_rect<image_region_dimensions>();
       
+      // get your node ID from the Z coordinate of your region
       int nodeID = imageBounds.lo.x[2];//TODO abstract the use of [2] throughout this code
       storeMyNodeID(nodeID, numNodes);
       
-      // load the bounds of the local simulation subdomain (axis aligned bounding box)
-      // TODO do we just have to save a pointer here, or actually copy the data?
-      if(domainBounds != NULL) {
-        SimulationBoundsCoordinate *myBounds = domainBounds + nodeID * fieldsPerSimulationBounds;
-        storeMySimulationBounds(myBounds, nodeID, numNodes);
-      }
-      
       // projection functors
       createProjectionFunctors(nodeID, numNodes, runtime, imageSize);
-      
     }
     
     
     void ImageReduction::initializeNodes() {
-      int size = sizeof(mSimulationBounds[0]) * mNumSimulationBounds * fieldsPerSimulationBounds;
-      launch_task_by_depth(mInitialTaskID, mSimulationBounds, size, true);
+      launch_task_by_depth(mInitialTaskID, NULL, 0, true);
     }
     
     
@@ -509,8 +449,8 @@ namespace Legion {
                                                   int nodeID, int maxTreeLevel) {
       
       Domain launchDomain = (*mHierarchicalTreeDomain)[treeLevel - 1];
-      CompositeProjectionFunctor* functor0 = retrieveMyProjectionFunctor(0, 0, imageSize.numImageLayers);
-      CompositeProjectionFunctor* functor1 = retrieveMyProjectionFunctor(0, functorLevel, imageSize.numImageLayers);
+      CompositeProjectionFunctor* functor0 = (*mCompositeProjectionFunctor)[0];
+      CompositeProjectionFunctor* functor1 = (*mCompositeProjectionFunctor)[functorLevel];
       
       ArgumentMap argMap;
       CompositeArguments args = { imageSize, depthFunc, blendFuncSource, blendFuncDestination, blendEquation };
@@ -552,7 +492,7 @@ namespace Legion {
         return reduceAssociative();
       } else {
         std::cout << "cannot reduce noncommutatively until simulation bounds are provided" << std::endl;
-        std::cout << "call preregisterSimulationBounds(SimulationBoundsCoordinate *bounds, int numBounds) before startings Legion runtime" << std::endl;
+        std::cout << "call ImageReduction::preregisterSimulationBounds(SimulationBoundsCoordinate *bounds, int numBounds) before starting Legion runtime" << std::endl;
         return FutureMap();
       }
     }
@@ -577,10 +517,9 @@ namespace Legion {
       return reduceNonassociative();
     }
     
-    //this matrix project pixels from eye space bounded by l,r,t,p,n,f to clip space -1,1
-    // for an index task launch we mwant an ffine map from a domain launch index to a subregions index in the partition
+    //project pixels from eye space bounded by l,r,t,p,n,f to clip space -1,1
     
-    static ImageReduction::SimulationBoundsCoordinate *homogeneousOrthographicProjectionMatrix(ImageReduction::SimulationBoundsCoordinate right,
+    ImageReduction::SimulationBoundsCoordinate *homogeneousOrthographicProjectionMatrix(ImageReduction::SimulationBoundsCoordinate right,
                                                                                                ImageReduction::SimulationBoundsCoordinate left,
                                                                                                ImageReduction::SimulationBoundsCoordinate top,
                                                                                                ImageReduction::SimulationBoundsCoordinate bottom,
@@ -613,148 +552,123 @@ namespace Legion {
       return result;
     }
     
-#if 0
-    static ImageReduction::SimulationBoundsCoordinate *inverseOrthographicProjectionMatrix(ImageReduction::SimulationBoundsCoordinate right,
-                                                                                           ImageReduction::SimulationBoundsCoordinate left,
-                                                                                           ImageReduction::SimulationBoundsCoordinate top,
-                                                                                           ImageReduction::SimulationBoundsCoordinate bottom,
-                                                                                           ImageReduction::SimulationBoundsCoordinate near,
-                                                                                           ImageReduction::SimulationBoundsCoordinate far) {
+    
+    // perspective projection
+    
+    ImageReduction::SimulationBoundsCoordinate *homogeneousPerspectiveProjectionMatrix(                                                                                              ImageReduction::SimulationBoundsCoordinate left,
+                                                                                              ImageReduction::SimulationBoundsCoordinate right,
+                                                                                              ImageReduction::SimulationBoundsCoordinate bottom,
+                                                                                              ImageReduction::SimulationBoundsCoordinate top,
+                                                                                              ImageReduction::SimulationBoundsCoordinate zNear,
+                                                                                              ImageReduction::SimulationBoundsCoordinate zFar)
+    {
       static ImageReduction::SimulationBoundsCoordinate *result = NULL;
       if(result == NULL) {
         result = new ImageReduction::SimulationBoundsCoordinate[ImageReduction::numMatrixElements4x4];
-        ImageReduction::SimulationBoundsCoordinate* matrix = homogeneousOrthographicProjectionMatrix(right, left, top, bottom, near, far);
-        
-        // copied from MESA implementation of gluInvertMatrix
-        // https://stackoverflow.com/questions/1148309/inverting-a-4x4-matrix
-        
-        ImageReduction::SimulationBoundsCoordinate det;
-        int i;
-        
-        result[0] = matrix[5]  * matrix[10] * matrix[15] -
-        matrix[5]  * matrix[11] * matrix[14] -
-        matrix[9]  * matrix[6]  * matrix[15] +
-        matrix[9]  * matrix[7]  * matrix[14] +
-        matrix[13] * matrix[6]  * matrix[11] -
-        matrix[13] * matrix[7]  * matrix[10];
-        
-        result[4] = -matrix[4]  * matrix[10] * matrix[15] +
-        matrix[4]  * matrix[11] * matrix[14] +
-        matrix[8]  * matrix[6]  * matrix[15] -
-        matrix[8]  * matrix[7]  * matrix[14] -
-        matrix[12] * matrix[6]  * matrix[11] +
-        matrix[12] * matrix[7]  * matrix[10];
-        
-        result[8] = matrix[4]  * matrix[9] * matrix[15] -
-        matrix[4]  * matrix[11] * matrix[13] -
-        matrix[8]  * matrix[5] * matrix[15] +
-        matrix[8]  * matrix[7] * matrix[13] +
-        matrix[12] * matrix[5] * matrix[11] -
-        matrix[12] * matrix[7] * matrix[9];
-        
-        result[12] = -matrix[4]  * matrix[9] * matrix[14] +
-        matrix[4]  * matrix[10] * matrix[13] +
-        matrix[8]  * matrix[5] * matrix[14] -
-        matrix[8]  * matrix[6] * matrix[13] -
-        matrix[12] * matrix[5] * matrix[10] +
-        matrix[12] * matrix[6] * matrix[9];
-        
-        result[1] = -matrix[1]  * matrix[10] * matrix[15] +
-        matrix[1]  * matrix[11] * matrix[14] +
-        matrix[9]  * matrix[2] * matrix[15] -
-        matrix[9]  * matrix[3] * matrix[14] -
-        matrix[13] * matrix[2] * matrix[11] +
-        matrix[13] * matrix[3] * matrix[10];
-        
-        result[5] = matrix[0]  * matrix[10] * matrix[15] -
-        matrix[0]  * matrix[11] * matrix[14] -
-        matrix[8]  * matrix[2] * matrix[15] +
-        matrix[8]  * matrix[3] * matrix[14] +
-        matrix[12] * matrix[2] * matrix[11] -
-        matrix[12] * matrix[3] * matrix[10];
-        
-        result[9] = -matrix[0]  * matrix[9] * matrix[15] +
-        matrix[0]  * matrix[11] * matrix[13] +
-        matrix[8]  * matrix[1] * matrix[15] -
-        matrix[8]  * matrix[3] * matrix[13] -
-        matrix[12] * matrix[1] * matrix[11] +
-        matrix[12] * matrix[3] * matrix[9];
-        
-        result[13] = matrix[0]  * matrix[9] * matrix[14] -
-        matrix[0]  * matrix[10] * matrix[13] -
-        matrix[8]  * matrix[1] * matrix[14] +
-        matrix[8]  * matrix[2] * matrix[13] +
-        matrix[12] * matrix[1] * matrix[10] -
-        matrix[12] * matrix[2] * matrix[9];
-        
-        result[2] = matrix[1]  * matrix[6] * matrix[15] -
-        matrix[1]  * matrix[7] * matrix[14] -
-        matrix[5]  * matrix[2] * matrix[15] +
-        matrix[5]  * matrix[3] * matrix[14] +
-        matrix[13] * matrix[2] * matrix[7] -
-        matrix[13] * matrix[3] * matrix[6];
-        
-        result[6] = -matrix[0]  * matrix[6] * matrix[15] +
-        matrix[0]  * matrix[7] * matrix[14] +
-        matrix[4]  * matrix[2] * matrix[15] -
-        matrix[4]  * matrix[3] * matrix[14] -
-        matrix[12] * matrix[2] * matrix[7] +
-        matrix[12] * matrix[3] * matrix[6];
-        
-        result[10] = matrix[0]  * matrix[5] * matrix[15] -
-        matrix[0]  * matrix[7] * matrix[13] -
-        matrix[4]  * matrix[1] * matrix[15] +
-        matrix[4]  * matrix[3] * matrix[13] +
-        matrix[12] * matrix[1] * matrix[7] -
-        matrix[12] * matrix[3] * matrix[5];
-        
-        result[14] = -matrix[0]  * matrix[5] * matrix[14] +
-        matrix[0]  * matrix[6] * matrix[13] +
-        matrix[4]  * matrix[1] * matrix[14] -
-        matrix[4]  * matrix[2] * matrix[13] -
-        matrix[12] * matrix[1] * matrix[6] +
-        matrix[12] * matrix[2] * matrix[5];
-        
-        result[3] = -matrix[1] * matrix[6] * matrix[11] +
-        matrix[1] * matrix[7] * matrix[10] +
-        matrix[5] * matrix[2] * matrix[11] -
-        matrix[5] * matrix[3] * matrix[10] -
-        matrix[9] * matrix[2] * matrix[7] +
-        matrix[9] * matrix[3] * matrix[6];
-        
-        result[7] = matrix[0] * matrix[6] * matrix[11] -
-        matrix[0] * matrix[7] * matrix[10] -
-        matrix[4] * matrix[2] * matrix[11] +
-        matrix[4] * matrix[3] * matrix[10] +
-        matrix[8] * matrix[2] * matrix[7] -
-        matrix[8] * matrix[3] * matrix[6];
-        
-        result[11] = -matrix[0] * matrix[5] * matrix[11] +
-        matrix[0] * matrix[7] * matrix[9] +
-        matrix[4] * matrix[1] * matrix[11] -
-        matrix[4] * matrix[3] * matrix[9] -
-        matrix[8] * matrix[1] * matrix[7] +
-        matrix[8] * matrix[3] * matrix[5];
-        
-        result[15] = matrix[0] * matrix[5] * matrix[10] -
-        matrix[0] * matrix[6] * matrix[9] -
-        matrix[4] * matrix[1] * matrix[10] +
-        matrix[4] * matrix[2] * matrix[9] +
-        matrix[8] * matrix[1] * matrix[6] -
-        matrix[8] * matrix[2] * matrix[5];
-        
-        det = matrix[0] * result[0] + matrix[1] * result[4] + matrix[2] * result[8] + matrix[3] * result[12];
-        
-        assert(det != 0);//singularity - should never happen
-        
-        det = 1.0 / det;
-        
-        for (i = 0; i < numMatrixElements4x4; i++)
-          result[i] = result[i] * det;
+        // row major
+        result[0] = 2.0f * zNear / (right - left);
+        result[1] = 0.0f;
+        ImageReduction::SimulationBoundsCoordinate A = (right + left) / (right - left);
+        result[2] = A;
+        result[3] = 0.0f;
+        //
+        result[4] = 0.0f;
+        result[5] = 2.0f * zNear / (top - bottom);
+        ImageReduction::SimulationBoundsCoordinate B = (top + bottom) / (top - bottom);
+        result[6] = B;
+        result[7] = 0.0f;
+        //
+        result[8] = 0.0f;
+        result[9] = 0.0f;
+        ImageReduction::SimulationBoundsCoordinate C = -(zFar + zNear) / (zFar - zNear);
+        result[10] = C;
+        ImageReduction::SimulationBoundsCoordinate D = -(2.0f * zFar * zNear) / (zFar - zNear);
+        result[11] = D;
+        //
+        result[12] = 0.0f;
+        result[13] = 0.0f;
+        result[14] = -1.0f;
+        result[15] = 0.0f;
       }
       return result;
     }
-#endif
+    
+    
+    static void normalize3(ImageReduction::SimulationBoundsCoordinate x[3],
+                           ImageReduction::SimulationBoundsCoordinate y[3]) {
+      ImageReduction::SimulationBoundsCoordinate norm = sqrtf(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+      y[0] = x[0] / norm;
+      y[1] = x[1] / norm;
+      y[2] = x[2] / norm;
+    }
+    
+    
+    // s = u X v
+    static void cross3(ImageReduction::SimulationBoundsCoordinate u[3],
+                       ImageReduction::SimulationBoundsCoordinate v[3],
+                       ImageReduction::SimulationBoundsCoordinate s[3]) {
+      s[0] = u[1] * v[2] - u[2] * v[1];
+      s[1] = u[2] * v[0] - u[0] * v[2];
+      s[2] = u[0] * v[1] - u[1] * v[0];
+    }
+    
+    // based on gluLookAt
+    ImageReduction::SimulationBoundsCoordinate *viewTransform(
+                                                              ImageReduction::SimulationBoundsCoordinate eyeX,
+                                                              ImageReduction::SimulationBoundsCoordinate eyeY,
+                                                              ImageReduction::SimulationBoundsCoordinate eyeZ,
+                                                              ImageReduction::SimulationBoundsCoordinate centerX,
+                                                              ImageReduction::SimulationBoundsCoordinate centerY,
+                                                              ImageReduction::SimulationBoundsCoordinate centerZ,
+                                                              ImageReduction::SimulationBoundsCoordinate upX,
+                                                              ImageReduction::SimulationBoundsCoordinate upY,
+                                                              ImageReduction::SimulationBoundsCoordinate upZ)
+    {
+      static ImageReduction::SimulationBoundsCoordinate *result = NULL;
+      if(result == NULL) {
+        result = new ImageReduction::SimulationBoundsCoordinate[ImageReduction::numMatrixElements4x4];
+        
+        ImageReduction::SimulationBoundsCoordinate F[3] = {
+          centerX - eyeX, centerY - eyeY, centerZ - eyeZ
+        };
+        ImageReduction::SimulationBoundsCoordinate UP[3] = {
+          upX, upY, upZ
+        };
+        ImageReduction::SimulationBoundsCoordinate f[3];
+        normalize3(F, f);
+        ImageReduction::SimulationBoundsCoordinate UPprime[3];
+        normalize3(UP, UPprime);
+        
+        ImageReduction::SimulationBoundsCoordinate s[3];
+        cross3(f, UPprime, s);
+        
+        ImageReduction::SimulationBoundsCoordinate u[3];
+        cross3(s, f, u);
+        
+        // row major
+        result[0] = s[0];
+        result[1] = s[1];
+        result[2] = s[2];
+        result[3] = 0.0f;
+        //
+        result[4] = u[0];
+        result[5] = u[1];
+        result[6] = u[2];
+        result[7] = 0.0f;
+        //
+        result[8] = -f[0];
+        result[9] = -f[1];
+        result[10] = -f[2];
+        result[11] = 0.0f;
+        //
+        result[12] = 0.0f;
+        result[13] = 0.0f;
+        result[14] = 0.0f;
+        result[15] = 1.0f;
+      }
+      return result;
+    }
+    
     
     static inline int index(int row, int column) {
       // row major
@@ -775,39 +689,6 @@ namespace Legion {
     }
     
     
-    // this returns the composite order for a simulation subdomain
-    int ImageReduction::subdomainToCompositeIndex(SimulationBoundsCoordinate *bounds, int scale) {
-      
-      SimulationBoundsCoordinate l0 = bounds[0]; // xmin
-      SimulationBoundsCoordinate b0 = bounds[1]; // ymin
-      SimulationBoundsCoordinate n0 = bounds[2]; // zmin
-      SimulationBoundsCoordinate r0 = bounds[3]; // xmax
-      SimulationBoundsCoordinate t0 = bounds[4]; // ymax
-      SimulationBoundsCoordinate f0 = bounds[5]; // zmax
-      
-      SimulationBoundsCoordinate center[] = { (r0 + l0) / 2.0f, (t0 + b0) / 2.0f, (f0 + n0) / 2.0f, 1.0f };
-      SimulationBoundsCoordinate projected[] = { 0.0f, 0.0f, 0.0f, 0.0f };
-      const int numHomgeneousCoordinates = 4;
-      SimulationBoundsCoordinate *projection = homogeneousOrthographicProjectionMatrix(mXMax, mXMin, mYMax, mYMin, mZMax, mZMin);
-      SimulationBoundsCoordinate viewProjection[numMatrixElements4x4];
-      matrixMultiply4x4(projection, mGlViewTransform, viewProjection);
-      
-      // apply view and projection matrices to center of this fragment
-      for(int i = 0; i < numHomgeneousCoordinates; ++i) {
-        for(int j = 0; j < numHomgeneousCoordinates; ++j) {
-          projected[i] += center[i] * viewProjection[index(i, j)];
-        }
-      }
-      SimulationBoundsCoordinate z = projected[2] / projected[3];//range -1 to 1
-      int scaledZ = (z + 1.0f) * (scale / 2);
-      
-      
-      std::cout << " projected from center " << center[0] << "," << center[1] << "," << center[2] << "," << center[3] << " yields "
-      << projected[0] << "," << projected[1] << "," << projected[2] << "," << projected[3]
-      << " scaledZ is " << scaledZ << std::endl;
-      
-      return scaledZ;
-    }
     
     
     
