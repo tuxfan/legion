@@ -8,7 +8,7 @@ DEBUG=1                   # Include debugging symbols
 OUTPUT_LEVEL=LEVEL_DEBUG  # Compile time print level
 USE_CUDA=0
 USE_HDF=0
-USE_GASNET=0
+USE_GASNET=1
 ALT_MAPPERS=0		  # Compile the alternative mappers
 
 # Put the binary file name here
