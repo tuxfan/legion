@@ -670,11 +670,7 @@ namespace Legion {
     }
     
     
-    static inline int index(int row, int column) {
-      // row major
-      return row * 4 + column;
-    }
-    
+#if 0 // save until needed
     static void matrixMultiply4x4(ImageReduction::SimulationBoundsCoordinate* A,
                                   ImageReduction::SimulationBoundsCoordinate* B,
                                   ImageReduction::SimulationBoundsCoordinate* C) {
@@ -687,7 +683,7 @@ namespace Legion {
           + (B[i + 2] * A[j +  8])
           + (B[i + 3] * A[j + 12]);
     }
-    
+#endif
     
     
     

@@ -130,7 +130,27 @@ namespace Legion {
     }
     
     
+    // generate Image contents
+    //
     
+    static void paintImage(ImageSize imageSize, int taskID, Image &image) {
+      image = new ImageReduction::PixelField[imageSize.pixelsPerLayer() * ImageReduction::numPixelFields];
+      Image imagePtr = image;
+      ImageReduction::PixelField zValue = taskID % imageSize.numImageLayers;
+      
+      for(int row = 0; row < imageSize.height; ++row) {
+        for(int column = 0; column < imageSize.width; ++column) {
+          *imagePtr++ = row;
+          *imagePtr++ = column;
+          *imagePtr++ = taskID;
+          *imagePtr++ = taskID;
+          *imagePtr++ = zValue;
+          *imagePtr++ = taskID;
+          zValue = (zValue + 1);
+          zValue = (zValue >= imageSize.numImageLayers) ? 0 : zValue;
+        }
+      }
+    }
     
     
     static void paintRegion(ImageSize imageSize,
@@ -143,28 +163,24 @@ namespace Legion {
                             Legion::Visualization::ImageReduction::Stride stride,
                             int taskID) {
       
-      ImageReduction::PixelField zValue = taskID % imageSize.numImageLayers;
       
-      Image image = new ImageReduction::PixelField[imageSize.pixelsPerLayer() * ImageReduction::numPixelFields];
+      Image image;
+      paintImage(imageSize, taskID, image);
       Image imagePtr = image;
       
       for(int row = 0; row < imageSize.height; ++row) {
         for(int column = 0; column < imageSize.width; ++column) {
-          *r = *imagePtr++ = row;
-          *g = *imagePtr++ = column;
-          *b = *imagePtr++ = taskID;
-          *a = *imagePtr++ = taskID;
-          *z = *imagePtr++ = zValue;
-          *userdata = *imagePtr++ = taskID;
+          *r = *imagePtr++;
+          *g = *imagePtr++;
+          *b = *imagePtr++;
+          *a = *imagePtr++;
+          *z = *imagePtr++;
+          *userdata = *imagePtr++;
           
           ImageReductionComposite::increment(r, g, b, a, z, userdata, stride);
-          
-          zValue = (zValue + 1);
-          zValue = (zValue >= imageSize.numImageLayers) ? 0 : zValue;
         }
       }
       
-      saveImage(taskID, imageSize, image);
       delete [] image;
       
     }
@@ -351,8 +367,19 @@ namespace Legion {
       return image0;
     }
     
+    
+    static void savePaintedImages(ImageSize imageSize) {
+      for(int taskID = 0; taskID < imageSize.numImageLayers; ++taskID) {
+        Image image;
+        paintImage(imageSize, taskID, image);
+        saveImage(taskID, imageSize, image);
+        delete [] image;
+      }
+    }
+    
     static void verifyAssociativeTestResult(std::string testLabel, ImageReduction &imageReduction, ImageSize imageSize,
                                             GLenum depthFunc, GLenum blendFuncSource, GLenum blendFuncDestination, GLenum blendEquation) {
+      savePaintedImages(imageSize);
       int maxTreeLevel = ImageReduction::numTreeLevels(imageSize);
       Image expected = treeReduction(0, maxTreeLevel, 0, imageReduction, imageSize,
                                      depthFunc, blendFuncSource, blendFuncDestination, blendEquation);
@@ -374,6 +401,7 @@ namespace Legion {
     
     static void verifyNonassociativeTestResult(std::string testLabel, ImageReduction &imageReduction, ImageSize imageSize,
                                                GLenum depthFunc, GLenum blendFuncSource, GLenum blendFuncDestination, GLenum blendEquation) {
+      savePaintedImages(imageSize);
       Image expected = pipelineReduction(imageReduction, imageSize,
                                          depthFunc, blendFuncSource, blendFuncDestination, blendEquation);
       verifyTestResult(testLabel, imageReduction, imageSize,
