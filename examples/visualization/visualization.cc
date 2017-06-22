@@ -50,6 +50,7 @@ static void paintRegion(ImageSize imageSize,
                         int layer) {
   
   ImageReduction::PixelField zValue = layer;
+  _T
   
   for(int row = 0; row < imageSize.height; ++row) {
     for(int column = 0; column < imageSize.width; ++column) {
@@ -74,6 +75,8 @@ static void paintRegion(ImageSize imageSize,
 void render_task(const Task *task,
                  const std::vector<PhysicalRegion> &regions,
                  Context ctx, HighLevelRuntime *runtime) {
+  
+  _T
   
   UsecTimer render(Legion::Visualization::ImageReduction::describe_task(task) + ":");
   render.start();
@@ -100,6 +103,7 @@ void top_level_task(const Task *task,
   const int numSimulationTasks = 4;
   const int numFragmentsPerLayer = 16;
 
+  _T
 #ifdef IMAGE_SIZE
   ImageSize imageSize = (ImageSize){ IMAGE_SIZE };
 #else
@@ -119,6 +123,8 @@ void top_level_task(const Task *task,
     const int numTimeSteps = 5;
     
     for(int t = 0; t < numTimeSteps; ++t) {
+      
+      _T
       
       frame.start();
       simulateTimeStep(t);
@@ -150,7 +156,9 @@ void top_level_task(const Task *task,
 
 int main(const int argc, char *argv[]) {
   
+  _T
   Legion::Visualization::ImageReduction::initialize();
+  _T
   HighLevelRuntime::set_top_level_task_id(TOP_LEVEL_TASK_ID);
   HighLevelRuntime::register_legion_task<top_level_task>(TOP_LEVEL_TASK_ID,
                                                          Processor::LOC_PROC, true/*single*/, false/*index*/,
