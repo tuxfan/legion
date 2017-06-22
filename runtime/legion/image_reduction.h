@@ -13,6 +13,9 @@
  * limitations under the License.
  */
 
+//tracing -- remove this
+#define _T {std::cout<<__FILE__<<":"<<__LINE__<<std::endl;}
+
 
 #ifndef image_reduction_h
 #define image_reduction_h
