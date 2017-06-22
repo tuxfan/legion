@@ -73,7 +73,7 @@ static void paintRegion(ImageSize imageSize,
 void render_task(const Task *task,
                  const std::vector<PhysicalRegion> &regions,
                  Context ctx, HighLevelRuntime *runtime) {
-    
+  
   UsecTimer render(Legion::Visualization::ImageReduction::describe_task(task) + ":");
   render.start();
   PhysicalRegion image = regions[0];
@@ -106,6 +106,9 @@ void top_level_task(const Task *task,
   
   ImageSize imageSize = (ImageSize){ width, height, numSimulationTasks, numFragmentsPerLayer };
 #endif
+  
+  std::cout << "ImageSize (" << imageSize.width << "," << imageSize.height
+  << ") x " << imageSize.numImageLayers << " layers " << imageSize.numFragmentsPerLayer << " frags/layer" << std::endl;
   
   ImageReduction imageReduction(imageSize, ctx, runtime);
   imageReduction.set_blend_func(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
