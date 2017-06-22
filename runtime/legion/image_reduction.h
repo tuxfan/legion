@@ -19,7 +19,7 @@
 #define image_reduction_h
 
 //tracing -- remove this
-#define _T {std::cout<<__FILE__<<":"<<__LINE__<<" "<<__FUNCTION__<<std::endl;}
+//#define _T {std::cout<<__FILE__<<":"<<__LINE__<<" "<<__FUNCTION__<<std::endl;}
 
 #include "legion_visualization.h"
 

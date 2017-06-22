@@ -68,13 +68,9 @@ namespace Legion {
       mGlBlendFunctionDestination = 0;
       mDepthFunction = 0;
       
-      _T
-      
       createImage(mSourceImage, mSourceImageDomain);
       partitionImageByDepth(mSourceImage, mDepthDomain, mDepthPartition);
       partitionImageByFragment(mSourceImage, mSourceFragmentDomain, mSourceFragmentPartition);
-      
-      _T
       
       initializeNodes();
       assert(mNodeCount > 0);
@@ -82,7 +78,6 @@ namespace Legion {
       initializeViewMatrix();
       createTreeDomains(mLocalCopyOfNodeID, numTreeLevels(imageSize), runtime, imageSize);
       
-      _T
     }
     
     ImageReduction::~ImageReduction() {
@@ -118,8 +113,6 @@ namespace Legion {
     void ImageReduction::preregisterSimulationBounds(SimulationBoundsCoordinate *bounds, int numBounds) {
       mNodeCount = 0;
       mNumSimulationBounds = numBounds;
-      
-      _T
       
       int totalElements = numBounds * fieldsPerSimulationBounds;
       if(mSimulationBounds != NULL) {
@@ -285,8 +278,6 @@ namespace Legion {
       ImageSize imageSize = ((ImageSize*)task->args)[0];
       int numNodes = imageSize.numImageLayers;
       
-      _T
-      
       // set the node ID
       Domain indexSpaceDomain = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
       Rect<image_region_dimensions> imageBounds = indexSpaceDomain.get_rect<image_region_dimensions>();
@@ -383,8 +374,6 @@ namespace Legion {
     
     FutureMap ImageReduction::launch_task_by_depth(unsigned taskID, void *args, int argLen, bool blocking){
       
-      _T
-      
       ArgumentMap argMap;
       int totalArgLen = sizeof(mImageSize) + argLen;
       char *argsBuffer = new char[totalArgLen];
@@ -428,8 +417,6 @@ namespace Legion {
       return;//performance testing
 #endif
       
-      _T
-      
       CompositeArguments args = ((CompositeArguments*)task->args)[0];
       PhysicalRegion fragment0 = regions[0];
       PhysicalRegion fragment1 = regions[1];
@@ -458,8 +445,6 @@ namespace Legion {
                                                   int compositeTaskID, LogicalPartition sourceFragmentPartition, LogicalRegion image,
                                                   Runtime* runtime, Context context,
                                                   int nodeID, int maxTreeLevel) {
-      _T
-      
       Domain launchDomain = (*mHierarchicalTreeDomain)[treeLevel - 1];
       CompositeProjectionFunctor* functor0 = (*mCompositeProjectionFunctor)[0];
       CompositeProjectionFunctor* functor1 = (*mCompositeProjectionFunctor)[functorLevel];
@@ -479,9 +464,7 @@ namespace Legion {
       FutureMap futures = runtime->execute_index_space(context, treeCompositeLauncher);
       
       if(treeLevel > 1) {
-        
-        _T
-        
+                
         futures = launchTreeReduction(imageSize, treeLevel - 1, functorLevel + 1, offset * 2, depthFunc, blendFuncSource, blendFuncDestination, blendEquation, compositeTaskID, sourceFragmentPartition, image, runtime, context, nodeID, maxTreeLevel);
       }
       return futures;
