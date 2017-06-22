@@ -98,17 +98,20 @@ void top_level_task(const Task *task,
                     const std::vector<PhysicalRegion> &regions,
                     Context ctx, HighLevelRuntime *runtime) {
   
-  const int width = 3840;
-  const int height = 2160;
-  const int numSimulationTasks = 4;
-  const int numFragmentsPerLayer = 16;
 
   _T
 #ifdef IMAGE_SIZE
   ImageSize imageSize = (ImageSize){ IMAGE_SIZE };
+  
 #else
+  const int width = 3840;
+  const int height = 2160;
+  const int numSimulationTasks = 4;
+  const int numFragmentsPerLayer = 16;
+  
   ImageSize imageSize = (ImageSize){ width, height, numSimulationTasks, numFragmentsPerLayer };
 #endif
+  
   ImageReduction imageReduction(imageSize, ctx, runtime);
   imageReduction.set_blend_func(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   imageReduction.set_blend_equation(GL_FUNC_ADD);
