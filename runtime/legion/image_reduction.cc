@@ -212,19 +212,12 @@ namespace Legion {
     //FIXME awkwardness about running multithreaded bersus multinode can this be removed
     
     void ImageReduction::storeMyNodeID(int nodeID, int numNodes) {
-#ifdef RUNNING_MULTINODE
-      nodeID = 0;
-      numNodes = 1;
-#endif
       if(mNodeID == NULL) {
         mNodeID = new int[numNodes];
       }
       mNodeID[nodeID] = nodeID;
       mNodeCount++;
     }
-    
-    
-    
     
     ////////////////
     
