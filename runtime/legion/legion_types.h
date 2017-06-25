@@ -1624,7 +1624,8 @@ namespace Legion {
 #define LEGION_PROC_MASK_PROC_MASK           0x3F
 #define LEGION_PROC_MASK_PROC_ALL_ONES       0xFFFFFFFFFFFFFFFF
 
-#if defined(__AVX__)
+    // REMOVE THIS! WORKAROUND BUG ON PIZ DAINT 6/24/17 ABH
+#if 0 // defined(__AVX__)
 #if (MAX_NUM_PROCS > 256)
     typedef AVXTLBitMask<MAX_NUM_PROCS> ProcessorMask;
 #elif (MAX_NUM_PROCS > 128)
