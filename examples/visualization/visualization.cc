@@ -121,7 +121,7 @@ void top_level_task(const Task *task,
     UsecTimer reduce("reduce time:");
     Future displayFuture;
     
-    const int numTimeSteps = 1;
+    const int numTimeSteps = 5;
     
     for(int t = 0; t < numTimeSteps; ++t) {
       

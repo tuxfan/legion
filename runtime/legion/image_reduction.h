@@ -283,7 +283,7 @@ namespace Legion {
           }
           
           
-#if 1
+#if 0
           {std::cout<<"functor for task " << mappable->as_task()->get_unique_id()
             << " remaps launch point "<<point<<" to "<<remappedPoint<<std::endl;}
 #endif
@@ -295,7 +295,7 @@ namespace Legion {
         int id() const{ return mID; }
         std::string to_string() const {
           char buffer[256];
-          sprintf(buffer, "CompositeProjectionFunctor id %d offset %d", mID, mOffset);
+          sprintf(buffer, "CompositeProjectionFunctor id %d offset %d numNodes %d", mID, mOffset, mNumBounds);
           return std::string(buffer);
         }
         
