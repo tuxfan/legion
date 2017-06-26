@@ -162,7 +162,8 @@ namespace Legion {
   template<unsigned int MAX> class SSEBitMask;
   template<unsigned int MAX> class SSETLBitMask;
 #endif
-#ifdef __AVX__
+#if 0//DEBUG
+//#ifdef __AVX__
   template<unsigned int MAX> class AVXBitMask;
   template<unsigned int MAX> class AVXTLBitMask;
 #endif
@@ -1532,7 +1533,7 @@ namespace Legion {
 #define LEGION_FIELD_MASK_FIELD_MASK          0x3F
 #define LEGION_FIELD_MASK_FIELD_ALL_ONES      0xFFFFFFFFFFFFFFFF
 
-#if defined(__AVX__)
+#if 0 // DEBUG defined(__AVX__)
 #if (MAX_FIELDS > 256)
     typedef AVXTLBitMask<MAX_FIELDS> FieldMask;
 #elif (MAX_FIELDS > 128)
@@ -1579,7 +1580,7 @@ namespace Legion {
 #define LEGION_NODE_MASK_NODE_MASK           0x3F
 #define LEGION_NODE_MASK_NODE_ALL_ONES       0xFFFFFFFFFFFFFFFF
 
-#if defined(__AVX__)
+#if 0 // DEBUG defined(__AVX__)
 #if (MAX_NUM_NODES > 256)
     typedef AVXTLBitMask<MAX_NUM_NODES> NodeMask;
 #elif (MAX_NUM_NODES > 128)
