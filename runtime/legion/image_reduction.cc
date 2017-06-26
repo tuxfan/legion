@@ -49,7 +49,6 @@ namespace Legion {
     GLenum ImageReduction::mGlBlendFunctionSource;
     GLenum ImageReduction::mGlBlendFunctionDestination;
     TaskID ImageReduction::mInitialTaskID;
-    TaskID ImageReduction::mAccessorTaskID;
     TaskID ImageReduction::mCompositeTaskID;
     TaskID ImageReduction::mDisplayTaskID;
     
@@ -268,6 +267,11 @@ namespace Legion {
     void ImageReduction::initial_task(const Task *task,
                                       const std::vector<PhysicalRegion> &regions,
                                       Context ctx, HighLevelRuntime *runtime) {
+      
+#ifdef TRACE_TASKS
+      std::cout << describe_task(task) << std::endl;
+#endif
+      
       ImageSize imageSize = ((ImageSize*)task->args)[0];
       int numNodes = imageSize.numImageLayers;
       
@@ -406,6 +410,10 @@ namespace Legion {
     void ImageReduction::composite_task(const Task *task,
                                         const std::vector<PhysicalRegion> &regions,
                                         Context ctx, HighLevelRuntime *runtime) {
+#ifdef TRACE_TASKS
+      std::cout << describe_task(task) << std::endl;
+#endif
+
 #if NULL_COMPOSITE_TASKS
       return;//performance testing
 #endif
@@ -683,6 +691,9 @@ namespace Legion {
                                       const std::vector<PhysicalRegion> &regions,
                                       Context ctx, HighLevelRuntime *runtime) {
       
+#ifdef TRACE_TASKS
+      std::cout << describe_task(task) << std::endl;
+#endif
       DisplayArguments args = ((DisplayArguments*)task->args)[0];
       char fileName[1024];
       sprintf(fileName, "display.%d.txt", args.t);

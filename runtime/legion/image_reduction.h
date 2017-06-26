@@ -36,6 +36,9 @@
 #include <sstream>
 
 
+#define TRACE_TASKS
+
+
 namespace Legion {
   namespace Visualization {
     
@@ -358,7 +361,6 @@ namespace Legion {
       Context mContext;
       Runtime *mRuntime;
       LogicalRegion mSourceImage;
-      LogicalRegion mScratchImage;
       Domain mSourceImageDomain;
       Domain mDepthDomain;
       Domain mCompositePipelineDomain;
@@ -386,7 +388,6 @@ namespace Legion {
       static GLenum mGlBlendFunctionSource;
       static GLenum mGlBlendFunctionDestination;
       static TaskID mInitialTaskID;
-      static TaskID mAccessorTaskID;
       static TaskID mCompositeTaskID;
       static TaskID mDisplayTaskID;
     };
