@@ -461,7 +461,9 @@ namespace Legion {
       CompositeProjectionFunctor* functor1 = (*mCompositeProjectionFunctor)[functorLevel];
       
 #if 1
-      std::cout << "functorLevel " << functorLevel << " using functors " << functor0->to_string() << " " << functor1->to_string() << std::endl;
+      std::cout << "functorLevel " << functorLevel << " tree level " << treeLevel << " using functors " << functor0->to_string() << " " << functor1->to_string() << std::endl;
+      std::cout << "launch domain at tree level " << treeLevel
+      << launchDomain << std::endl;
 #endif
       
       ArgumentMap argMap;
@@ -479,7 +481,7 @@ namespace Legion {
       FutureMap futures = runtime->execute_index_space(context, treeCompositeLauncher);
       
       if(treeLevel > 1) {
-                
+              
         futures = launchTreeReduction(imageSize, treeLevel - 1, functorLevel + 1, offset * 2, depthFunc, blendFuncSource, blendFuncDestination, blendEquation, compositeTaskID, sourceFragmentPartition, image, runtime, context, nodeID, maxTreeLevel);
       }
       return futures;
