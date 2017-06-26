@@ -422,6 +422,16 @@ namespace Legion {
       PhysicalRegion fragment0 = regions[0];
       PhysicalRegion fragment1 = regions[1];
       
+      
+#if 1
+      Domain indexSpaceDomain0 = runtime->get_index_space_domain(ctx, fragment0.get_logical_region().get_index_space());
+      Rect<image_region_dimensions> imageBounds0 = indexSpaceDomain0.get_rect<image_region_dimensions>();
+      Domain indexSpaceDomain1 = runtime->get_index_space_domain(ctx, fragment1.get_logical_region().get_index_space());
+      Rect<image_region_dimensions> imageBounds1 = indexSpaceDomain1.get_rect<image_region_dimensions>();
+      std::cout << describe_task(task) << " fragments " << imageBounds0 << " " << imageBounds1 << std::endl;
+#endif
+      
+      
       Stride stride;
       PixelField *r0, *g0, *b0, *a0, *z0, *userdata0;
       PixelField *r1, *g1, *b1, *a1, *z1, *userdata1;

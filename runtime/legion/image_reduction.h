@@ -36,7 +36,7 @@
 #include <sstream>
 
 
-#define TRACE_TASKS
+//#define TRACE_TASKS
 
 
 namespace Legion {
@@ -281,6 +281,10 @@ namespace Legion {
           if(mNumBounds == 0 || remappedLayer < mNumBounds) {
             remappedPoint[2] = remappedLayer;
           }
+          
+#if 1
+          {std::cout<<"functor remaps launch point "<<point<<" to "<<remappedPoint<<std::endl;}
+#endif
           
           LogicalRegion result = Legion::Runtime::get_runtime()->get_logical_subregion_by_color(upperBound, remappedPoint);
           return result;
