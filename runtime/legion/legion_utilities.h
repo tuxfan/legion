@@ -26,6 +26,11 @@
 #include "legion_profiling.h"
 #include "legion_allocation.h"
 
+// TODO remove this debug for Piz Daint 6/26/17 ABH
+#ifdef __AVX__ // DEBUG
+#undef __AVX__
+#endif
+
 // Apple can go screw itself
 #ifndef __MACH__
 #if defined(__i386__) || defined(__x86_64__)
