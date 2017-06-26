@@ -460,6 +460,10 @@ namespace Legion {
       CompositeProjectionFunctor* functor0 = (*mCompositeProjectionFunctor)[0];
       CompositeProjectionFunctor* functor1 = (*mCompositeProjectionFunctor)[functorLevel];
       
+#if 1
+      std::cout << "functorLevel " << functorLevel << " using functors " << functor0->to_string() << " " << functor1->to_string() << std::endl;
+#endif
+      
       ArgumentMap argMap;
       CompositeArguments args = { imageSize, depthFunc, blendFuncSource, blendFuncDestination, blendEquation };
       IndexTaskLauncher treeCompositeLauncher(compositeTaskID, launchDomain, TaskArgument(&args, sizeof(args)), argMap);

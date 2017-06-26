@@ -282,8 +282,10 @@ namespace Legion {
             remappedPoint[2] = remappedLayer;
           }
           
+          
 #if 1
-          {std::cout<<"functor remaps launch point "<<point<<" to "<<remappedPoint<<std::endl;}
+          {std::cout<<"functor for task " << mappable->as_task()->get_unique_id()
+            << " remaps launch point "<<point<<" to "<<remappedPoint<<std::endl;}
 #endif
           
           LogicalRegion result = Legion::Runtime::get_runtime()->get_logical_subregion_by_color(upperBound, remappedPoint);
