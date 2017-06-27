@@ -265,8 +265,9 @@ namespace Legion {
             
       class CompositeProjectionFunctor : public ProjectionFunctor {
       public:
-        CompositeProjectionFunctor(int offset, int numBounds, int id) {
+        CompositeProjectionFunctor(int offset, int multiplier, int numBounds, int id) {
           mOffset = offset;
+          mMultiplier = multiplier;
           mNumBounds = numBounds;
           mID = id;
         }
@@ -276,7 +277,7 @@ namespace Legion {
                                       const DomainPoint &point) {
           int launchDomainLayer = point[2];
           DomainPoint remappedPoint = point;
-          int remappedLayer = launchDomainLayer * num_fragments_per_composite + mOffset;
+          int remappedLayer = launchDomainLayer * num_fragments_per_composite * mMultiplier + mOffset;
           // handle non-power of 2 simulation size
           if(mNumBounds == 0 || remappedLayer < mNumBounds) {
             remappedPoint[2] = remappedLayer;
@@ -304,6 +305,7 @@ namespace Legion {
         
       private:
         int mOffset;
+        int mMultiplier;
         int mNumBounds;
         int mID;
       };

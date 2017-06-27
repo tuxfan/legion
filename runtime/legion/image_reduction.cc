@@ -251,9 +251,10 @@ namespace Legion {
         
         int numLevels = numTreeLevels(imageSize);
         for(int level = 0; level <= numLevels; ++level) {
-          int offset = (level == 0) ? 0 : (int)powf(2.0f, level - 1);
+          int multiplier = (int)powf(2.0f, level - 1);
+          int offset = (level == 0) ? 0 : multiplier;
           ProjectionID id = level2FunctorID(level);
-          CompositeProjectionFunctor* functor = new CompositeProjectionFunctor(offset, numBounds, id);
+          CompositeProjectionFunctor* functor = new CompositeProjectionFunctor(offset, multiplier, numBounds, id);
           runtime->register_projection_functor(id, functor);
           mCompositeProjectionFunctor->push_back(functor);
         }
