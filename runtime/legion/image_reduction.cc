@@ -433,7 +433,7 @@ namespace Legion {
       PhysicalRegion fragment1 = regions[1];
       
       
-#if 1
+#if 0
       Domain indexSpaceDomain0 = runtime->get_index_space_domain(ctx, fragment0.get_logical_region().get_index_space());
       Rect<image_region_dimensions> imageBounds0 = indexSpaceDomain0.get_rect<image_region_dimensions>();
       Domain indexSpaceDomain1 = runtime->get_index_space_domain(ctx, fragment1.get_logical_region().get_index_space());
@@ -471,7 +471,7 @@ namespace Legion {
       CompositeProjectionFunctor* functor0 = (*mCompositeProjectionFunctor)[index];
       CompositeProjectionFunctor* functor1 = (*mCompositeProjectionFunctor)[index + 1];
       
-#if 1
+#if 0
       std::cout << " tree level " << treeLevel << " using functors " << functor0->to_string() << " " << functor1->to_string() << std::endl;
       std::cout << "launch domain at tree level " << treeLevel
       << launchDomain << std::endl;

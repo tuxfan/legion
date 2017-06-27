@@ -283,8 +283,7 @@ namespace Legion {
             remappedPoint[2] = remappedLayer;
           }
           
-          
-#if 1
+#if 0
           {std::cout<< to_string() << " for task " << mappable->as_task()->get_unique_id()
             << " remaps launch point "<<point<<" to "<<remappedPoint<<std::endl;}
 #endif
@@ -354,7 +353,7 @@ namespace Legion {
       
       static int subtreeHeight(ImageSize imageSize);
       
-      static FutureMap launchTreeReduction(ImageSize imageSize, int treeLevel, 
+      static FutureMap launchTreeReduction(ImageSize imageSize, int treeLevel,
                                            GLenum depthFunc, GLenum blendFuncSource, GLenum blendFuncDestination, GLenum blendEquation,
                                            int compositeTaskID, LogicalPartition sourceFragmentPartition, LogicalRegion image,
                                            Runtime* runtime, Context context,

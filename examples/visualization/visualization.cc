@@ -102,7 +102,7 @@ void top_level_task(const Task *task,
   const int width = 3840;
   const int height = 2160;
   const int numSimulationTasks = 4;
-  const int numFragmentsPerLayer = 1;
+  const int numFragmentsPerLayer = 8;
   
   ImageSize imageSize = (ImageSize){ width, height, numSimulationTasks, numFragmentsPerLayer };
 #endif
@@ -121,7 +121,7 @@ void top_level_task(const Task *task,
     UsecTimer reduce("reduce time:");
     Future displayFuture;
     
-    const int numTimeSteps = 1;
+    const int numTimeSteps = 5;
     
     for(int t = 0; t < numTimeSteps; ++t) {
       
