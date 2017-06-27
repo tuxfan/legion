@@ -283,8 +283,8 @@ namespace Legion {
           }
           
           
-#if 0
-          {std::cout<<"functor for task " << mappable->as_task()->get_unique_id()
+#if 1
+          {std::cout<<"functor offset " << mOffset << " for task " << mappable->as_task()->get_unique_id()
             << " remaps launch point "<<point<<" to "<<remappedPoint<<std::endl;}
 #endif
           
