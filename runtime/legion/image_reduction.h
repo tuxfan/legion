@@ -277,7 +277,7 @@ namespace Legion {
                                       const DomainPoint &point) {
           int launchDomainLayer = point[2];
           DomainPoint remappedPoint = point;
-          int remappedLayer = launchDomainLayer * num_fragments_per_composite * mMultiplier + mOffset;
+          int remappedLayer = launchDomainLayer * mMultiplier + mOffset;
           // handle non-power of 2 simulation size
           if(mNumBounds == 0 || remappedLayer < mNumBounds) {
             remappedPoint[2] = remappedLayer;
@@ -285,7 +285,7 @@ namespace Legion {
           
           
 #if 1
-          {std::cout<<"functor offset " << mOffset << " for task " << mappable->as_task()->get_unique_id()
+          {std::cout<< to_string() << " for task " << mappable->as_task()->get_unique_id()
             << " remaps launch point "<<point<<" to "<<remappedPoint<<std::endl;}
 #endif
           
@@ -296,7 +296,7 @@ namespace Legion {
         int id() const{ return mID; }
         std::string to_string() const {
           char buffer[256];
-          sprintf(buffer, "CompositeProjectionFunctor id %d offset %d numNodes %d", mID, mOffset, mNumBounds);
+          sprintf(buffer, "CompositeProjectionFunctor id %d offset %d multiplier %d numNodes %d", mID, mOffset, mMultiplier, mNumBounds);
           return std::string(buffer);
         }
         
@@ -354,7 +354,7 @@ namespace Legion {
       
       static int subtreeHeight(ImageSize imageSize);
       
-      static FutureMap launchTreeReduction(ImageSize imageSize, int treeLevel, int functorLevel, int offset,
+      static FutureMap launchTreeReduction(ImageSize imageSize, int treeLevel, 
                                            GLenum depthFunc, GLenum blendFuncSource, GLenum blendFuncDestination, GLenum blendEquation,
                                            int compositeTaskID, LogicalPartition sourceFragmentPartition, LogicalRegion image,
                                            Runtime* runtime, Context context,

@@ -237,8 +237,8 @@ namespace Legion {
     }
     
     
-    static int level2FunctorID(int level) {
-      return 100 + level;//TODO assign ids dynamically
+    static int level2FunctorID(int level, int more) {
+      return 100 + level * 2 + more;//TODO assign ids dynamically
     }
     
     
@@ -250,13 +250,22 @@ namespace Legion {
         mCompositeProjectionFunctor = new std::vector<CompositeProjectionFunctor*>();
         
         int numLevels = numTreeLevels(imageSize);
-        for(int level = 0; level <= numLevels; ++level) {
-          int multiplier = (int)powf(2.0f, level - 1);
-          int offset = (level == 0) ? 0 : multiplier;
-          ProjectionID id = level2FunctorID(level);
-          CompositeProjectionFunctor* functor = new CompositeProjectionFunctor(offset, multiplier, numBounds, id);
-          runtime->register_projection_functor(id, functor);
-          mCompositeProjectionFunctor->push_back(functor);
+        int multiplier = imageSize.numImageLayers;
+        for(int level = 0; level < numLevels; ++level) {
+          
+          ProjectionID id0 = level2FunctorID(level, 0);
+          int offset = 0;
+          CompositeProjectionFunctor* functor0 = new CompositeProjectionFunctor(offset, multiplier, numBounds, id0);
+          runtime->register_projection_functor(id0, functor0);
+          mCompositeProjectionFunctor->push_back(functor0);
+
+          ProjectionID id1 = level2FunctorID(level, 1);
+          offset = multiplier / 2;
+          CompositeProjectionFunctor* functor1 = new CompositeProjectionFunctor(offset, multiplier, numBounds, id1);
+          runtime->register_projection_functor(id1, functor1);
+          mCompositeProjectionFunctor->push_back(functor1);
+          
+          multiplier /= num_fragments_per_composite;
         }
       }
     }
@@ -452,17 +461,18 @@ namespace Legion {
     
     
     
-    FutureMap ImageReduction::launchTreeReduction(ImageSize imageSize, int treeLevel, int functorLevel, int offset,
+    FutureMap ImageReduction::launchTreeReduction(ImageSize imageSize, int treeLevel,
                                                   GLenum depthFunc, GLenum blendFuncSource, GLenum blendFuncDestination, GLenum blendEquation,
                                                   int compositeTaskID, LogicalPartition sourceFragmentPartition, LogicalRegion image,
                                                   Runtime* runtime, Context context,
                                                   int nodeID, int maxTreeLevel) {
       Domain launchDomain = (*mHierarchicalTreeDomain)[treeLevel - 1];
-      CompositeProjectionFunctor* functor0 = (*mCompositeProjectionFunctor)[0];
-      CompositeProjectionFunctor* functor1 = (*mCompositeProjectionFunctor)[functorLevel];
+      int index = (treeLevel - 1) * 2;
+      CompositeProjectionFunctor* functor0 = (*mCompositeProjectionFunctor)[index];
+      CompositeProjectionFunctor* functor1 = (*mCompositeProjectionFunctor)[index + 1];
       
 #if 1
-      std::cout << "functorLevel " << functorLevel << " tree level " << treeLevel << " using functors " << functor0->to_string() << " " << functor1->to_string() << std::endl;
+      std::cout << " tree level " << treeLevel << " using functors " << functor0->to_string() << " " << functor1->to_string() << std::endl;
       std::cout << "launch domain at tree level " << treeLevel
       << launchDomain << std::endl;
 #endif
@@ -483,7 +493,7 @@ namespace Legion {
       
       if(treeLevel > 1) {
               
-        futures = launchTreeReduction(imageSize, treeLevel - 1, functorLevel + 1, offset * 2, depthFunc, blendFuncSource, blendFuncDestination, blendEquation, compositeTaskID, sourceFragmentPartition, image, runtime, context, nodeID, maxTreeLevel);
+        futures = launchTreeReduction(imageSize, treeLevel - 1, depthFunc, blendFuncSource, blendFuncDestination, blendEquation, compositeTaskID, sourceFragmentPartition, image, runtime, context, nodeID, maxTreeLevel);
       }
       return futures;
       
@@ -493,7 +503,7 @@ namespace Legion {
     
     FutureMap ImageReduction::reduceAssociative() {
       int maxTreeLevel = numTreeLevels(mImageSize);
-      return launchTreeReduction(mImageSize, maxTreeLevel, 1, 1, mDepthFunction, mGlBlendFunctionSource, mGlBlendFunctionDestination, mGlBlendEquation,
+      return launchTreeReduction(mImageSize, maxTreeLevel, mDepthFunction, mGlBlendFunctionSource, mGlBlendFunctionDestination, mGlBlendEquation,
                                  mCompositeTaskID, mSourceFragmentPartition, mSourceImage,
                                  mRuntime, mContext, mLocalCopyOfNodeID, maxTreeLevel);
     }
