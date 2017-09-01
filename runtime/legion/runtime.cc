@@ -6062,6 +6062,11 @@ namespace Legion {
             runtime->handle_remote_context_response(derez);
             break;
           }
+          case SEND_REMOTE_CONTEXT_RELEASE:
+            {
+              runtime->handle_remote_context_release(derez);
+              break;
+            }
           case SEND_REMOTE_CONTEXT_FREE:
           {
             runtime->handle_remote_context_free(derez);
@@ -6137,6 +6142,17 @@ namespace Legion {
             runtime->handle_version_manager_response(derez);
             break;
           }
+          case SEND_VERSION_MANAGER_UNVERSIONED_REQUEST:
+            {
+              runtime->handle_version_manager_unversioned_request(derez,
+                                                  remote_address_space);
+              break;
+            }
+          case SEND_VERSION_MANAGER_UNVERSIONED_RESPONSE:
+            {
+              runtime->handle_version_manager_unversioned_response(derez);
+              break;
+            }
           case SEND_INSTANCE_REQUEST:
           {
             runtime->handle_instance_request(derez, remote_address_space);
@@ -8300,7 +8316,9 @@ namespace Legion {
     ProjectionFunction::~ProjectionFunction(void)
     //--------------------------------------------------------------------------
     {
-      delete functor;
+      // These can be shared in the case of multiple runtime instances
+      if (!Runtime::separate_runtime_instances)
+        delete functor;
       if (projection_reservation.exists())
         projection_reservation.destroy_reservation();
     }
@@ -10525,9 +10543,7 @@ namespace Legion {
                                       const DomainPoint &color)
     //--------------------------------------------------------------------------
     {
-      IndexPartition result = forest->get_index_partition(parent,
-                                                          ColorPoint(color));
-      return result.exists();
+      return forest->has_index_partition(parent, ColorPoint(color));
     }
     
     //--------------------------------------------------------------------------
@@ -14428,6 +14444,15 @@ namespace Legion {
       find_messenger(target)->send_message(rez, SEND_REMOTE_CONTEXT_RESPONSE,
                                            CONTEXT_VIRTUAL_CHANNEL, true/*flush*/, true/*response*/);
     }
+
+    //--------------------------------------------------------------------------
+    void Runtime::send_remote_context_release(AddressSpaceID target,
+                                              Serializer &rez)
+    //--------------------------------------------------------------------------
+    {
+      find_messenger(target)->send_message(rez, SEND_REMOTE_CONTEXT_RELEASE,
+                                     CONTEXT_VIRTUAL_CHANNEL, true/*flush*/);
+    }
     
     //--------------------------------------------------------------------------
     void Runtime::send_remote_context_free(AddressSpaceID target,
@@ -14556,6 +14581,26 @@ namespace Legion {
       // in any version managers from remote nodes
       find_messenger(target)->send_message(rez, SEND_VERSION_MANAGER_RESPONSE,
                                            VERSION_MANAGER_VIRTUAL_CHANNEL, true/*flush*/, true/*response*/);
+    }
+
+    //--------------------------------------------------------------------------
+    void Runtime::send_version_manager_unversioned_request(
+                                         AddressSpaceID target, Serializer &rez)
+    //--------------------------------------------------------------------------
+    {
+      find_messenger(target)->send_message(rez, 
+          SEND_VERSION_MANAGER_UNVERSIONED_REQUEST, 
+          VERSION_MANAGER_VIRTUAL_CHANNEL, true/*flush*/);
+    }
+
+    //--------------------------------------------------------------------------
+    void Runtime::send_version_manager_unversioned_response(
+                                         AddressSpaceID target, Serializer &rez)
+    //--------------------------------------------------------------------------
+    {
+      find_messenger(target)->send_message(rez, 
+          SEND_VERSION_MANAGER_UNVERSIONED_RESPONSE, 
+          VERSION_MANAGER_VIRTUAL_CHANNEL, true/*flush*/, true/*response*/);
     }
     
     //--------------------------------------------------------------------------
@@ -15472,6 +15517,17 @@ namespace Legion {
       UniqueID context_uid = context->get_context_uid();
       register_remote_context(context_uid, context, preconditions);
     }
+
+    //--------------------------------------------------------------------------
+    void Runtime::handle_remote_context_release(Deserializer &derez)
+    //--------------------------------------------------------------------------
+    {
+      DerezCheck z(derez);
+      UniqueID context_uid;
+      derez.deserialize(context_uid);
+      InnerContext *context = find_context(context_uid);
+      context->invalidate_region_tree_contexts();
+    }
     
     //--------------------------------------------------------------------------
     void Runtime::handle_remote_context_free(Deserializer &derez)
@@ -15579,6 +15635,22 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       VersionManager::handle_response(derez);
+    }
+
+    //--------------------------------------------------------------------------
+    void Runtime::handle_version_manager_unversioned_request(
+                                     Deserializer &derez, AddressSpaceID source)
+    //--------------------------------------------------------------------------
+    {
+      VersionManager::handle_unversioned_request(derez, this, source);
+    }
+
+    //--------------------------------------------------------------------------
+    void Runtime::handle_version_manager_unversioned_response(
+                                                            Deserializer &derez)
+    //--------------------------------------------------------------------------
+    {
+      VersionManager::handle_unversioned_response(derez, this);
     }
     
     //--------------------------------------------------------------------------
@@ -17819,8 +17891,6 @@ namespace Legion {
         context = finder->second;
         remote_contexts.erase(finder);
       }
-      // Invalidate the region tree context
-      context->invalidate_region_tree_contexts();
       // Remove our reference and delete it if we're done with it
       if (context->remove_reference())
         delete context;
@@ -19959,6 +20029,21 @@ continue;					\
               LegionSpy::log_processor_kind(kind, "IO");
               break;
             }
+            case Processor::PROC_GROUP:
+            {
+              LegionSpy::log_processor_kind(kind, "ProcGroup");
+              break;
+            }
+            case Processor::PROC_SET:
+            {
+              LegionSpy::log_processor_kind(kind, "ProcSet");
+              break;
+            }
+            case Processor::OMP_PROC:
+            {
+              LegionSpy::log_processor_kind(kind, "OpenMP");
+              break;
+            }
             default:
               assert(false); // unknown processor kind
           }
@@ -20433,8 +20518,9 @@ continue;					\
         case LG_TOP_FINISH_TASK_ID:
         {
           TopFinishArgs *fargs = (TopFinishArgs*)args;
-          fargs->ctx->invalidate_remote_contexts();
+          // Do this before deleting remote contexts
           fargs->ctx->invalidate_region_tree_contexts();
+          fargs->ctx->invalidate_remote_contexts();
           if (fargs->ctx->remove_reference())
             delete fargs->ctx;
           break;
@@ -20489,9 +20575,16 @@ continue;					\
         {
           InnerContext::DecrementArgs *dargs =
           (InnerContext::DecrementArgs*)args;
-          dargs->parent_ctx->decrement_pending();
+          dargs->parent_ctx->decrement_pending(false/*need deferral*/);
           break;
         }
+        case LG_POST_DECREMENT_TASK_ID:
+          {
+            InnerContext::PostDecrementArgs *dargs = 
+              (InnerContext::PostDecrementArgs*)args;
+            Runtime::get_runtime(p)->activate_context(dargs->parent_ctx);
+            break;
+          }
         case LG_SEND_VERSION_STATE_UPDATE_TASK_ID:
         {
           VersionState::SendVersionStateArgs *vargs =

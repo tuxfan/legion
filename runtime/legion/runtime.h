@@ -2065,6 +2065,7 @@ namespace Legion {
                                                 Serializer &rez);
       void send_remote_context_request(AddressSpaceID target, Serializer &rez);
       void send_remote_context_response(AddressSpaceID target, Serializer &rez);
+      void send_remote_context_release(AddressSpaceID target, Serializer &rez);
       void send_remote_context_free(AddressSpaceID target, Serializer &rez);
       void send_remote_context_physical_request(AddressSpaceID target, 
                                                 Serializer &rez);
@@ -2084,6 +2085,10 @@ namespace Legion {
                                            Serializer &rez);
       void send_version_manager_request(AddressSpaceID target, Serializer &rez);
       void send_version_manager_response(AddressSpaceID target,Serializer &rez);
+      void send_version_manager_unversioned_request(AddressSpaceID target,
+                                                    Serializer &rez);
+      void send_version_manager_unversioned_response(AddressSpaceID target,
+                                                     Serializer &rez);
       void send_instance_request(AddressSpaceID target, Serializer &rez);
       void send_instance_response(AddressSpaceID target, Serializer &rez);
       void send_gc_priority_update(AddressSpaceID target, Serializer &rez);
@@ -2239,6 +2244,7 @@ namespace Legion {
       void handle_remote_context_request(Deserializer &derez,
                                          AddressSpaceID source);
       void handle_remote_context_response(Deserializer &derez);
+      void handle_remote_context_release(Deserializer &derez);
       void handle_remote_context_free(Deserializer &derez);
       void handle_remote_context_physical_request(Deserializer &derez,
                                                   AddressSpaceID source);
@@ -2260,6 +2266,9 @@ namespace Legion {
       void handle_version_manager_request(Deserializer &derez, 
                                           AddressSpaceID source);
       void handle_version_manager_response(Deserializer &derez);
+      void handle_version_manager_unversioned_request(Deserializer &derez,
+                                                      AddressSpaceID source);
+      void handle_version_manager_unversioned_response(Deserializer &derez);
       void handle_instance_request(Deserializer &derez, AddressSpaceID source);
       void handle_instance_response(Deserializer &derez,AddressSpaceID source);
       void handle_gc_priority_update(Deserializer &derez,AddressSpaceID source);

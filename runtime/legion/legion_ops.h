@@ -212,6 +212,10 @@ namespace Legion {
       inline RtEvent get_resolved_event(void) const { return resolved_event; }
       inline ApEvent get_completion_event(void) const {return completion_event;}
       inline RtEvent get_commit_event(void) const { return commit_event; }
+      inline ApEvent get_execution_fence_event(void) const 
+        { return execution_fence_event; }
+      inline bool has_execution_fence_event(void) const 
+        { return execution_fence_event.exists(); }
       inline TaskContext* get_context(void) const { return parent_ctx; }
       inline UniqueID get_unique_op_id(void) const { return unique_op_id; } 
       inline bool is_tracing(void) const { return tracing; }
@@ -428,7 +432,7 @@ namespace Legion {
       // how many places additional dependences can come from.
       // Once the mapping reference count goes to zero, no
       // additional dependences can be registered.
-      void add_mapping_reference(GenerationID gen);
+      bool add_mapping_reference(GenerationID gen);
       void remove_mapping_reference(GenerationID gen);
     public:
       // Some extra support for tracking dependences that we've 
@@ -475,6 +479,7 @@ namespace Legion {
       Reservation op_lock;
       GenerationID gen;
       UniqueID unique_op_id;
+      // The issue index of this operation in the context
       unsigned context_index;
       // Operations on which this operation depends
       std::map<Operation*,GenerationID> incoming;
@@ -529,6 +534,8 @@ namespace Legion {
       ApUserEvent completion_event;
       // The commit event for this operation
       RtUserEvent commit_event;
+      // Previous execution fence if there was one
+      ApEvent execution_fence_event;
       // The trace for this operation if any
       LegionTrace *trace;
       // Track whether we are tracing this operation
@@ -748,6 +755,7 @@ namespace Legion {
       MapperManager *mapper;
     protected:
       std::vector<ProfilingMeasurementID> profiling_requests;
+      int                                 profiling_priority;
       int                     outstanding_profiling_requests;
       RtUserEvent                         profiling_reported;
     };
@@ -812,6 +820,7 @@ namespace Legion {
       virtual UniqueID get_unique_id(void) const;
       virtual unsigned get_context_index(void) const;
       virtual int get_depth(void) const;
+      virtual const ProjectionInfo* get_projection_info(unsigned idx, bool src);
     protected:
       void check_copy_privilege(const RegionRequirement &req, 
                                 unsigned idx, bool src,
@@ -849,6 +858,7 @@ namespace Legion {
       PredEvent                   predication_guard;
     protected:
       std::vector<ProfilingMeasurementID> profiling_requests;
+      int                                 profiling_priority;
       int                     outstanding_profiling_requests;
       RtUserEvent                         profiling_reported;
     };
@@ -885,6 +895,8 @@ namespace Legion {
 #ifdef DEBUG_LEGION
       void check_point_requirements(void);
 #endif
+    public:
+      virtual const ProjectionInfo* get_projection_info(unsigned idx, bool src);
     public:
       std::vector<ProjectionInfo>   src_projection_infos;
       std::vector<ProjectionInfo>   dst_projection_infos;
@@ -931,6 +943,8 @@ namespace Legion {
       // From ProjectionPoint
       virtual const DomainPoint& get_domain_point(void) const;
       virtual void set_projection_result(unsigned idx,LogicalRegion result);
+    public:
+      virtual const ProjectionInfo* get_projection_info(unsigned idx, bool src);
     protected:
       IndexCopyOp*              owner;
     };
@@ -962,6 +976,7 @@ namespace Legion {
       FenceOp& operator=(const FenceOp &rhs);
     public:
       void initialize(TaskContext *ctx, FenceKind kind);
+      bool is_execution_fence(void) const;
     public:
       virtual void activate(void);
       virtual void deactivate(void);
@@ -970,9 +985,11 @@ namespace Legion {
     public:
       virtual void trigger_dependence_analysis(void);
       virtual void trigger_mapping(void);
-      virtual void deferred_execute(void);
     protected:
       FenceKind fence_kind;
+#ifdef LEGION_SPY
+      ApEvent execution_precondition;
+#endif
     };
 
     /**
@@ -1316,6 +1333,7 @@ namespace Legion {
       MapperManager *mapper;
     protected:
       std::vector<ProfilingMeasurementID> profiling_requests;
+      int                                 profiling_priority;
       int                     outstanding_profiling_requests;
       RtUserEvent                         profiling_reported;
     };
@@ -1406,6 +1424,7 @@ namespace Legion {
       MapperManager *mapper;
     protected:
       std::vector<ProfilingMeasurementID> profiling_requests;
+      int                                 profiling_priority;
       int                     outstanding_profiling_requests;
       RtUserEvent                         profiling_reported;
     };
@@ -1508,6 +1527,7 @@ namespace Legion {
       MapperManager*    mapper;
     protected:
       std::vector<ProfilingMeasurementID> profiling_requests;
+      int                                 profiling_priority;
       int                     outstanding_profiling_requests;
       RtUserEvent                         profiling_reported;
     };
@@ -1586,6 +1606,7 @@ namespace Legion {
       MapperManager*    mapper;
     protected:
       std::vector<ProfilingMeasurementID> profiling_requests;
+      int                                 profiling_priority;
       int                     outstanding_profiling_requests;
       RtUserEvent                         profiling_reported;
     };
@@ -2290,6 +2311,7 @@ namespace Legion {
       virtual unsigned find_parent_index(unsigned idx);
       virtual void trigger_commit(void);
       virtual ApEvent get_restrict_precondition(void) const;
+      virtual const ProjectionInfo* get_projection_info(void);
     public:
       void check_fill_privilege(void);
       void compute_parent_index(void);
@@ -2339,6 +2361,8 @@ namespace Legion {
       void check_point_requirements(void);
 #endif
     public:
+      virtual const ProjectionInfo* get_projection_info(void);
+    public:
       ProjectionInfo                projection_info;
     protected:
       std::vector<PointFillOp*>     points;
@@ -2374,6 +2398,8 @@ namespace Legion {
       // From ProjectionPoint
       virtual const DomainPoint& get_domain_point(void) const;
       virtual void set_projection_result(unsigned idx,LogicalRegion result);
+    public:
+      virtual const ProjectionInfo* get_projection_info(void);
     protected:
       IndexFillOp*              owner;
     };

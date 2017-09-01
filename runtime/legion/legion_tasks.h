@@ -224,6 +224,7 @@ namespace Legion {
       virtual unsigned find_parent_index(unsigned idx);
       virtual VersionInfo& get_version_info(unsigned idx);
       virtual RestrictInfo& get_restrict_info(unsigned idx);
+      virtual const ProjectionInfo* get_projection_info(unsigned idx);
       virtual const std::vector<VersionInfo>* get_version_infos(void);
       virtual const std::vector<RestrictInfo>* get_restrict_infos(void);
       virtual RegionTreePath& get_privilege_path(unsigned idx);
@@ -488,6 +489,7 @@ namespace Legion {
       // Profiling information
       std::vector<ProfilingMeasurementID> task_profiling_requests;
       std::vector<ProfilingMeasurementID> copy_profiling_requests;
+      int                                      profiling_priority;
       int                          outstanding_profiling_requests;
       RtUserEvent                              profiling_reported;
     };
@@ -526,6 +528,7 @@ namespace Legion {
       virtual void map_and_launch(void) = 0;
       virtual VersionInfo& get_version_info(unsigned idx);
       virtual RestrictInfo& get_restrict_info(unsigned idx);
+      virtual const ProjectionInfo* get_projection_info(unsigned idx);
       virtual const std::vector<VersionInfo>* get_version_infos(void);
       virtual const std::vector<RestrictInfo>* get_restrict_infos(void);
     public:
@@ -625,6 +628,7 @@ namespace Legion {
       virtual bool can_early_complete(ApUserEvent &chain_event);
       virtual VersionInfo& get_version_info(unsigned idx);
       virtual RestrictInfo& get_restrict_info(unsigned idx);
+      virtual const ProjectionInfo* get_projection_info(unsigned idx);
       virtual const std::vector<VersionInfo>* get_version_infos(void);
       virtual const std::vector<RestrictInfo>* get_restrict_infos(void);
       virtual RegionTreePath& get_privilege_path(unsigned idx);
@@ -733,6 +737,7 @@ namespace Legion {
       virtual bool can_early_complete(ApUserEvent &chain_event);
       virtual VersionInfo& get_version_info(unsigned idx);
       virtual RestrictInfo& get_restrict_info(unsigned idx);
+      virtual const ProjectionInfo* get_projection_info(unsigned idx);
       virtual const std::vector<VersionInfo>* get_version_infos(void);
       virtual const std::vector<RestrictInfo>* get_restrict_infos(void);
     public:
@@ -861,7 +866,8 @@ namespace Legion {
       void return_slice_mapped(unsigned points, long long denom,
                                RtEvent applied_condition, 
                                ApEvent restrict_postcondition);
-      void return_slice_complete(unsigned points);
+      void return_slice_complete(unsigned points,
+                                 ApEvent slice_postcondition);
       void return_slice_commit(unsigned points);
     public:
       void unpack_slice_mapped(Deserializer &derez, AddressSpaceID source);
@@ -891,7 +897,7 @@ namespace Legion {
       std::deque<SliceTask*> locally_mapped_slices;
     protected:
       std::set<RtEvent> map_applied_conditions;
-      std::set<ApEvent> restrict_postconditions;
+      std::set<ApEvent> completion_preconditions;
       std::map<PhysicalManager*,std::pair<unsigned,bool> > acquired_instances;
     protected:
       // Whether we have to do intra-task alias analysis
@@ -987,7 +993,7 @@ namespace Legion {
       void trigger_slice_commit(void);
     protected:
       void pack_remote_mapped(Serializer &rez, RtEvent applied_condition);
-      void pack_remote_complete(Serializer &rez); 
+      void pack_remote_complete(Serializer &rez, ApEvent slice_postcondition); 
       void pack_remote_commit(Serializer &rez);
     public:
       RtEvent defer_map_and_launch(RtEvent precondition);

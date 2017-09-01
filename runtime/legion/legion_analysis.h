@@ -49,6 +49,8 @@ namespace Legion {
       LogicalUser(void);
       LogicalUser(Operation *o, unsigned id, 
                   const RegionUsage &u, const FieldMask &m);
+      LogicalUser(Operation *o, GenerationID gen, unsigned id,
+                  const RegionUsage &u, const FieldMask &m);
     public:
       Operation *op;
       unsigned idx;
@@ -413,6 +415,9 @@ namespace Legion {
       void unpack_info(Deserializer &derez, Runtime *runtime,
           const RegionRequirement &req, const Domain &launch_domain);
     public:
+      void pack_epochs(Serializer &rez) const;
+      void unpack_epochs(Deserializer &derez);
+    public:
       ProjectionFunction *projection;
       ProjectionType projection_type;
       Domain projection_domain;
@@ -649,6 +654,7 @@ namespace Legion {
     public:
       void add_child_node(ClosedNode *child);
       void record_closed_fields(const FieldMask &closed_fields);
+      void record_reduced_fields(const FieldMask &reduced_fields);
       void record_projections(const ProjectionEpoch *epoch,
                               const FieldMask &closed_fields);
       void record_projection(ProjectionFunction *function,
@@ -658,6 +664,8 @@ namespace Legion {
       void filter_dominated_fields(const ClosedNode *old_tree,
                                    FieldMask &non_dominated_mask) const;
     protected:
+      // Shortcut to compute lhs.dominates(rhs)
+      static bool dominates(const Domain &lhs, const Domain &rhs);
       void filter_dominated_projection_fields(FieldMask &non_dominated_mask,
           const std::map<ProjectionFunction*,
              LegionMap<Domain,FieldMask>::aligned> &new_projections) const;
@@ -673,6 +681,7 @@ namespace Legion {
     protected:
       FieldMask valid_fields; // Fields that are summarized in this tree
       FieldMask covered_fields; // Fields totally written to at this node
+      FieldMask reduced_fields; // Fields purely reduced to at this node
       std::map<RegionTreeNode*,ClosedNode*> children;
       std::map<ProjectionFunction*,
                LegionMap<Domain,FieldMask>::aligned> projections;
@@ -705,6 +714,9 @@ namespace Legion {
       ClosedNode* find_closed_node(RegionTreeNode *node);
       void record_closed_user(const LogicalUser &user, 
                               const FieldMask &mask, bool read_only);
+#ifndef LEGION_SPY
+      void pop_closed_user(bool read_only);
+#endif
       void initialize_close_operations(LogicalState &state, 
                                        Operation *creator,
                                        const VersionInfo &version_info,
@@ -748,6 +760,11 @@ namespace Legion {
       InterCloseOp *normal_close_op;
       ReadCloseOp *read_only_close_op;
       InterCloseOp *flush_only_close_op;
+    protected:
+      // Cache the generation IDs so we can kick off ops before adding users
+      GenerationID normal_close_gen;
+      GenerationID read_only_close_gen;
+      GenerationID flush_only_close_gen;
     }; 
 
     /**
@@ -931,7 +948,8 @@ namespace Legion {
                             ProjectionEpochID open_epoch = 0,
                             bool dedup_advances = false, 
                             ProjectionEpochID advance_epoch = 0,
-                            const FieldMask *dirty_previous = NULL);
+                            const FieldMask *dirty_previous = NULL,
+                            const ProjectionInfo *proj_info = NULL);
       void update_child_versions(InnerContext *context,
                                  const ColorPoint &child_color,
                                  VersioningSet<> &new_states,
@@ -955,7 +973,8 @@ namespace Legion {
                                   ProjectionEpochID open_epoch,
                                   bool dedup_advances,
                                   ProjectionEpochID advance_epoch,
-                                  const FieldMask *dirty_previous);
+                                  const FieldMask *dirty_previous,
+                                  const ProjectionInfo *proj_info);
       static void handle_remote_advance(Deserializer &derez, Runtime *runtime,
                                         AddressSpaceID source_space);
     public:
@@ -989,6 +1008,14 @@ namespace Legion {
               VersioningSet<VERSION_MANAGER_REF> >::aligned &target_infos,
           const LegionMap<VersionState*,FieldMask>::aligned &source_infos);
       static void handle_response(Deserializer &derez);
+    public:
+      void find_or_create_unversioned_states(FieldMask unversioned,
+          LegionMap<VersionState*,FieldMask>::aligned &unversioned_states,
+                                             ReferenceMutator *mutator);
+      static void handle_unversioned_request(Deserializer &derez,
+                          Runtime *runtime, AddressSpaceID source);
+      static void handle_unversioned_response(Deserializer &derez,
+                                              Runtime *runtime);
     public:
       static void process_capture_dirty(const void *args);
     protected:

@@ -616,6 +616,12 @@ legion_index_partition_create_domain_coloring(
   Domain color_space = CObjectWrapper::unwrap(color_space_);
   DomainColoring *coloring = CObjectWrapper::unwrap(coloring_);
 
+  // Ensure all colors exist in coloring.
+  for(Domain::DomainPointIterator c(color_space); c; c++) {
+    assert(c.p.get_dim() <= 1);
+    (*coloring)[c.p[0]];
+  }
+
   IndexPartition ip =
     runtime->create_index_partition(ctx, parent, color_space, *coloring,
                                     disjoint, part_color);
@@ -637,6 +643,11 @@ legion_index_partition_create_point_coloring(
   IndexSpace parent = CObjectWrapper::unwrap(parent_);
   Domain color_space = CObjectWrapper::unwrap(color_space_);
   PointColoring *coloring = CObjectWrapper::unwrap(coloring_);
+
+  // Ensure all colors exist in coloring.
+  for(Domain::DomainPointIterator c(color_space); c; c++) {
+    (*coloring)[c.p];
+  }
 
   IndexPartition ip =
     runtime->create_index_partition(ctx, parent, color_space, *coloring,
@@ -660,6 +671,35 @@ legion_index_partition_create_domain_point_coloring(
   Domain color_space = CObjectWrapper::unwrap(color_space_);
   DomainPointColoring *coloring = CObjectWrapper::unwrap(coloring_);
 
+  // Ensure all colors exist in coloring.
+  for(Domain::DomainPointIterator c(color_space); c; c++) {
+    if (!(*coloring).count(c.p)) {
+      switch (c.p.get_dim()) {
+        case 1:
+          {
+            (*coloring)[c.p] = Domain::from_rect<1>(Rect<1>(0, -1));
+            break;
+          }
+      case 2:
+          {
+            (*coloring)[c.p] =
+              Domain::from_rect<2>(Rect<2>(make_point(0, 0),
+                                           make_point(-1, -1)));
+            break;
+          }
+      case 3:
+          {
+            (*coloring)[c.p] =
+              Domain::from_rect<3>(Rect<3>(make_point(0, 0, 0),
+                                           make_point(-1, -1, -1)));
+            break;
+          }
+      default:
+        break;
+      }
+    }
+  }
+
   IndexPartition ip =
     runtime->create_index_partition(ctx, parent, color_space, *coloring,
                                     part_kind, color);
@@ -681,6 +721,35 @@ legion_index_partition_create_multi_domain_point_coloring(
   IndexSpace parent = CObjectWrapper::unwrap(parent_);
   Domain color_space = CObjectWrapper::unwrap(color_space_);
   MultiDomainPointColoring *coloring = CObjectWrapper::unwrap(coloring_);
+
+  // Ensure all colors exist in coloring.
+  for(Domain::DomainPointIterator c(color_space); c; c++) {
+    if ((*coloring)[c.p].empty()) {
+      switch (c.p.get_dim()) {
+        case 1:
+          {
+            (*coloring)[c.p].insert(Domain::from_rect<1>(Rect<1>(0, -1)));
+            break;
+          }
+      case 2:
+          {
+            (*coloring)[c.p].insert(
+              Domain::from_rect<2>(Rect<2>(make_point(0, 0),
+                                           make_point(-1, -1))));
+            break;
+          }
+      case 3:
+          {
+            (*coloring)[c.p].insert(
+              Domain::from_rect<3>(Rect<3>(make_point(0, 0, 0),
+                                           make_point(-1, -1, -1))));
+            break;
+          }
+      default:
+        break;
+      }
+    }
+  }
 
   IndexPartition ip =
     runtime->create_index_partition(ctx, parent, color_space, *coloring,
@@ -1693,10 +1762,10 @@ PartitionByImageShim::launch(HighLevelRuntime *runtime,
       Future f = fmap.get_future(c.p);
       const long long* buffer =
         reinterpret_cast<const long long*>(f.get_untyped_pointer());
+      Domain domain; domain.dim = args.target_dim;
       long long size = *buffer++;
       assert(size == 2 * args.target_dim);
-      Domain domain; domain.dim = args.target_dim;
-      memcpy(domain.rect_data, buffer, 2 * args.target_dim * sizeof(long long));
+      memcpy(domain.rect_data, buffer, size * sizeof(long long));
       coloring[upgrade_point(c.p)] = domain;
     }
 
@@ -1974,10 +2043,10 @@ PartitionByPreimageShim::launch(HighLevelRuntime *runtime,
       Future f = fmap.get_future(c.p);
       const long long* buffer =
         reinterpret_cast<const long long*>(f.get_untyped_pointer());
+      Domain domain; domain.dim = args.source_dim;
       long long size = *buffer++;
       assert(size == 2 * args.source_dim);
-      Domain domain; domain.dim = args.source_dim;
-      memcpy(domain.rect_data, buffer, 2 * args.source_dim * sizeof(long long));
+      memcpy(domain.rect_data, buffer, size * sizeof(long long));
       coloring[upgrade_point(c.p)] = domain;
     }
     ip =

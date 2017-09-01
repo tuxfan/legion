@@ -18,7 +18,7 @@
 from __future__ import print_function
 import argparse, os, platform, subprocess
 
-def test(root_dir, install_only, debug, spy, gcov, hdf5, env):
+def test(root_dir, install_only, debug, spy, gcov, hdf5, openmp, env):
     threads = ['-j', '2'] if 'TRAVIS' in env else []
     terra = ['--with-terra', env['TERRA_DIR']] if 'TERRA_DIR' in env else []
     debug_flag = ['--debug'] if debug else []
@@ -42,7 +42,8 @@ def test(root_dir, install_only, debug, spy, gcov, hdf5, env):
         if spy: extra_flags.append('--spy')
         if gcov: extra_flags.append('--run')
         if hdf5: extra_flags.append('--hdf5')
-        if not spy and not gcov and not hdf5: extra_flags.append('--debug')
+        if openmp: extra_flags.append('--openmp')
+        if not spy and not gcov and not hdf5 and not openmp: extra_flags.append('--debug')
 
         subprocess.check_call(
             ['time', './test.py', '-q'] + threads + extra_flags + inner_flag,
@@ -64,11 +65,12 @@ if __name__ == '__main__':
     env = dict(os.environ.iteritems())
     env.update({
         'LG_RT_DIR': runtime_dir,
-        'LUAJIT_URL': 'http://legion.stanford.edu/~eslaught/mirror/LuaJIT-2.0.4.tar.gz',
+        # 'LUAJIT_URL': 'http://legion.stanford.edu/~eslaught/mirror/LuaJIT-2.0.4.tar.gz',
     })
 
     debug = env['DEBUG'] == '1'
     spy = 'TEST_SPY' in env and env['TEST_SPY'] == '1'
     gcov = 'TEST_GCOV' in env and env['TEST_GCOV'] == '1'
     hdf5 = 'TEST_HDF' in env and env['TEST_HDF'] == '1'
-    test(root_dir, args.install_only, debug, spy, gcov, hdf5, env)
+    openmp = 'TEST_OPENMP' in env and env['TEST_OPENMP'] == '1'
+    test(root_dir, args.install_only, debug, spy, gcov, hdf5, openmp, env)

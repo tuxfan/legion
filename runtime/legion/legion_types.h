@@ -285,6 +285,7 @@ namespace Legion {
       LG_SPACE_INDEPENDENCE_TASK_ID,
       LG_PENDING_CHILD_TASK_ID,
       LG_DECREMENT_PENDING_TASK_ID,
+      LG_POST_DECREMENT_TASK_ID,
       LG_SEND_VERSION_STATE_UPDATE_TASK_ID,
       LG_UPDATE_VERSION_STATE_REDUCE_TASK_ID,
       LG_ADD_TO_DEP_QUEUE_TASK_ID,
@@ -380,6 +381,7 @@ namespace Legion {
         "Index Space Independence Test",                          \
         "Remove Pending Child",                                   \
         "Decrement Pending Task",                                 \
+        "Post Decrement Task",                                    \
         "Send Version State Update",                              \
         "Update Version State Reduce",                            \
         "Add to Dependence Queue",                                \
@@ -530,6 +532,7 @@ namespace Legion {
     // Realm resource (e.g. reservation) and therefore 
     // shouldn't be stuck behind anything.
     enum LgPriority {
+      LG_LOW_PRIORITY = -1,
       LG_THROUGHPUT_PRIORITY = 0,
       LG_DEFERRED_THROUGHPUT_PRIORITY = 1,
       LG_LATENCY_PRIORITY = 2,
@@ -650,6 +653,7 @@ namespace Legion {
       SEND_LOGICAL_PARTITION_SEMANTIC_INFO,
       SEND_REMOTE_CONTEXT_REQUEST,
       SEND_REMOTE_CONTEXT_RESPONSE,
+      SEND_REMOTE_CONTEXT_RELEASE,
       SEND_REMOTE_CONTEXT_FREE,
       SEND_REMOTE_CONTEXT_PHYSICAL_REQUEST,
       SEND_REMOTE_CONTEXT_PHYSICAL_RESPONSE,
@@ -664,6 +668,8 @@ namespace Legion {
       SEND_VERSION_MANAGER_INVALIDATE,
       SEND_VERSION_MANAGER_REQUEST,
       SEND_VERSION_MANAGER_RESPONSE,
+      SEND_VERSION_MANAGER_UNVERSIONED_REQUEST,
+      SEND_VERSION_MANAGER_UNVERSIONED_RESPONSE,
       SEND_INSTANCE_REQUEST,
       SEND_INSTANCE_RESPONSE,
       SEND_GC_PRIORITY_UPDATE,
@@ -779,6 +785,7 @@ namespace Legion {
         "Send Logical Partition Semantic Info",                       \
         "Send Remote Context Request",                                \
         "Send Remote Context Response",                               \
+        "Send Remote Context Release",                                \
         "Send Remote Context Free",                                   \
         "Send Remote Context Physical Request",                       \
         "Send Remote Context Physical Response",                      \
@@ -793,6 +800,8 @@ namespace Legion {
         "Send Version Manager Invalidate",                            \
         "Send Version Manager Request",                               \
         "Send Version Manager Response",                              \
+        "Send Version Manager Unversioned Request",                   \
+        "Send Version Manager Unversioned Response",                  \
         "Send Instance Request",                                      \
         "Send Instance Response",                                     \
         "Send GC Priority Update",                                    \

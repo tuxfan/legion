@@ -296,7 +296,10 @@ namespace Legion {
       virtual void register_child_complete(Operation *op) = 0;
       virtual void register_child_commit(Operation *op) = 0; 
       virtual void unregister_child_operation(Operation *op) = 0;
-      virtual void register_fence_dependence(Operation *op) = 0;
+      virtual ApEvent register_fence_dependence(Operation *op) = 0;
+#ifdef LEGION_SPY
+      virtual ApEvent get_fence_precondition(void) const = 0;
+#endif
     public:
       virtual void perform_fence_analysis(FenceOp *op) = 0;
       virtual void update_current_fence(FenceOp *op) = 0;
@@ -315,8 +318,8 @@ namespace Legion {
       virtual void increment_outstanding(void) = 0;
       virtual void decrement_outstanding(void) = 0;
       virtual void increment_pending(void) = 0;
-      virtual RtEvent decrement_pending(TaskOp *child) const = 0;
-      virtual void decrement_pending(void) = 0;
+      virtual RtEvent decrement_pending(TaskOp *child) = 0;
+      virtual RtEvent decrement_pending(bool need_deferral) = 0;
       virtual void increment_frame(void) = 0;
       virtual void decrement_frame(void) = 0;
     public:
@@ -555,6 +558,7 @@ namespace Legion {
     protected:
       RtEvent pending_done;
       bool task_executed;
+      bool has_inline_accessor;
     protected: 
       bool children_complete_invoked;
       bool children_commit_invoked;
@@ -579,6 +583,12 @@ namespace Legion {
       struct DecrementArgs : public LgTaskArgs<DecrementArgs> {
       public:
         static const LgTaskID TASK_ID = LG_DECREMENT_PENDING_TASK_ID;
+      public:
+        InnerContext *parent_ctx;
+      };
+      struct PostDecrementArgs : public LgTaskArgs<PostDecrementArgs> {
+      public:
+        static const LgTaskID TASK_ID = LG_POST_DECREMENT_TASK_ID;
       public:
         InnerContext *parent_ctx;
       };
@@ -860,7 +870,10 @@ namespace Legion {
       virtual void register_child_complete(Operation *op);
       virtual void register_child_commit(Operation *op); 
       virtual void unregister_child_operation(Operation *op);
-      virtual void register_fence_dependence(Operation *op);
+      virtual ApEvent register_fence_dependence(Operation *op);
+#ifdef LEGION_SPY
+      virtual ApEvent get_fence_precondition(void) const;
+#endif
     public:
       virtual void perform_fence_analysis(FenceOp *op);
       virtual void update_current_fence(FenceOp *op);
@@ -878,8 +891,8 @@ namespace Legion {
       virtual void increment_outstanding(void);
       virtual void decrement_outstanding(void);
       virtual void increment_pending(void);
-      virtual RtEvent decrement_pending(TaskOp *child) const;
-      virtual void decrement_pending(void);
+      virtual RtEvent decrement_pending(TaskOp *child);
+      virtual RtEvent decrement_pending(bool need_deferral);
       virtual void increment_frame(void);
       virtual void decrement_frame(void);
     
@@ -961,9 +974,12 @@ namespace Legion {
       unsigned total_children_count; // total number of sub-operations
       unsigned total_close_count; 
       unsigned outstanding_children_count;
-      LegionSet<Operation*,EXECUTING_CHILD_ALLOC>::tracked executing_children;
-      LegionSet<Operation*,EXECUTED_CHILD_ALLOC>::tracked executed_children;
-      LegionSet<Operation*,COMPLETE_CHILD_ALLOC>::tracked complete_children; 
+      LegionMap<Operation*,GenerationID,
+                EXECUTING_CHILD_ALLOC>::tracked executing_children;
+      LegionMap<Operation*,GenerationID,
+                EXECUTED_CHILD_ALLOC>::tracked executed_children;
+      LegionMap<Operation*,GenerationID,
+                COMPLETE_CHILD_ALLOC>::tracked complete_children; 
 #ifdef DEBUG_LEGION
       // In debug mode also keep track of them in context order so
       // we can see what the longest outstanding operation is which
@@ -996,6 +1012,7 @@ namespace Legion {
     protected:
       FenceOp *current_fence;
       GenerationID fence_gen;
+      ApEvent current_fence_event;
     protected:
       // For tracking restricted coherence
       std::list<Restriction*> coherence_restrictions;
@@ -1012,6 +1029,11 @@ namespace Legion {
     protected:
       // Track information for locally allocated fields
       std::map<FieldSpace,std::vector<LocalFieldInfo> > local_fields;
+#ifdef LEGION_SPY
+      // Some help for Legion Spy for validating execution fences
+    protected:
+      std::set<ApEvent> previous_completion_events;
+#endif
     };
 
     /**
@@ -1102,6 +1124,7 @@ namespace Legion {
       virtual void find_parent_version_info(unsigned index, unsigned depth, 
                   const FieldMask &version_mask, VersionInfo &version_info);
       virtual InnerContext* find_parent_physical_context(unsigned index);
+      virtual void invalidate_region_tree_contexts(void);
     public:
       void unpack_local_field_update(Deserializer &derez);
       static void handle_local_field_update(Deserializer &derez);
@@ -1354,7 +1377,10 @@ namespace Legion {
       virtual void register_child_complete(Operation *op);
       virtual void register_child_commit(Operation *op); 
       virtual void unregister_child_operation(Operation *op);
-      virtual void register_fence_dependence(Operation *op);
+      virtual ApEvent register_fence_dependence(Operation *op);
+#ifdef LEGION_SPY
+      virtual ApEvent get_fence_precondition(void) const;
+#endif
     public:
       virtual void perform_fence_analysis(FenceOp *op);
       virtual void update_current_fence(FenceOp *op);
@@ -1372,8 +1398,8 @@ namespace Legion {
       virtual void increment_outstanding(void);
       virtual void decrement_outstanding(void);
       virtual void increment_pending(void);
-      virtual RtEvent decrement_pending(TaskOp *child) const;
-      virtual void decrement_pending(void);
+      virtual RtEvent decrement_pending(TaskOp *child);
+      virtual RtEvent decrement_pending(bool need_deferral);
       virtual void increment_frame(void);
       virtual void decrement_frame(void);
     public:
@@ -1650,7 +1676,10 @@ namespace Legion {
       virtual void register_child_complete(Operation *op);
       virtual void register_child_commit(Operation *op); 
       virtual void unregister_child_operation(Operation *op);
-      virtual void register_fence_dependence(Operation *op);
+      virtual ApEvent register_fence_dependence(Operation *op);
+#ifdef LEGION_SPY
+      virtual ApEvent get_fence_precondition(void) const;
+#endif
     public:
       virtual void perform_fence_analysis(FenceOp *op);
       virtual void update_current_fence(FenceOp *op);
@@ -1668,8 +1697,8 @@ namespace Legion {
       virtual void increment_outstanding(void);
       virtual void decrement_outstanding(void);
       virtual void increment_pending(void);
-      virtual RtEvent decrement_pending(TaskOp *child) const;
-      virtual void decrement_pending(void);
+      virtual RtEvent decrement_pending(TaskOp *child);
+      virtual RtEvent decrement_pending(bool need_deferral);
       virtual void increment_frame(void);
       virtual void decrement_frame(void);
     public:

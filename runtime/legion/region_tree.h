@@ -189,6 +189,7 @@ namespace Legion {
       size_t get_domain_volume(IndexSpace handle);
       bool is_index_partition_disjoint(IndexPartition p);
       bool is_index_partition_complete(IndexPartition p);
+      bool has_index_partition(IndexSpace parent, const ColorPoint &color);
     public:
       void create_field_space(FieldSpace handle);
       void destroy_field_space(FieldSpace handle, AddressSpaceID source);
@@ -344,7 +345,8 @@ namespace Legion {
                                   bool defer_add_users,
                                   bool need_read_only_reservations,
                                   std::set<RtEvent> &map_applied,
-                                  InstanceSet &targets
+                                  InstanceSet &targets,
+                                  const ProjectionInfo *proj_info
 #ifdef DEBUG_LEGION
                                  , const char *log_name
                                  , UniqueID uid
@@ -367,8 +369,8 @@ namespace Legion {
                                   std::set<RtEvent> &map_applied,
                                   const RestrictInfo &restrict_info,
                                   const InstanceSet &targets,
-                                  // projection_epochs can be NULL
-        const LegionMap<ProjectionEpochID,FieldMask>::aligned *projection_epochs
+                                  // projection_info can be NULL
+                                  const ProjectionInfo *projection_info
 #ifdef DEBUG_LEGION
                                   , const char *log_name
                                   , UniqueID uid
@@ -1519,7 +1521,7 @@ namespace Legion {
                                      InnerContext *owner_context,
                                      ClosedNode *closed_tree,
                                      std::set<RtEvent> &ready_events,
-        const LegionMap<ProjectionEpochID,FieldMask>::aligned *epochs); 
+                                     const ProjectionInfo *proj_info);
       // This method will always add valid references to the set of views
       // that are returned.  It is up to the caller to remove the references.
       void find_valid_instance_views(ContextID ctx,
@@ -1872,7 +1874,8 @@ namespace Legion {
       void register_region(const TraversalInfo &info, UniqueID logical_ctx_uid,
                            InnerContext *context, RestrictInfo &restrict_info, 
                            ApEvent term_event, const RegionUsage &usage, 
-                           bool defer_add_users, InstanceSet &targets);
+                           bool defer_add_users, InstanceSet &targets,
+                           const ProjectionInfo *proj_info);
       void seed_state(ContextID ctx, ApEvent term_event,
                              const RegionUsage &usage,
                              const FieldMask &user_mask,

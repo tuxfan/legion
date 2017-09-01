@@ -2528,12 +2528,12 @@ function std.index_type(base_type, displayname)
   return setmetatable(st, index_type)
 end
 
-local struct __int2d { x : int, y : int }
-local struct __int3d { x : int, y : int, z : int }
+struct std.__int2d { x : int, y : int }
+struct std.__int3d { x : int, y : int, z : int }
 std.ptr = std.index_type(opaque, "ptr")
 std.int1d = std.index_type(int, "int1d")
-std.int2d = std.index_type(__int2d, "int2d")
-std.int3d = std.index_type(__int3d, "int3d")
+std.int2d = std.index_type(std.__int2d, "int2d")
+std.int3d = std.index_type(std.__int3d, "int3d")
 
 std.rect1d = std.rect_type(std.int1d)
 std.rect2d = std.rect_type(std.int2d)
@@ -2665,6 +2665,23 @@ std.wild = std.newsymbol(std.wild_type, "wild")
 std.disjoint = ast.disjointness_kind.Disjoint {}
 std.aliased = ast.disjointness_kind.Aliased {}
 
+-- This is used in methods such as subregion_constant where the index
+-- of a subregion has to be munged to make it safe to go in a map.
+local function get_subregion_index(i)
+  if type(i) == "number" or std.is_symbol(i) then
+    return i
+  elseif terralib.isconstant(i) and std.is_index_type(i.type) then
+    -- Terra, pretty please give me the value inside this constant
+    local value = (terra() return i end)()
+    return data.newtuple(
+      unpack(
+        i.type.fields:map(
+          function(field_name) return value.__ptr[field_name] end)))
+  else
+    assert(false)
+  end
+end
+
 function std.partition(disjointness, region_symbol, colors_symbol)
   if colors_symbol == nil then
     colors_symbol = std.newsymbol(std.ispace(std.ptr))
@@ -2699,7 +2716,7 @@ function std.partition(disjointness, region_symbol, colors_symbol)
   st.disjointness = disjointness
   st.parent_region_symbol = region_symbol
   st.colors_symbol = colors_symbol
-  st.subregions = {}
+  st.subregions = data.newmap()
 
   function st:is_disjoint()
     return self.disjointness:is(ast.disjointness_kind.Disjoint)
@@ -2734,7 +2751,7 @@ function std.partition(disjointness, region_symbol, colors_symbol)
   end
 
   function st:subregion_constant(i)
-    assert(type(i) == "number" or std.is_symbol(i))
+    local i = get_subregion_index(i)
     if not self.subregions[i] then
       self.subregions[i] = self:subregion_dynamic()
     end
@@ -2801,7 +2818,7 @@ function std.cross_product(...)
 
   st.is_cross_product = true
   st.partition_symbols = data.newtuple(unpack(partition_symbols))
-  st.subpartitions = {}
+  st.subpartitions = data.newmap()
 
   function st:partitions()
     return self.partition_symbols:map(
@@ -2846,6 +2863,7 @@ function std.cross_product(...)
 
   function st:subpartition_constant(i)
     local region_type = self:subregion_constant(i)
+    local i = get_subregion_index(i)
     if not self.subpartitions[i] then
       local partition = st:subpartition_dynamic(region_type)
       self.subpartitions[i] = partition
@@ -3082,7 +3100,7 @@ std.future = terralib.memoize(function(result_type)
   return st
 end)
 
-std.list = terralib.memoize(function(element_type, partition_type, privilege_depth, region_root, shallow)
+std.list = terralib.memoize(function(element_type, partition_type, privilege_depth, region_root, shallow, barrier_depth)
   if not terralib.types.istype(element_type) then
     error("list expected a type as argument 1, got " .. tostring(element_type))
   end
@@ -3103,6 +3121,10 @@ std.list = terralib.memoize(function(element_type, partition_type, privilege_dep
     error("list expected a boolean as argument 5, got " .. tostring(shallow))
   end
 
+  if barrier_depth and type(barrier_depth) ~= "number" then
+    error("list expected a number as argument 3, got " .. tostring(barrier_depth))
+  end
+
   if region_root and privilege_depth and privilege_depth ~= 0 then
     error("list privilege depth and region root are mutually exclusive")
   end
@@ -3119,6 +3141,7 @@ std.list = terralib.memoize(function(element_type, partition_type, privilege_dep
   st.privilege_depth = privilege_depth or 0
   st.region_root = region_root or false
   st.shallow = shallow or false
+  st.barrier_depth = barrier_depth or false
 
   function st:is_list_of_regions()
     return std.is_region(self.element_type) or
@@ -3610,18 +3633,35 @@ local function make_task_wrapper(task_body)
   end
 end
 
-local function make_normal_layout()
+local max_dim = 3 -- Maximum dimension of an index space supported in Regent
+
+local function make_ordering_constraint(layout, dim)
+  -- This code would need to be taught about higher dimensions if the
+  -- maximum dimension were ever increased.
+  assert(max_dim == 3)
+  assert(dim >= 1 and dim <= max_dim)
+
+  local result = terralib.newlist()
+
+  -- SOA, Fortran array order
+  local dims = terralib.newsymbol(c.legion_dimension_kind_t[dim+1], "dims")
+  result:insert(quote var [dims] end)
+  result:insert(quote dims[0] = c.DIM_X end)
+  if dim >= 2 then result:insert(quote dims[1] = c.DIM_Y end) end
+  if dim >= 3 then result:insert(quote dims[2] = c.DIM_Z end) end
+  result:insert(quote dims[ [dim] ] = c.DIM_F end)
+  result:insert(quote c.legion_layout_constraint_set_add_ordering_constraint([layout], [dims], [dim+1], true) end)
+
+  return result
+end
+
+local function make_normal_layout(dim)
   local layout_id = terralib.newsymbol(c.legion_layout_constraint_id_t, "layout_id")
   return layout_id, quote
     var layout = c.legion_layout_constraint_set_create()
 
     -- SOA, Fortran array order
-    var dims : c.legion_dimension_kind_t[4]
-    dims[0] = c.DIM_X
-    dims[1] = c.DIM_Y
-    dims[2] = c.DIM_Z
-    dims[3] = c.DIM_F
-    c.legion_layout_constraint_set_add_ordering_constraint(layout, dims, 4, true)
+    [make_ordering_constraint(layout, dim)]
 
     -- Normal instance
     c.legion_layout_constraint_set_add_specialized_constraint(
@@ -3659,18 +3699,13 @@ local function make_unconstrained_layout()
   end
 end
 
-local function make_reduction_layout(op_id)
+local function make_reduction_layout(dim, op_id)
   local layout_id = terralib.newsymbol(c.legion_layout_constraint_id_t, "layout_id")
   return layout_id, quote
     var layout = c.legion_layout_constraint_set_create()
 
     -- SOA, Fortran array order
-    var dims : c.legion_dimension_kind_t[4]
-    dims[0] = c.DIM_X
-    dims[1] = c.DIM_Y
-    dims[2] = c.DIM_Z
-    dims[3] = c.DIM_F
-    c.legion_layout_constraint_set_add_ordering_constraint(layout, dims, 4, true)
+    [make_ordering_constraint(layout, dim)]
 
     -- Reduction fold instance
     c.legion_layout_constraint_set_add_specialized_constraint(
@@ -3681,8 +3716,12 @@ local function make_reduction_layout(op_id)
   end
 end
 
-function std.setup(main_task, extra_setup_thunk)
-  assert(std.is_task(main_task))
+function std.setup(main_task, extra_setup_thunk, registration_name)
+  assert(not main_task or std.is_task(main_task))
+
+  if not registration_name then
+    registration_name = "main"
+  end
 
   local reduction_registrations = terralib.newlist()
   for _, op in ipairs(reduction_ops) do
@@ -3697,11 +3736,13 @@ function std.setup(main_task, extra_setup_thunk)
   end
 
   local layout_registrations = terralib.newlist()
-  local layout_normal
+  local layout_normal = data.newmap()
   do
-    local layout_id, layout_actions = make_normal_layout()
-    layout_registrations:insert(layout_actions)
-    layout_normal = layout_id
+    for dim = 1, max_dim do
+      local layout_id, layout_actions = make_normal_layout(dim)
+      layout_registrations:insert(layout_actions)
+      layout_normal[dim] = layout_id
+    end
   end
 
   local layout_virtual
@@ -3718,13 +3759,15 @@ function std.setup(main_task, extra_setup_thunk)
     layout_unconstrained = layout_id
   end
 
-  local layout_reduction = data.new_recursive_map(1)
-  for _, op in ipairs(reduction_ops) do
-    for _, op_type in ipairs(reduction_types) do
-      local op_id = std.reduction_op_ids[op.op][op_type]
-      local layout_id, layout_actions = make_reduction_layout(op_id)
-      layout_registrations:insert(layout_actions)
-      layout_reduction[op.op][op_type] = layout_id
+  local layout_reduction = data.new_recursive_map(2)
+  for dim = 1, max_dim do
+    for _, op in ipairs(reduction_ops) do
+      for _, op_type in ipairs(reduction_types) do
+        local op_id = std.reduction_op_ids[op.op][op_type]
+        local layout_id, layout_actions = make_reduction_layout(dim, op_id)
+        layout_registrations:insert(layout_actions)
+        layout_reduction[dim][op.op][op_type] = layout_id
+      end
     end
   end
 
@@ -3735,6 +3778,27 @@ function std.setup(main_task, extra_setup_thunk)
       local options = variant:get_config_options()
 
       local proc_types = {c.LOC_PROC, c.IO_PROC}
+
+      -- Check if this is an OpenMP task.
+      local openmp = false
+      ast.traverse_node_postorder(
+        function(node)
+          if node:is(ast.typed.stat) and
+            node.annotations.openmp:is(ast.annotation.Demand)
+          then
+            openmp = true
+          end
+        end,
+        variant:has_ast() and variant:get_ast())
+      if openmp then
+        if std.config["openmp-strict"] then
+          proc_types = {c.OMP_PROC}
+        else
+          proc_types = {c.OMP_PROC, c.LOC_PROC}
+        end
+      end
+
+      -- Check if this is a GPU task.
       if variant:is_cuda() then proc_types = {c.TOC_PROC} end
       if std.config["cuda"] and task:is_shard_task() then
         proc_types[#proc_types + 1] = c.TOC_PROC
@@ -3751,17 +3815,18 @@ function std.setup(main_task, extra_setup_thunk)
         local region_i = 0
         for _, param_i in ipairs(std.fn_param_regions_by_index(fn_type)) do
           local param_type = param_types[param_i]
+          local dim = data.max(param_type:ispace().dim, 1)
           local privileges, privilege_field_paths, privilege_field_types, coherences, flags =
             std.find_task_privileges(param_type, task)
           for i, privilege in ipairs(privileges) do
             local field_types = privilege_field_types[i]
 
-            local layout = layout_normal
+            local layout = layout_normal[dim]
             if std.is_reduction_op(privilege) then
               local op = std.get_reduction_op(privilege)
               assert(#field_types == 1)
               local field_type = field_types[1]
-              layout = layout_reduction[op][field_type]
+              layout = layout_reduction[dim][op][field_type]
             end
             if options.inner or variant:is_external() then
               -- No layout constraints for inner tasks
@@ -3808,7 +3873,7 @@ function std.setup(main_task, extra_setup_thunk)
   if std.config["cuda"] and cudahelper.check_cuda_available() then
     cudahelper.link_driver_library()
     local all_kernels = {}
-    tasks:map(function(task)
+    variants:map(function(variant)
       if variant:is_cuda() then
         local kernels = variant:get_cuda_kernels()
         if kernels ~= nil then
@@ -3828,23 +3893,35 @@ function std.setup(main_task, extra_setup_thunk)
     end
   end
 
-  local terra main(argc : int, argv : &rawstring)
+  local argc = terralib.newsymbol(int, "argc")
+  local argv = terralib.newsymbol(&rawstring, "argv")
+
+  local main_setup = quote end
+  if main_task then
+    main_setup = quote
+      c.legion_runtime_set_top_level_task_id([main_task:get_task_id()])
+      return c.legion_runtime_start([argc], [argv], false)
+    end
+  end
+
+  local terra main([argc], [argv])
     [reduction_registrations];
     [layout_registrations];
     [task_registrations];
     [cuda_setup];
     [extra_setup];
-    c.legion_runtime_set_top_level_task_id([main_task:get_task_id()])
-    return c.legion_runtime_start(argc, argv, false)
+    [main_setup]
   end
+  main:setname(registration_name)
 
-  local names = {main = main}
+  local names = {[registration_name] = main}
   return main, names
 end
 
 function std.start(main_task, extra_setup_thunk)
   if std.config["pretty"] then os.exit() end
 
+  assert(std.is_task(main_task))
   local main = std.setup(main_task, extra_setup_thunk)
 
   local args = std.args
@@ -3865,6 +3942,7 @@ function std.start(main_task, extra_setup_thunk)
 end
 
 function std.saveobj(main_task, filename, filetype, extra_setup_thunk, link_flags)
+  assert(std.is_task(main_task))
   local main, names = std.setup(main_task, extra_setup_thunk)
   local lib_dir = os.getenv("LG_RT_DIR") .. "/../bindings/terra"
 
@@ -3876,6 +3954,62 @@ function std.saveobj(main_task, filename, filetype, extra_setup_thunk, link_flag
   else
     terralib.saveobj(filename, names, flags)
   end
+end
+
+local function normalize_name(name)
+  return string.gsub(
+    string.gsub(name, ".*/", ""),
+    "[^A-Za-z0-9]", "_")
+end
+
+local function generate_header(header_filename, registration_name)
+  local header_basename = normalize_name(header_filename)
+  return string.format(
+[[
+#ifndef __%s__
+#define __%s__
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void %s(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // __%s__
+]],
+  header_basename,
+  header_basename,
+  registration_name,
+  header_basename)
+end
+
+local function write_header(header_filename, registration_name)
+  local header = io.open(header_filename, "w")
+  assert(header)
+  header:write(generate_header(header_filename, registration_name))
+  header:close()
+end
+
+function std.save_tasks(header_filename, filename, filetype,
+                       extra_setup_thunk, link_flags)
+  assert(header_filename and filename)
+  local registration_name = normalize_name(header_filename) .. "_register"
+  local _, names = std.setup(nil, extra_setup_thunk, registration_name)
+  local lib_dir = os.getenv("LG_RT_DIR") .. "/../bindings/terra"
+
+  local flags = terralib.newlist()
+  if link_flags then flags:insertall(link_flags) end
+  flags:insertall({"-L" .. lib_dir, "-llegion_terra"})
+  if filetype ~= nil then
+    terralib.saveobj(filename, filetype, names, flags)
+  else
+    terralib.saveobj(filename, names, flags)
+  end
+  write_header(header_filename, registration_name)
 end
 
 -- #####################################

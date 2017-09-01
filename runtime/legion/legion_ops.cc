@@ -91,6 +91,7 @@ namespace Legion {
       completion_event = Runtime::create_ap_user_event();
       if (Runtime::resilient_mode)
         commit_event = Runtime::create_rt_user_event(); 
+      execution_fence_event = ApEvent::NO_AP_EVENT;
       trace = NULL;
       tracing = false;
       must_epoch = NULL;
@@ -907,7 +908,7 @@ namespace Legion {
       if (trace != NULL)
         trace->register_operation(this, gen);
       // See if we have any fence dependences
-      parent_ctx->register_fence_dependence(this);
+      execution_fence_event = parent_ctx->register_fence_dependence(this);
     }
 
     //--------------------------------------------------------------------------
@@ -1078,7 +1079,10 @@ namespace Legion {
 #ifdef DEBUG_LEGION
           // should still have some mapping references
           // if other operations are trying to register dependences
-          assert(outstanding_mapping_references > 0);
+          // This assertion no longer holds because of how we record
+          // fence dependences from context operation lists which 
+          // don't track mapping dependences
+          //assert(outstanding_mapping_references > 0);
 #endif
           // Check to see if we've already recorded this dependence
           std::map<Operation*,GenerationID>::const_iterator finder = 
@@ -1124,15 +1128,17 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void Operation::add_mapping_reference(GenerationID our_gen)
+    bool Operation::add_mapping_reference(GenerationID our_gen)
     //--------------------------------------------------------------------------
     {
       AutoLock o_lock(op_lock);
 #ifdef DEBUG_LEGION
       assert(our_gen <= gen); // better not be ahead of where we are now
 #endif
-      if (our_gen == gen)
-        outstanding_mapping_references++;
+      if (our_gen < gen)
+        return false;
+      outstanding_mapping_references++;
+      return true;
     }
 
     //--------------------------------------------------------------------------
@@ -2260,6 +2266,7 @@ namespace Legion {
       layout_constraint_id = 0;
       outstanding_profiling_requests = 1; // start at 1 to guard
       profiling_reported = RtUserEvent::NO_RT_USER_EVENT;
+      profiling_priority = LG_THROUGHPUT_PRIORITY;
     }
 
     //--------------------------------------------------------------------------
@@ -2382,7 +2389,8 @@ namespace Legion {
                                                 false/*defer add users*/,
                                                 true/*read only locks*/,
                                                 map_applied_conditions,
-                                                mapped_instances
+                                                mapped_instances, 
+                                                NULL/*advance projections*/
 #ifdef DEBUG_LEGION
                                                , get_logging_name()
                                                , unique_op_id
@@ -2406,7 +2414,8 @@ namespace Legion {
                                                 false/*defer add users*/,
                                                 true/*read only locks*/,
                                                 map_applied_conditions,
-                                                mapped_instances
+                                                mapped_instances,
+                                                NULL/*advance projections*/
 #ifdef DEBUG_LEGION
                                                 , get_logging_name()
                                                 , unique_op_id
@@ -2873,6 +2882,7 @@ namespace Legion {
     {
       Mapper::MapInlineInput input;
       Mapper::MapInlineOutput output;
+      output.profiling_priority = LG_THROUGHPUT_PRIORITY;
       if (restrict_info.has_restrictions())
       {
         prepare_for_mapping(restrict_info.get_instances(), 
@@ -2896,9 +2906,12 @@ namespace Legion {
       }
       mapper->invoke_map_inline(this, &input, &output);
       if (!output.profiling_requests.empty())
+      {
         filter_copy_request_kinds(mapper,
             output.profiling_requests.requested_measurements,
             profiling_requests, true/*warn*/);
+        profiling_priority = output.profiling_priority;
+      }
       // Now we have to validate the output
       // Go through the instances and make sure we got one for every field
       // Also check to make sure that none of them are composite instances
@@ -3165,7 +3178,7 @@ namespace Legion {
       Operation *proxy_this = this;
       Realm::ProfilingRequest &request = requests.add_request( 
           runtime->find_utility_group(), LG_MAPPER_PROFILING_ID, 
-          &proxy_this, sizeof(proxy_this));
+          &proxy_this, sizeof(proxy_this), profiling_priority);
       for (std::vector<ProfilingMeasurementID>::const_iterator it = 
             profiling_requests.begin(); it != profiling_requests.end(); it++)
         request.add_measurement((Realm::ProfilingMeasurementID)(*it));
@@ -3458,6 +3471,7 @@ namespace Legion {
       mapper = NULL;
       outstanding_profiling_requests = 1; // start at 1 to guard
       profiling_reported = RtUserEvent::NO_RT_USER_EVENT;
+      profiling_priority = LG_THROUGHPUT_PRIORITY;
       predication_guard = PredEvent::NO_PRED_EVENT;
     }
 
@@ -3738,6 +3752,7 @@ namespace Legion {
       input.dst_instances.resize(dst_requirements.size());
       output.src_instances.resize(src_requirements.size());
       output.dst_instances.resize(dst_requirements.size());
+      output.profiling_priority = LG_THROUGHPUT_PRIORITY;
       // First go through and do the traversals to find the valid instances
       for (unsigned idx = 0; idx < src_requirements.size(); idx++)
       {
@@ -3779,9 +3794,12 @@ namespace Legion {
       }
       mapper->invoke_map_copy(this, &input, &output);
       if (!output.profiling_requests.empty())
+      {
         filter_copy_request_kinds(mapper,
             output.profiling_requests.requested_measurements,
             profiling_requests, true/*warn*/);
+        profiling_priority = output.profiling_priority;
+      }
       // Now we can carry out the mapping requested by the mapper
       // and issue the across copies, first set up the sync precondition
       ApEvent sync_precondition;
@@ -3846,7 +3864,8 @@ namespace Legion {
                                                   false/*defer add users*/,
                                                   true/*read only locks*/,
                                                   map_applied_conditions,
-                                                  src_targets
+                                                  src_targets,
+                                                  get_projection_info(idx, true)
 #ifdef DEBUG_LEGION
                                                   , get_logging_name()
                                                   , unique_op_id
@@ -3873,7 +3892,8 @@ namespace Legion {
                                                 false/*defer add users*/,
                                                 false/*not read only*/,
                                                 map_applied_conditions,
-                                                dst_targets
+                                                dst_targets,
+                                                get_projection_info(idx, false)
 #ifdef DEBUG_LEGION
                                                 , get_logging_name()
                                                 , unique_op_id
@@ -4170,6 +4190,14 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       return (parent_ctx->get_depth() + 1);
+    }
+
+    //--------------------------------------------------------------------------
+    const ProjectionInfo* CopyOp::get_projection_info(unsigned idx, bool src)
+    //--------------------------------------------------------------------------
+    {
+      // No advance projection epochs for normal copy operations
+      return NULL;
     }
 
     //--------------------------------------------------------------------------
@@ -4653,7 +4681,7 @@ namespace Legion {
       Operation *proxy_this = this;
       Realm::ProfilingRequest &request = requests.add_request( 
           runtime->find_utility_group(), LG_MAPPER_PROFILING_ID, 
-          &proxy_this, sizeof(proxy_this));
+          &proxy_this, sizeof(proxy_this), profiling_priority);
       for (std::vector<ProfilingMeasurementID>::const_iterator it = 
             profiling_requests.begin(); it != profiling_requests.end(); it++)
         request.add_measurement((Realm::ProfilingMeasurementID)(*it));
@@ -5185,8 +5213,10 @@ namespace Legion {
       // Record that we are mapped when all our points are mapped
       // and we are executed when all our points are executed
       complete_mapping(Runtime::merge_events(mapped_preconditions));
-      complete_execution(Runtime::protect_event(
-                          Runtime::merge_events(executed_preconditions)));
+      ApEvent done = Runtime::merge_events(executed_preconditions);
+      Runtime::trigger_event(completion_event, done); 
+      need_completion_trigger = false;
+      complete_execution(Runtime::protect_event(done));
     }
 
     //--------------------------------------------------------------------------
@@ -5355,6 +5385,27 @@ namespace Legion {
     }
 #endif
 
+    //--------------------------------------------------------------------------
+    const ProjectionInfo* IndexCopyOp::get_projection_info(unsigned idx, 
+                                                           bool src)
+    //--------------------------------------------------------------------------
+    {
+      if (src)
+      {
+#ifdef DEBUG_LEGION
+        assert(idx < src_projection_infos.size());
+#endif
+        return &src_projection_infos[idx];
+      }
+      else
+      {
+#ifdef DEBUG_LEGION
+        assert(idx < dst_projection_infos.size());
+#endif
+        return &dst_projection_infos[idx]; 
+      }
+    }
+
     /////////////////////////////////////////////////////////////
     // Point Copy Operation 
     /////////////////////////////////////////////////////////////
@@ -5399,6 +5450,7 @@ namespace Legion {
           own->src_requirements.size() + own->dst_requirements.size());
       index_point = p;
       owner = own;
+      execution_fence_event = own->get_execution_fence_event();
       // From Copy
       src_requirements   = owner->src_requirements;
       dst_requirements   = owner->dst_requirements;
@@ -5594,6 +5646,14 @@ namespace Legion {
       }
     }
 
+    //--------------------------------------------------------------------------
+    const ProjectionInfo* PointCopyOp::get_projection_info(unsigned idx, 
+                                                           bool src)
+    //--------------------------------------------------------------------------
+    {
+      return owner->get_projection_info(idx, src);
+    }
+
     /////////////////////////////////////////////////////////////
     // Fence Operation 
     /////////////////////////////////////////////////////////////
@@ -5633,11 +5693,21 @@ namespace Legion {
     void FenceOp::initialize(TaskContext *ctx, FenceKind kind)
     //--------------------------------------------------------------------------
     {
+#ifdef LEGION_SPY
+      execution_precondition = ctx->get_fence_precondition();
+#endif
       initialize_operation(ctx, true/*track*/);
       fence_kind = kind;
       if (Runtime::legion_spy_enabled)
         LegionSpy::log_fence_operation(parent_ctx->get_unique_id(),
                                        unique_op_id);
+    }
+
+    //--------------------------------------------------------------------------
+    bool FenceOp::is_execution_fence(void) const
+    //--------------------------------------------------------------------------
+    {
+      return (fence_kind != MAPPING_FENCE);
     }
 
     //--------------------------------------------------------------------------
@@ -5715,44 +5785,37 @@ namespace Legion {
               if (it->second == it->first->get_generation())
                 trigger_events.insert(complete);
             }
-            RtEvent wait_on = Runtime::protect_merge_events(trigger_events);
-            if (!wait_on.has_triggered())
+#ifdef LEGION_SPY
+            // If we're doing Legion Spy verification, we also need to 
+            // validate that we have all the completion events from ALL
+            // the previous events in the context since the last fence
+            trigger_events.insert(execution_precondition);   
+#endif
+            ApEvent done = Runtime::merge_events(trigger_events);
+            // We can always trigger the completion event when these are done
+            Runtime::trigger_event(completion_event, done);
+            need_completion_trigger = false;
+            if (!done.has_triggered())
             {
-              DeferredExecuteArgs deferred_execute_args;
-              deferred_execute_args.proxy_this = this;
-              runtime->issue_runtime_meta_task(deferred_execute_args,
-                                               LG_LATENCY_PRIORITY,
-                                               this, wait_on);
+              RtEvent wait_on = Runtime::protect_event(done);
+              // Was already handled above
+              if (fence_kind != MIXED_FENCE)
+                complete_mapping(wait_on);
+              complete_execution(wait_on);
             }
             else
-              deferred_execute();
+            {
+              // Was already handled above
+              if (fence_kind != MIXED_FENCE)
+                complete_mapping();
+              complete_execution();
+            }
             break;
           }
         default:
           assert(false); // should never get here
       }
     }
-
-    //--------------------------------------------------------------------------
-    void FenceOp::deferred_execute(void)
-    //--------------------------------------------------------------------------
-    {
-      switch (fence_kind)
-      {
-        case EXECUTION_FENCE:
-          {
-            complete_mapping();
-            // Intentionally fall through
-          }
-        case MIXED_FENCE:
-          {
-            complete_execution();
-            break;
-          }
-        default:
-          assert(false); // should never get here
-      }
-    } 
 
     /////////////////////////////////////////////////////////////
     // Frame Operation 
@@ -5859,9 +5922,19 @@ namespace Legion {
         if (it->second == it->first->get_generation())
           trigger_events.insert(complete);
       }
-      RtEvent wait_on = Runtime::protect_merge_events(trigger_events);
-      if (!wait_on.has_triggered())
+#ifdef LEGION_SPY
+      // If we're doing Legion Spy verification, we also need to 
+      // validate that we have all the completion events from ALL
+      // the previous events in the context since the last fence
+      trigger_events.insert(execution_precondition);   
+#endif
+      ApEvent done = Runtime::merge_events(trigger_events);
+      // We can always trigger the completion event when these are done
+      Runtime::trigger_event(completion_event, done);
+      need_completion_trigger = false;
+      if (!done.has_triggered())
       {
+        RtEvent wait_on = Runtime::protect_event(done);
         DeferredExecuteArgs deferred_execute_args;
         deferred_execute_args.proxy_this = this;
         runtime->issue_runtime_meta_task(deferred_execute_args,
@@ -6638,7 +6711,7 @@ namespace Legion {
         RegionTreePath one_up_path;
         runtime->forest->initialize_path(
                                  child_node->get_parent()->get_row_source(),
-                                 parent_node->get_row_source(), path);
+                                 parent_node->get_row_source(), one_up_path);
         runtime->forest->advance_version_numbers(this, 0/*idx*/,
                                                  true/*update parent state*/,
                                                  parent_is_upper_bound,
@@ -6958,8 +7031,6 @@ namespace Legion {
 #endif
       version_info.clone_to_depth(child_depth-1, close_info.close_mask,
                                   close_info.version_info);
-      const LegionMap<ProjectionEpochID,FieldMask>::aligned *projection_epochs =
-        &(projection_info.get_projection_epochs());
       runtime->forest->physical_perform_close(requirement,
                                               close_info.version_info,
                                               this, 0/*idx*/, 
@@ -6969,7 +7040,7 @@ namespace Legion {
                                               ready_events,
                                               restrict_info,
                                               chosen_instances, 
-                                              projection_epochs
+                                              &projection_info
 #ifdef DEBUG_LEGION
                                               , get_logging_name()
                                               , unique_op_id
@@ -6988,6 +7059,7 @@ namespace Legion {
       mapper = NULL;
       outstanding_profiling_requests = 1; // start at 1 to guard
       profiling_reported = RtUserEvent::NO_RT_USER_EVENT;
+      profiling_priority = LG_THROUGHPUT_PRIORITY;
     }
 
     //--------------------------------------------------------------------------
@@ -7280,6 +7352,7 @@ namespace Legion {
     {
       Mapper::MapCloseInput input;
       Mapper::MapCloseOutput output;
+      output.profiling_priority = LG_THROUGHPUT_PRIORITY;
       // No need to filter for close operations
       if (restrict_info.has_restrictions())
         prepare_for_mapping(restrict_info.get_instances(), 
@@ -7306,9 +7379,12 @@ namespace Legion {
       else // This is the common case
         mapper->invoke_map_close(this, &input, &output);
       if (!output.profiling_requests.empty())
+      {
         filter_copy_request_kinds(mapper,
             output.profiling_requests.requested_measurements,
             profiling_requests, true/*warn*/);
+        profiling_priority = output.profiling_priority;
+      }
       // Now we have to validate the output
       // Make sure we have at least one instance for every field
       RegionTreeID bad_tree = 0;
@@ -7436,7 +7512,7 @@ namespace Legion {
       Operation *proxy_this = this;
       Realm::ProfilingRequest &request = requests.add_request( 
           runtime->find_utility_group(), LG_MAPPER_PROFILING_ID, 
-          &proxy_this, sizeof(proxy_this));
+          &proxy_this, sizeof(proxy_this), profiling_priority);
       for (std::vector<ProfilingMeasurementID>::const_iterator it = 
             profiling_requests.begin(); it != profiling_requests.end(); it++)
         request.add_measurement((Realm::ProfilingMeasurementID)(*it));
@@ -7646,6 +7722,7 @@ namespace Legion {
       mapper = NULL;
       outstanding_profiling_requests = 1; // start at 1 to guard
       profiling_reported = RtUserEvent::NO_RT_USER_EVENT;
+      profiling_priority = LG_THROUGHPUT_PRIORITY;
     }
 
     //--------------------------------------------------------------------------
@@ -7859,7 +7936,7 @@ namespace Legion {
       Operation *proxy_this = this;
       Realm::ProfilingRequest &request = requests.add_request( 
           runtime->find_utility_group(), LG_MAPPER_PROFILING_ID, 
-          &proxy_this, sizeof(proxy_this));
+          &proxy_this, sizeof(proxy_this), profiling_priority);
       for (std::vector<ProfilingMeasurementID>::const_iterator it = 
             profiling_requests.begin(); it != profiling_requests.end(); it++)
         request.add_measurement((Realm::ProfilingMeasurementID)(*it));
@@ -8101,6 +8178,7 @@ namespace Legion {
       mapper = NULL;
       outstanding_profiling_requests = 1; // start at 1 to guard
       profiling_reported = RtUserEvent::NO_RT_USER_EVENT;
+      profiling_priority = LG_THROUGHPUT_PRIORITY;
     }
 
     //--------------------------------------------------------------------------
@@ -8271,7 +8349,8 @@ namespace Legion {
                                               false/*defer add users*/,
                                               false/*not read only*/,
                                               map_applied_conditions,
-                                              mapped_instances
+                                              mapped_instances,
+                                              NULL/*advance projections*/
 #ifdef DEBUG_LEGION
                                               , get_logging_name()
                                               , unique_op_id
@@ -8587,6 +8666,7 @@ namespace Legion {
     {
       Mapper::MapAcquireInput input;
       Mapper::MapAcquireOutput output;
+      output.profiling_priority = LG_THROUGHPUT_PRIORITY;
       if (mapper == NULL)
       {
         Processor exec_proc = parent_ctx->get_executing_processor();
@@ -8594,9 +8674,12 @@ namespace Legion {
       }
       mapper->invoke_map_acquire(this, &input, &output);
       if (!output.profiling_requests.empty())
+      {
         filter_copy_request_kinds(mapper,
             output.profiling_requests.requested_measurements,
             profiling_requests, true/*warn*/);
+        profiling_priority = output.profiling_priority;
+      }
     }
 
     //--------------------------------------------------------------------------
@@ -8610,7 +8693,7 @@ namespace Legion {
       Operation *proxy_this = this;
       Realm::ProfilingRequest &request = requests.add_request( 
           runtime->find_utility_group(), LG_MAPPER_PROFILING_ID, 
-          &proxy_this, sizeof(proxy_this));
+          &proxy_this, sizeof(proxy_this), profiling_priority);
       for (std::vector<ProfilingMeasurementID>::const_iterator it = 
             profiling_requests.begin(); it != profiling_requests.end(); it++)
         request.add_measurement((Realm::ProfilingMeasurementID)(*it));
@@ -8738,6 +8821,7 @@ namespace Legion {
       mapper = NULL;
       outstanding_profiling_requests = 1; // start at 1 to guard
       profiling_reported = RtUserEvent::NO_RT_USER_EVENT;
+      profiling_priority = LG_THROUGHPUT_PRIORITY;
     }
 
     //--------------------------------------------------------------------------
@@ -8908,7 +8992,8 @@ namespace Legion {
                                               false/*defer add users*/,
                                               false/*not read only*/,
                                               map_applied_conditions,
-                                              mapped_instances
+                                              mapped_instances,
+                                              NULL/*advance projections*/
 #ifdef DEBUG_LEGION
                                               , get_logging_name()
                                               , unique_op_id
@@ -9281,6 +9366,7 @@ namespace Legion {
     {
       Mapper::MapReleaseInput input;
       Mapper::MapReleaseOutput output;
+      output.profiling_priority = LG_THROUGHPUT_PRIORITY;
       if (mapper == NULL)
       {
         Processor exec_proc = parent_ctx->get_executing_processor();
@@ -9288,9 +9374,12 @@ namespace Legion {
       }
       mapper->invoke_map_release(this, &input, &output);
       if (!output.profiling_requests.empty())
+      {
         filter_copy_request_kinds(mapper,
             output.profiling_requests.requested_measurements,
             profiling_requests, true/*warn*/);
+        profiling_priority = output.profiling_priority;
+      }
     }
 
     //--------------------------------------------------------------------------
@@ -9304,7 +9393,7 @@ namespace Legion {
       Operation *proxy_this = this;
       Realm::ProfilingRequest &request = requests.add_request( 
           runtime->find_utility_group(), LG_MAPPER_PROFILING_ID, 
-          &proxy_this, sizeof(proxy_this));
+          &proxy_this, sizeof(proxy_this), profiling_priority);
       for (std::vector<ProfilingMeasurementID>::const_iterator it = 
             profiling_requests.begin(); it != profiling_requests.end(); it++)
         request.add_measurement((Realm::ProfilingMeasurementID)(*it));
@@ -12196,7 +12285,8 @@ namespace Legion {
                                                   false/*defer add users*/,
                                                   false/*not read only*/,
                                                   map_applied_conditions,
-                                                  mapped_instances
+                                                  mapped_instances,
+                                                  get_projection_info()
 #ifdef DEBUG_LEGION
                                                   , get_logging_name()
                                                   , unique_op_id
@@ -12283,7 +12373,8 @@ namespace Legion {
                                                 false/*defer add users*/,
                                                 false/*not read only*/,
                                                 map_applied_conditions,
-                                                mapped_instances
+                                                mapped_instances,
+                                                get_projection_info()
 #ifdef DEBUG_LEGION
                                                 , get_logging_name()
                                                 , unique_op_id
@@ -12352,6 +12443,14 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       return merge_restrict_preconditions(grants, wait_barriers);
+    }
+
+    //--------------------------------------------------------------------------
+    const ProjectionInfo* FillOp::get_projection_info(void)
+    //--------------------------------------------------------------------------
+    {
+      // No advance projection info for normal fills
+      return NULL;
     }
 
     //--------------------------------------------------------------------------
@@ -12846,8 +12945,10 @@ namespace Legion {
       // Record that we are mapped when all our points are mapped
       // and we are executed when all our points are executed
       complete_mapping(Runtime::merge_events(mapped_preconditions));
-      complete_execution(Runtime::protect_event(
-                          Runtime::merge_events(executed_preconditions)));
+      ApEvent done = Runtime::merge_events(executed_preconditions);
+      Runtime::trigger_event(completion_event, done);
+      need_completion_trigger = false;
+      complete_execution(Runtime::protect_event(done));
     }
 
     //--------------------------------------------------------------------------
@@ -12947,6 +13048,13 @@ namespace Legion {
     }
 #endif
 
+    //--------------------------------------------------------------------------
+    const ProjectionInfo* IndexFillOp::get_projection_info(void)
+    //--------------------------------------------------------------------------
+    {
+      return &projection_info;
+    }
+
     ///////////////////////////////////////////////////////////// 
     // Point Fill Op 
     /////////////////////////////////////////////////////////////
@@ -12990,6 +13098,7 @@ namespace Legion {
       initialize_operation(own->get_context(), false/*track*/, 1/*regions*/); 
       index_point = p;
       owner = own;
+      execution_fence_event = own->get_execution_fence_event();
       // From Fill
       requirement        = owner->get_requirement();
       grants             = owner->grants;
@@ -13101,6 +13210,13 @@ namespace Legion {
 #endif
       requirement.region = result;
       requirement.handle_type = SINGULAR;
+    }
+
+    //--------------------------------------------------------------------------
+    const ProjectionInfo* PointFillOp::get_projection_info(void)
+    //--------------------------------------------------------------------------
+    {
+      return owner->get_projection_info();
     }
 
     ///////////////////////////////////////////////////////////// 

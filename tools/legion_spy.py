@@ -83,9 +83,9 @@ DEP_PART_OP_KIND = 17
 PENDING_PART_OP_KIND = 18
 DYNAMIC_COLLECTIVE_OP_KIND = 19
 TRACE_OP_KIND = 20
-TIMING_OP_KIND = 21,
-PREDICATE_OP_KIND = 22,
-MUST_EPOCH_OP_KIND = 23,
+TIMING_OP_KIND = 21
+PREDICATE_OP_KIND = 22
+MUST_EPOCH_OP_KIND = 23
 
 OPEN_NONE = 0
 OPEN_READ_ONLY = 1
@@ -113,6 +113,7 @@ OpNames = [
 "Detach Op",
 "Dependent Partition Op",
 "Pending Partition Op",
+"Dynamic Collective Op",
 "Trace Op",
 "Timing Op",
 "Predicate Op",
@@ -3449,8 +3450,9 @@ class LogicalState(object):
                 children_to_close = dict() 
                 # If we're going to do a write discard then
                 # this can be a read only close, but only if
-                # the operation is not predicated
-                overwrite = req.priv == WRITE_ONLY and not op.predicate 
+                # the operation is not predicated and it dominates
+                overwrite = req.priv == WRITE_ONLY and not op.predicate and \
+                               req.logical_node.dominates(self.node)
                 for child,open_mode in self.open_children.iteritems():
                     if open_mode == OPEN_READ_ONLY:                
                         children_to_close[child] = False
@@ -4674,7 +4676,7 @@ class VerificationState(object):
         # Otherwise we can do our normal copy routine from this state 
         if self.valid_instances:
             src = next(iter(self.valid_instances))
-            self.perform_copy_across(src, inst, op, redop, src_depth, src_field, 
+            self.perform_copy_across(src, dst_inst, op, redop, src_depth, src_field, 
                       src_req, dst_depth, dst_field, dst_req, dst_version_number)
         elif self.pending_fill:
             # Should be no reductions here
@@ -5114,6 +5116,11 @@ class Operation(object):
             if field not in close_req.fields:
                 continue 
             if read_only and close.kind != READ_ONLY_CLOSE_OP_KIND:
+                if close.kind == INTER_CLOSE_OP_KIND:
+                    print(("WARNING: Runtime issued a full close operation "
+                          "when it could have only issued a read-only close "
+                          "for requirement %d of %s") % (req.index,str(self)))
+                    return close
                 continue
             if not read_only and close.kind != INTER_CLOSE_OP_KIND:
                 continue
@@ -9414,22 +9421,22 @@ def parse_legion_spy_line(line, state):
         return True
     m = field_space_pat.match(line)
     if m is not None:
-        state.get_field_space(int(m.group('uid'),16))
+        state.get_field_space(int(m.group('uid')))
         return True
     m = field_space_name_pat.match(line)
     if m is not None:
-        space = state.get_field_space(int(m.group('uid'),16))
+        space = state.get_field_space(int(m.group('uid')))
         space.set_name(m.group('name'))
         return True
     m = field_create_pat.match(line)
     if m is not None:
-        space = state.get_field_space(int(m.group('uid'),16))
+        space = state.get_field_space(int(m.group('uid')))
         field = space.get_field(int(m.group('fid')))
         field.size = int(m.group('size'))
         return True
     m = field_name_pat.match(line)
     if m is not None:
-        space = state.get_field_space(int(m.group('uid'),16))
+        space = state.get_field_space(int(m.group('uid')))
         field = space.get_field(int(m.group('fid')))
         field.set_name(m.group('name'))
         return True
@@ -9672,6 +9679,21 @@ class State(object):
                 slice_ = self.slice_slice[slice_]
             assert slice_ in self.slice_index
             self.slice_index[slice_].add_point_task(point)
+        # Add implicit dependencies between point and index operations
+        index_owners = set()
+        for op in self.ops.itervalues():
+            if op.index_owner:
+                index_owners.add(op.index_owner)
+                point_termination = op.finish_event
+                index_termination = op.index_owner.finish_event
+                assert point_termination.exists()
+                assert index_termination.exists()
+                index_termination.add_incoming(point_termination)
+                point_termination.add_outgoing(index_termination)
+        # Remove index operations from the event graph
+        for op in index_owners:
+            op.finish_event.incoming_ops.remove(op)
+            op.finish_event = None
         # Check for any interfering index space launches
         for op in self.ops.itervalues():
             if op.kind == INDEX_TASK_KIND and op.is_interfering_index_space_launch():
@@ -9776,7 +9798,7 @@ class State(object):
         for src in topological_sorter.postorder:
             if self.verbose:
                 print('Simplifying node %s %d of %d' % (str(src), count, 
-                                          len(topological_sorter.order)))
+                                          len(topological_sorter.postorder)))
                 count += 1
             if src.physical_outgoing is None:
                 continue
