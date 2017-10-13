@@ -178,15 +178,20 @@ endif
 
 USE_LLVM ?= 0
 ifeq ($(strip $(USE_LLVM)),1)
-  # prefer 3.5 (actually, require it right now)
-  LLVM_CONFIG ?= $(shell which llvm-config-3.5 llvm-config | head -1)
+  # prefer known-working versions, if they can be named explicitly
+  LLVM_CONFIG ?= $(shell which llvm-config-3.9 llvm-config-3.8 llvm-config-3.6 llvm-config-3.5 llvm-config | head -1)
   ifeq ($(LLVM_CONFIG),)
     $(error cannot find llvm-config-* - set with LLVM_CONFIG if not in path)
   endif
-  CC_FLAGS += -DREALM_USE_LLVM
+  LLVM_VERSION_NUMBER := $(shell $(LLVM_CONFIG) --version | cut -c1,3)
+  CC_FLAGS += -DREALM_USE_LLVM -DREALM_LLVM_VERSION=$(LLVM_VERSION_NUMBER)
   # NOTE: do not use these for all source files - just the ones that include llvm include files
   LLVM_CXXFLAGS ?= -std=c++11 -I$(shell $(LLVM_CONFIG) --includedir)
-  LEGION_LD_FLAGS += $(shell $(LLVM_CONFIG) --ldflags --libs irreader jit mcjit x86)
+  ifeq ($(LLVM_VERSION_NUMBER),35)
+    LEGION_LD_FLAGS += $(shell $(LLVM_CONFIG) --ldflags --libs irreader jit mcjit x86)
+  else
+    LEGION_LD_FLAGS += $(shell $(LLVM_CONFIG) --ldflags --libs irreader mcjit x86)
+  endif
   # llvm-config --system-libs gives you all the libraries you might need for anything,
   #  which includes things we don't need, and might not be installed
   # by default, filter out libedit
@@ -207,6 +212,64 @@ ifeq ($(strip $(USE_OPENMP)),1)
   endif
 endif
 
+USE_PYTHON ?= 0
+ifeq ($(strip $(USE_PYTHON)),1)
+  ifneq ($(strip $(USE_LIBDL)),1)
+    $(error USE_PYTHON requires USE_LIBDL)
+  endif
+
+  # Attempt to auto-detect location of Python shared library based on
+  # the location of Python executable on PATH. We do this because the
+  # shared library may not be on LD_LIBRARY_PATH even when the
+  # executable is on PATH.
+
+  # Note: Set PYTHON_ROOT to an empty string to skip this logic and
+  # defer to the normal search of LD_LIBRARY_PATH instead. Or set
+  # PYTHON_LIB to specify the path to the shared library directly.
+  ifndef PYTHON_LIB
+    ifndef PYTHON_ROOT
+      PYTHON_EXE := $(shell which python)
+      ifeq ($(PYTHON_EXE),)
+        $(error cannot find python - set PYTHON_ROOT if not in PATH)
+      endif
+      PYTHON_ROOT := $(dir $(PYTHON_EXE))
+    endif
+
+    # Try searching for common locations of the Python shared library.
+    ifneq ($(strip $(PYTHON_ROOT)),)
+      PYTHON_LIB := $(PYTHON_ROOT)/libpython2.7.so
+      ifeq ($(wildcard $(PYTHON_LIB)),)
+        PYTHON_LIB := $(abspath $(PYTHON_ROOT)/../lib/libpython2.7.so)
+        ifeq ($(wildcard $(PYTHON_LIB)),)
+          $(warning cannot find libpython2.7.so - falling back to using LD_LIBRARY_PATH)
+          PYTHON_LIB :=
+        endif
+      endif
+    endif
+  endif
+
+  ifneq ($(strip $(PYTHON_LIB)),)
+    ifndef FORCE_PYTHON
+      ifeq ($(wildcard $(PYTHON_LIB)),)
+        $(error cannot find libpython2.7.so - PYTHON_LIB set but file does not exist)
+      else
+        CC_FLAGS += -DREALM_PYTHON_LIB="\"$(PYTHON_LIB)\""
+      endif
+    endif
+  endif
+
+  CC_FLAGS += -DREALM_USE_PYTHON
+endif
+
+USE_DLMOPEN ?= 0
+ifeq ($(strip $(USE_DLMOPEN)),1)
+  ifneq ($(strip $(USE_LIBDL)),1)
+    $(error USE_DLMOPEN requires USE_LIBDL)
+  endif
+
+  CC_FLAGS += -DREALM_USE_DLMOPEN
+endif
+
 # Flags for Realm
 
 # Realm uses CUDA if requested
@@ -223,7 +286,7 @@ endif
 ifeq ($(strip $(USE_CUDA)),1)
 CC_FLAGS        += -DUSE_CUDA
 NVCC_FLAGS      += -DUSE_CUDA
-INC_FLAGS	+= -I$(CUDA)/include 
+INC_FLAGS	+= -I$(CUDA)/include -I$(LG_RT_DIR)/realm/transfer
 ifeq ($(strip $(DEBUG)),1)
 NVCC_FLAGS	+= -DDEBUG_REALM -DDEBUG_LEGION -g -O0
 #NVCC_FLAGS	+= -G
@@ -387,6 +450,7 @@ ASM_SRC		?=
 
 # Set the source files
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/runtime_impl.cc \
+	           $(LG_RT_DIR)/realm/transfer/transfer.cc \
 	           $(LG_RT_DIR)/realm/transfer/channel.cc \
 	           $(LG_RT_DIR)/realm/transfer/channel_disk.cc \
 	           $(LG_RT_DIR)/realm/transfer/lowlevel_dma.cc \
@@ -396,15 +460,20 @@ LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/runtime_impl.cc \
 		   $(LG_RT_DIR)/realm/operation.cc \
 	           $(LG_RT_DIR)/realm/tasks.cc \
 	           $(LG_RT_DIR)/realm/metadata.cc \
+	           $(LG_RT_DIR)/realm/deppart/partitions.cc \
+	           $(LG_RT_DIR)/realm/deppart/sparsity_impl.cc \
+	           $(LG_RT_DIR)/realm/deppart/image.cc \
+	           $(LG_RT_DIR)/realm/deppart/preimage.cc \
+	           $(LG_RT_DIR)/realm/deppart/byfield.cc \
+	           $(LG_RT_DIR)/realm/deppart/setops.cc \
 		   $(LG_RT_DIR)/realm/event_impl.cc \
 		   $(LG_RT_DIR)/realm/rsrv_impl.cc \
 		   $(LG_RT_DIR)/realm/proc_impl.cc \
 		   $(LG_RT_DIR)/realm/mem_impl.cc \
 		   $(LG_RT_DIR)/realm/inst_impl.cc \
-		   $(LG_RT_DIR)/realm/idx_impl.cc \
+		   $(LG_RT_DIR)/realm/inst_layout.cc \
 		   $(LG_RT_DIR)/realm/machine_impl.cc \
 		   $(LG_RT_DIR)/realm/sampling_impl.cc \
-                   $(LG_RT_DIR)/lowlevel.cc \
                    $(LG_RT_DIR)/realm/transfer/lowlevel_disk.cc
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/numa/numa_module.cc \
 		   $(LG_RT_DIR)/realm/numa/numasysif.cc
@@ -414,6 +483,10 @@ LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/openmp/openmp_module.cc \
 		   $(LG_RT_DIR)/realm/openmp/openmp_api.cc
 endif
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/procset/procset_module.cc
+ifeq ($(strip $(USE_PYTHON)),1)
+LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/python/python_module.cc \
+		   $(LG_RT_DIR)/realm/python/python_source.cc
+endif
 ifeq ($(strip $(USE_CUDA)),1)
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/cuda/cuda_module.cc \
 		   $(LG_RT_DIR)/realm/cuda/cudart_hijack.cc
@@ -424,11 +497,10 @@ LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/llvmjit/llvmjit_module.cc \
 endif
 ifeq ($(strip $(USE_HDF)),1)
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/hdf5/hdf5_module.cc \
-		   $(LG_RT_DIR)/realm/hdf5/hdf5_internal.cc
+		   $(LG_RT_DIR)/realm/hdf5/hdf5_internal.cc \
+		   $(LG_RT_DIR)/realm/hdf5/hdf5_access.cc
 endif
-ifeq ($(strip $(USE_GASNET)),1)
-LOW_RUNTIME_SRC += $(LG_RT_DIR)/activemsg.cc
-endif
+LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/activemsg.cc
 GPU_RUNTIME_SRC +=
 
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/logging.cc \
@@ -444,10 +516,6 @@ MAPPER_SRC	+= $(LG_RT_DIR)/mappers/default_mapper.cc \
 		   $(LG_RT_DIR)/mappers/replay_mapper.cc \
 		   $(LG_RT_DIR)/mappers/debug_mapper.cc \
 		   $(LG_RT_DIR)/mappers/wrapper_mapper.cc
-
-ifeq ($(strip $(ALT_MAPPERS)),1)
-MAPPER_SRC	+= $(LG_RT_DIR)/mappers/alt_mappers.cc
-endif
 
 HIGH_RUNTIME_SRC += $(LG_RT_DIR)/legion/legion.cc \
 		    $(LG_RT_DIR)/legion/legion_c.cc \

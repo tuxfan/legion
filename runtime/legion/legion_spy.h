@@ -18,7 +18,6 @@
 #define __LEGION_SPY_H__
 
 #include "realm.h"
-#include "utilities.h"
 #include "legion_types.h"
 #include "legion_utilities.h"
 
@@ -98,13 +97,10 @@ namespace Legion {
       }
 
       static inline void log_index_partition(IDType parent_id, 
-                IDType unique_id, bool disjoint, const DomainPoint& point)
+                IDType unique_id, bool disjoint, LegionColor point)
       {
-        log_spy.print("Index Partition " IDFMT " " IDFMT " %u %u %d %d %d",
-		      parent_id, unique_id, disjoint, point.dim, 
-                    (int)point.point_data[0],
-                    (int)point.point_data[1],
-                    (int)point.point_data[2]);
+        log_spy.print("Index Partition " IDFMT " " IDFMT " %u %lld",
+		      parent_id, unique_id, disjoint, point); 
       }
 
       static inline void log_index_partition_name(IDType unique_id,
@@ -115,13 +111,13 @@ namespace Legion {
       }
 
       static inline void log_index_subspace(IDType parent_id, 
-                              IDType unique_id, const DomainPoint& point)
+                              IDType unique_id, const DomainPoint &point)
       {
         log_spy.print("Index Subspace " IDFMT " " IDFMT " %u %d %d %d",
-		      parent_id, unique_id, point.dim, 
-		      (int)point.point_data[0],
-		      (int)point.point_data[1],
-		      (int)point.point_data[2]);
+		      parent_id, unique_id, point.dim,
+                      (int)point.point_data[0],
+                      (int)point.point_data[1],
+                      (int)point.point_data[2]);
       }
 
       static inline void log_field_space(unsigned unique_id)
@@ -175,28 +171,30 @@ namespace Legion {
       }
 
       // For capturing information about the shape of index spaces
-      template<int DIM>
-      static inline void log_index_space_point(IDType handle, 
-                                               long long int *vals)
+      template<int DIM, typename T>
+      static inline void log_index_space_point(IDType handle,
+                                    const Point<DIM,T> &point)
       {
-        log_spy.print("Index Space Point " IDFMT " %d %lld %lld %lld", handle, 
-		      DIM, vals[0],
-		      DIM < 2 ? 0 : vals[1],
-		      DIM < 3 ? 0 : vals[2]);
+        LEGION_STATIC_ASSERT(DIM <= 3);
+        log_spy.print("Index Space Point " IDFMT " %d %lld %lld %lld", handle,
+                      DIM, (long long)(point[0]), 
+                      (long long)((DIM < 2) ? 0 : point[1]),
+                      (long long)((DIM < 3) ? 0 : point[2]));
       }
 
-      template<int DIM>
+      template<int DIM, typename T>
       static inline void log_index_space_rect(IDType handle, 
-                                              long long int *lower, 
-                                              long long int *higher)
+                                              const Rect<DIM,T> &rect)
       {
+        LEGION_STATIC_ASSERT(DIM <= 3);
         log_spy.print("Index Space Rect " IDFMT " %d "
-		      "%lld %lld %lld %lld %lld %lld",
-		      handle, DIM, lower[0],
-		      DIM < 2 ? 0 : lower[1], 
-		      DIM < 3 ? 0 : lower[2], higher[0],
-		      DIM < 2 ? 0 : higher[1],
-		      DIM < 3 ? 0 : higher[2]);
+                      "%lld %lld %lld %lld %lld %lld", handle, DIM, 
+                      (long long)(rect.lo[0]),
+                      (long long)((DIM < 2) ? 0 : rect.lo[1]), 
+                      (long long)((DIM < 3) ? 0 : rect.lo[2]), 
+                      (long long)(rect.hi[0]), 
+                      (long long)((DIM < 2) ? 0 : rect.hi[1]), 
+                      (long long)((DIM < 3) ? 0 : rect.hi[2]));
       }
 
       static inline void log_empty_index_space(IDType handle)
@@ -485,18 +483,18 @@ namespace Legion {
                       unique_id, index, pid);
       }
 
-      template<int DIM>
-      static inline void log_launch_index_space_rect(UniqueID unique_id,
-                                                     long long int *lower, 
-                                                     long long int *higher)
+      template<int DIM, typename T>
+      static inline void log_launch_index_space_rect(UniqueID unique_id, 
+                                                     const Rect<DIM,T> &rect)
       {
-        log_spy.print("Index Launch Rect %llu %d "
-                      "%lld %lld %lld %lld %lld %lld",
-		      unique_id, DIM, lower[0],
-		      DIM < 2 ? 0 : lower[1], 
-		      DIM < 3 ? 0 : lower[2], higher[0],
-		      DIM < 2 ? 0 : higher[1],
-		      DIM < 3 ? 0 : higher[2]);
+        LEGION_STATIC_ASSERT(DIM <= 3);
+        log_spy.print() << "Index Launch Rect " << unique_id << " "
+                        << DIM << " " << rect.lo[0]
+                        << " " << ((DIM < 2) ? 0 : rect.lo[1])
+                        << " " << ((DIM < 3) ? 0 : rect.lo[2])
+                        << " " << rect.hi[0]
+                        << " " << ((DIM < 2) ? 0 : rect.hi[1])
+                        << " " << ((DIM < 3) ? 0 : rect.hi[2]);
       }
 
       // Logger calls for futures
@@ -506,8 +504,9 @@ namespace Legion {
       {
         log_spy.print("Future Creation %llu " IDFMT " %u %d %d %d",
                       creator_id, future_event.id, point.dim,
-                      (int)point.point_data[0], (int)point.point_data[1],
-                      (int)point.point_data[2]);
+                      (int)point.point_data[0], 
+                      (point.dim > 1) ? (int)point.point_data[1] : 0,
+                      (point.dim > 2) ? (int)point.point_data[2] : 0);
       }
 
       static inline void log_future_use(UniqueID user_id, 
@@ -764,14 +763,12 @@ namespace Legion {
 
       static inline void log_ap_user_event_trigger(ApUserEvent event)
       {
-        log_spy.print("Ap User Event Trigger " IDFMT,
-		      event.id);
+        log_spy.print("Ap User Event Trigger " IDFMT, event.id);
       }
 
       static inline void log_rt_user_event_trigger(RtUserEvent event)
       {
-        log_spy.print("Rt User Event Trigger " IDFMT,
-		      event.id);
+        log_spy.print("Rt User Event Trigger " IDFMT, event.id);
       }
 
       static inline void log_pred_event_trigger(PredEvent event)
@@ -802,8 +799,7 @@ namespace Legion {
                                         IDType dst, ReductionOpID redop)
       {
         log_spy.print("Copy Field " IDFMT " %d " IDFMT " %d " IDFMT " %d",
-                      post.id,
-		      src_fid, src, dst_fid, dst, redop);
+                      post.id, src_fid, src, dst_fid, dst, redop);
       }
 
       static inline void log_copy_intersect(LgEvent post, int is_region,
@@ -811,8 +807,7 @@ namespace Legion {
                                             unsigned tree_id)
       {
         log_spy.print("Copy Intersect " IDFMT " %d " IDFMT " %d %d",
-                      post.id,
-		      is_region, index, field, tree_id);
+                      post.id, is_region, index, field, tree_id);
       }
 
       static inline void log_fill_events(UniqueID op_unique_id,
@@ -837,9 +832,21 @@ namespace Legion {
                                             unsigned tree_id)
       {
         log_spy.print("Fill Intersect " IDFMT " %d " IDFMT " %d %d",
-		      post.id,
-		      is_region, index, field, tree_id);
+		      post.id, is_region, index, field, tree_id);
       } 
+
+      static inline void log_deppart_events(UniqueID op_unique_id,
+                                            IndexSpace handle,
+                                            LgEvent pre, LgEvent post)
+      {
+        // Realm has an optimization where if it can do the deppart op
+        // immediately it just returns the precondition as the postcondition
+        // which of course breaks Legion Spy's way of logging deppart
+        // operations uniquely as their completion event
+        assert(pre != post);
+        log_spy.print("Deppart Events %llu %d " IDFMT " " IDFMT,
+                      op_unique_id, handle.get_id(), pre.id, post.id);
+      }
 #endif
     }; // namespace LegionSpy
 

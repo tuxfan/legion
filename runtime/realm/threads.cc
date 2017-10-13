@@ -26,6 +26,7 @@
 #endif
 
 #include <pthread.h>
+#include <errno.h>
 // for PTHREAD_STACK_MIN
 #include <limits.h>
 #ifdef __MACH__
@@ -69,6 +70,17 @@ inline void makecontext_wrap(ucontext_t *u, void (*fn)(), int args, ...) { makec
 #ifdef REALM_USE_HWLOC
 #include <hwloc/linux.h>
 #endif
+#endif
+
+#ifndef CHECK_LIBC
+#define CHECK_LIBC(cmd) do { \
+  errno = 0; \
+  int ret = (cmd); \
+  if(ret != 0) { \
+    std::cerr << "ERROR: " __FILE__ ":" << __LINE__ << ": " #cmd " = " << ret << " (" << strerror(errno) << ")" << std::endl;	\
+    assert(0); \
+  } \
+} while(0)
 #endif
 
 #ifndef CHECK_PTHREAD
@@ -551,11 +563,7 @@ namespace Realm {
     act.sa_sigaction = &signal_handler;
     act.sa_flags = SA_SIGINFO;
 
-#ifndef NDEBUG
-    int ret =
-#endif
-              sigaction(handler_signal, &act, 0);
-    assert(ret == 0);
+    CHECK_LIBC( sigaction(handler_signal, &act, 0) );
   }
 
   void Thread::signal(Signal sig, bool asynchronous)
@@ -932,7 +940,7 @@ namespace Realm {
     stack_base = malloc(stack_size);
     assert(stack_base != 0);
 
-    getcontext(&ctx);
+    CHECK_LIBC( getcontext(&ctx) );
 
     ctx.uc_link = 0; // we don't expect it to ever fall through
     ctx.uc_stack.ss_sp = stack_base;
@@ -980,14 +988,7 @@ namespace Realm {
       ThreadLocal::current_host_thread = ThreadLocal::current_thread;
       ThreadLocal::current_thread = switch_to;
 
-#ifndef NDEBUG
-      int ret =
-#endif
-	swapcontext(&host_ctx, &switch_to->ctx);
-
-      // if we return with a value of 0, that means we were (eventually) given control
-      //  back, as we hoped
-      assert(ret == 0);
+      CHECK_LIBC( swapcontext(&host_ctx, &switch_to->ctx) );
 
       assert(ThreadLocal::current_user_thread == 0);
       assert(ThreadLocal::host_context == &host_ctx);
@@ -1006,11 +1007,7 @@ namespace Realm {
 	ThreadLocal::current_thread = switch_to;
 
 	// a switch between two user contexts - nice and simple
-#ifndef NDEBUG
-	int ret =
-#endif
-	  swapcontext(&switch_from->ctx, &switch_to->ctx);
-	assert(ret == 0);
+	CHECK_LIBC( swapcontext(&switch_from->ctx, &switch_to->ctx) );
 
 	assert(switch_from->running == false);
 	switch_from->host_pthread = pthread_self();
@@ -1022,11 +1019,7 @@ namespace Realm {
 	ThreadLocal::current_thread = ThreadLocal::current_host_thread;
 	ThreadLocal::current_host_thread = 0;
 
-#ifndef NDEBUG
-	int ret =
-#endif
-	  swapcontext(&switch_from->ctx, ThreadLocal::host_context);
-	assert(ret == 0);
+	CHECK_LIBC( swapcontext(&switch_from->ctx, ThreadLocal::host_context) );
 
 	// if we get control back
 	assert(switch_from->running == false);

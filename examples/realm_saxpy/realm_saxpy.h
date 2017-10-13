@@ -16,14 +16,15 @@
 #ifndef __REALM_SAXPY__
 #define __REALM_SAXPY__
 
-#include "utilities.h"
-#include "accessor.h"
-#include "arrays.h"
 #include "realm.h"
 
 using namespace Realm;
-using namespace LegionRuntime::Arrays;
-using namespace LegionRuntime::Accessor;
+
+enum {
+  FID_X = 101,
+  FID_Y = 102,
+  FID_Z = 103,
+};
 
 struct SaxpyArgs {
 public:

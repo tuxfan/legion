@@ -213,6 +213,40 @@ function pretty.expr_function(cx, node)
     name = node.value:get_name():mkstring(".")
   elseif terralib.isfunction(node.value) then
     name = node.value:getname()
+  elseif node.value == _G['array'] or node.value == _G['arrayof'] then
+    name = 'array'
+  elseif node.value == _G['vector'] or node.value == _G['vectorof'] then
+    name = 'vector'
+  elseif node.value == _G['tuple'] then
+    name = 'tuple'
+  elseif regentlib.is_math_op(node.value) then
+    -- HACK: This information should be exported from std.t
+    name =
+      node.value == regentlib.ceil(double)  and '[regentlib.ceil(double)]'  or
+      node.value == regentlib.cos(double)   and '[regentlib.cos(double)]'   or
+      node.value == regentlib.exp(double)   and '[regentlib.exp(double)]'   or
+      node.value == regentlib.exp2(double)  and '[regentlib.exp2(double)]'  or
+      node.value == regentlib.fabs(double)  and '[regentlib.fabs(double)]'  or
+      node.value == regentlib.floor(double) and '[regentlib.floor(double)]' or
+      node.value == regentlib.log(double)   and '[regentlib.log(double)]'   or
+      node.value == regentlib.log2(double)  and '[regentlib.log2(double)]'  or
+      node.value == regentlib.log10(double) and '[regentlib.log10(double)]' or
+      node.value == regentlib.sin(double)   and '[regentlib.sin(double)]'   or
+      node.value == regentlib.sqrt(double)  and '[regentlib.sqrt(double)]'  or
+      node.value == regentlib.trunc(double) and '[regentlib.trunc(double)]' or
+      node.value == regentlib.ceil(float)   and '[regentlib.ceil(float)]'   or
+      node.value == regentlib.cos(float)    and '[regentlib.cos(float)]'    or
+      node.value == regentlib.exp(float)    and '[regentlib.exp(float)]'    or
+      node.value == regentlib.exp2(float)   and '[regentlib.exp2(float)]'   or
+      node.value == regentlib.fabs(float)   and '[regentlib.fabs(float)]'   or
+      node.value == regentlib.floor(float)  and '[regentlib.floor(float)]'  or
+      node.value == regentlib.log(float)    and '[regentlib.log(float)]'    or
+      node.value == regentlib.log2(float)   and '[regentlib.log2(float)]'   or
+      node.value == regentlib.log10(float)  and '[regentlib.log10(float)]'  or
+      node.value == regentlib.sin(float)    and '[regentlib.sin(float)]'    or
+      node.value == regentlib.sqrt(float)   and '[regentlib.sqrt(float)]'   or
+      node.value == regentlib.trunc(float)  and '[regentlib.trunc(float)]'  or
+      assert(false)
   else
     name = tostring(node.value)
   end
@@ -327,11 +361,12 @@ function pretty.expr_region(cx, node)
 end
 
 function pretty.expr_partition(cx, node)
-  return join({
-      "partition(",
-      commas({tostring(node.disjointness),
-              pretty.expr(cx, node.region), pretty.expr(cx, node.coloring)}),
-      ")"})
+  local args = terralib.newlist()
+  args:insert(tostring(node.disjointness))
+  args:insert(pretty.expr(cx, node.region))
+  args:insert(pretty.expr(cx, node.coloring))
+  if node.colors then args:insert(pretty.expr(cx, node.colors)) end
+  return join({"partition(", commas(args), ")"})
 end
 
 function pretty.expr_partition_equal(cx, node)
@@ -908,10 +943,13 @@ function pretty.stat_index_launch_list(cx, node)
 end
 
 function pretty.stat_var(cx, node)
-  local symbols = commas(node.symbols:map(function(symbol) return tostring(symbol) end))
-  local types = commas(node.types:map(function(type) return tostring(type) end))
-  local assign = #node.values > 0 and "="
-  return join({"var", symbols, ":", types, assign, pretty.expr_list(cx, node.values)}, true)
+  local decls = terralib.newlist()
+  decls:insert(join({tostring(node.symbol), ":", tostring(node.type)}, true))
+  if node.value then
+    return join({"var", commas(decls), "=", pretty.expr(cx, node.value)}, true)
+  else
+    return join({"var", commas(decls)}, true)
+  end
 end
 
 function pretty.stat_var_unpack(cx, node)
@@ -929,11 +967,11 @@ function pretty.stat_break(cx, node)
 end
 
 function pretty.stat_assignment(cx, node)
-  return join({pretty.expr_list(cx, node.lhs), "=", pretty.expr_list(cx, node.rhs)}, true)
+  return join({pretty.expr(cx, node.lhs), "=", pretty.expr(cx, node.rhs)}, true)
 end
 
 function pretty.stat_reduce(cx, node)
-  return join({pretty.expr_list(cx, node.lhs), node.op .. "=", pretty.expr_list(cx, node.rhs)}, true)
+  return join({pretty.expr(cx, node.lhs), node.op .. "=", pretty.expr(cx, node.rhs)}, true)
 end
 
 function pretty.stat_expr(cx, node)

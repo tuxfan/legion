@@ -29,11 +29,9 @@
  * \file legion.h
  * Legion C++ API
  */
-#ifdef LEGION_CMAKE
-#include "legion_defines.h"
-#endif
 
 #include "legion_types.h"
+#include "legion_domain.h"
 #include "legion_constraint.h"
 
 // temporary helper macro to turn link errors into runtime errors
@@ -62,7 +60,7 @@ namespace Legion {
     protected:
       // Only the runtime should be allowed to make these
       FRIEND_ALL_RUNTIME_CLASSES
-      IndexSpace(IndexSpaceID id, IndexTreeID tid);
+      IndexSpace(IndexSpaceID id, IndexTreeID tid, TypeTag tag);
     public:
       IndexSpace(void);
       IndexSpace(const IndexSpace &rhs);
@@ -75,11 +73,31 @@ namespace Legion {
       inline IndexSpaceID get_id(void) const { return id; }
       inline IndexTreeID get_tree_id(void) const { return tid; }
       inline bool exists(void) const { return (id != 0); }
-    private:
+      inline TypeTag get_type_tag(void) const { return type_tag; }
+    protected:
       friend std::ostream& operator<<(std::ostream& os, 
                                       const IndexSpace& is);
       IndexSpaceID id;
       IndexTreeID tid;
+      TypeTag type_tag;
+    };
+
+    /**
+     * \class IndexSpaceT
+     * A templated index space that captures the dimension
+     * and coordinate type of an index space as template
+     * parameters for enhanced type checking and efficiency.
+     */
+    template<int DIM, typename COORD_T = coord_t>
+    class IndexSpaceT : public IndexSpace {
+    protected:
+      // Only the runtime should be allowed to make these
+      FRIEND_ALL_RUNTIME_CLASSES
+      IndexSpaceT(IndexSpaceID id, IndexTreeID tid);
+    public:
+      IndexSpaceT(void);
+      IndexSpaceT(const IndexSpaceT &rhs);  
+      explicit IndexSpaceT(const IndexSpace &rhs);
     };
 
     /**
@@ -94,7 +112,7 @@ namespace Legion {
     protected:
       // Only the runtime should be allowed to make these
       FRIEND_ALL_RUNTIME_CLASSES
-      IndexPartition(IndexPartitionID id, IndexTreeID tid);
+      IndexPartition(IndexPartitionID id, IndexTreeID tid, TypeTag tag);
     public:
       IndexPartition(void);
       IndexPartition(const IndexPartition &rhs);
@@ -107,11 +125,31 @@ namespace Legion {
       inline IndexPartitionID get_id(void) const { return id; }
       inline IndexTreeID get_tree_id(void) const { return tid; }
       inline bool exists(void) const { return (id != 0); }
-    public:
+      inline TypeTag get_type_tag(void) const { return type_tag; }
+    protected:
       friend std::ostream& operator<<(std::ostream& os, 
                                       const IndexPartition& ip);
       IndexPartitionID id;
       IndexTreeID tid;
+      TypeTag type_tag;
+    };
+
+    /**
+     * \class IndexPartitionT
+     * A templated index partition that captures the dimension
+     * and coordinate type of an index partition as template
+     * parameters for enhanced type checking and efficiency
+     */
+    template<int DIM, typename COORD_T = coord_t>
+    class IndexPartitionT : public IndexPartition {
+    protected:
+      // Only the runtime should be allowed to make these
+      FRIEND_ALL_RUNTIME_CLASSES
+      IndexPartitionT(IndexPartitionID id, IndexTreeID tid);
+    public:
+      IndexPartitionT(void);
+      IndexPartitionT(const IndexPartitionT &rhs);
+      explicit IndexPartitionT(const IndexPartition &rhs);
     };
 
     /**
@@ -180,13 +218,33 @@ namespace Legion {
       inline FieldSpace get_field_space(void) const { return field_space; }
       inline RegionTreeID get_tree_id(void) const { return tree_id; }
       inline bool exists(void) const { return (tree_id != 0); } 
-    private:
+      inline TypeTag get_type_tag(void) const 
+        { return index_space.get_type_tag(); }
+    protected:
       friend std::ostream& operator<<(std::ostream& os, 
                                       const LogicalRegion& lr);
       // These are private so the user can't just arbitrarily change them
       RegionTreeID tree_id;
       IndexSpace index_space;
       FieldSpace field_space;
+    };
+
+    /**
+     * \class LogicalRegionT
+     * A templated logical region that captures the dimension
+     * and coordinate type of a logical region as template
+     * parameters for enhanced type checking and efficiency.
+     */
+    template<int DIM, typename COORD_T = coord_t>
+    class LogicalRegionT : public LogicalRegion {
+    protected:
+      // Only the runtime should be allowed to make these
+      FRIEND_ALL_RUNTIME_CLASSES
+      LogicalRegionT(RegionTreeID tid, IndexSpace index, FieldSpace field);
+    public:
+      LogicalRegionT(void);
+      LogicalRegionT(const LogicalRegionT &rhs);
+      explicit LogicalRegionT(const LogicalRegion &rhs);
     };
 
     /**
@@ -225,7 +283,9 @@ namespace Legion {
       inline FieldSpace get_field_space(void) const { return field_space; }
       inline RegionTreeID get_tree_id(void) const { return tree_id; }
       inline bool exists(void) const { return (tree_id != 0); }
-    private:
+      inline TypeTag get_type_tag(void) const 
+        { return index_partition.get_type_tag(); }
+    protected:
       friend std::ostream& operator<<(std::ostream& os, 
                                       const LogicalPartition& lp);
       // These are private so the user can't just arbitrary change them
@@ -234,9 +294,78 @@ namespace Legion {
       FieldSpace field_space;
     };
 
+    /**
+     * \class LogicalPartitionT
+     * A templated logical partition that captures the dimension
+     * and coordinate type of an logical partition as template
+     * parameters for enhanced type checking and efficiency
+     */
+    template<int DIM, typename COORD_T = coord_t>
+    class LogicalPartitionT : public LogicalPartition {
+    protected:
+      // Only the runtime should be allowed to make these
+      FRIEND_ALL_RUNTIME_CLASSES
+      LogicalPartitionT(RegionTreeID tid, IndexPartition pid, FieldSpace field);
+    public:
+      LogicalPartitionT(void);
+      LogicalPartitionT(const LogicalPartitionT &rhs);
+      explicit LogicalPartitionT(const LogicalPartition &rhs);
+    };
+
     //==========================================================================
     //                       Data Allocation Classes
     //==========================================================================
+
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
+    /**
+     * \class IndexIterator
+     * This is a helper class for iterating over the points within
+     * an index space or the index space of a given logical region.
+     * It should never be copied and will assert fail if a copy is
+     * made of it.
+     */
+    class LEGION_DEPRECATED("Use DomainPointIterator instead") IndexIterator {
+    public:
+      IndexIterator(void);
+      IndexIterator(const Domain &dom, ptr_t start = ptr_t());
+      IndexIterator(Runtime *rt, Context ctx, 
+                    IndexSpace space, ptr_t start = ptr_t());
+      IndexIterator(Runtime *rt, Context ctx, 
+                    LogicalRegion lr, ptr_t start = ptr_t());
+      IndexIterator(Runtime *rt,
+                    IndexSpace space, ptr_t start = ptr_t());
+      IndexIterator(const IndexIterator &rhs);
+      ~IndexIterator(void);
+    public:
+      /**
+       * Check to see if the iterator has a next point
+       */
+      inline bool has_next(void) const;
+      /**
+       * Get the current point in the iterator.  Advances
+       * the iterator to the next point.
+       */
+      inline ptr_t next(void);
+      /**
+       * Get the current point in the iterator and up to 'req_count'
+       * additional points in the index space.  Returns the actual
+       * count of contiguous points in 'act_count'.
+       */
+      inline ptr_t next_span(size_t& act_count, 
+                             size_t req_count = (size_t)-1LL);
+    public:
+      IndexIterator& operator=(const IndexIterator &rhs);
+    private:
+      Realm::IndexSpaceIterator<1,coord_t> is_iterator;
+      Realm::PointInRectIterator<1,coord_t> rect_iterator;
+    };
 
     /**
      * \class IndexAllocator
@@ -254,7 +383,8 @@ namespace Legion {
      *
      * @see Runtime
      */
-    class IndexAllocator : public Unserializable<IndexAllocator> {
+    class LEGION_DEPRECATED("Dynamic IndexAllocators are no longer supported")
+      IndexAllocator : public Unserializable<IndexAllocator> {
     public:
       IndexAllocator(void);
       IndexAllocator(const IndexAllocator &allocator);
@@ -262,7 +392,7 @@ namespace Legion {
     protected:
       FRIEND_ALL_RUNTIME_CLASSES
       // Only the Runtime should be able to make these
-      IndexAllocator(IndexSpace space, IndexSpaceAllocator *allocator);
+      IndexAllocator(IndexSpace space, IndexIterator iterator);
     public:
       IndexAllocator& operator=(const IndexAllocator &allocator);
       inline bool operator<(const IndexAllocator &rhs) const;
@@ -272,20 +402,28 @@ namespace Legion {
        * @param num_elements number of elements to allocate
        * @return pointer to the first element in the allocated block
        */
-      inline ptr_t alloc(unsigned num_elements = 1);
+      LEGION_DEPRECATED("Dynamic allocation is no longer supported")
+      ptr_t alloc(unsigned num_elements = 1);
       /**
        * @param ptr pointer to the first element to free
        * @param num_elements number of elements to be freed
        */
-      inline void free(ptr_t ptr, unsigned num_elements = 1);
+      LEGION_DEPRECATED("Dynamic allocation is no longer supported")
+      void free(ptr_t ptr, unsigned num_elements = 1);
       /**
        * @return the index space associated with this allocator
        */
       inline IndexSpace get_index_space(void) const { return index_space; }
     private:
       IndexSpace index_space;
-      IndexSpaceAllocator *allocator;
+      IndexIterator iterator;
     };
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
     /**
      * \class FieldAllocator
@@ -1266,6 +1404,14 @@ namespace Legion {
                         bool must = false,
                         MapperID id = 0,
                         MappingTagID tag = 0);
+      IndexTaskLauncher(Processor::TaskFuncID tid,
+                        IndexSpace launch_space,
+                        TaskArgument global_arg,
+                        ArgumentMap map,
+                        Predicate pred = Predicate::TRUE_PRED,
+                        bool must = false,
+                        MapperID id = 0,
+                        MappingTagID tag = 0);
     public:
       inline IndexSpaceRequirement&
                   add_index_requirement(const IndexSpaceRequirement &req);
@@ -1287,6 +1433,7 @@ namespace Legion {
     public:
       Processor::TaskFuncID              task_id;
       Domain                             launch_domain;
+      IndexSpace                         launch_space;
       std::vector<IndexSpaceRequirement> index_requirements;
       std::vector<RegionRequirement>     region_requirements;
       std::vector<Future>                futures;
@@ -1349,7 +1496,16 @@ namespace Legion {
     public:
       inline void add_field(FieldID fid, bool inst = true);
     public:
+      inline void add_grant(Grant g);
+      inline void add_wait_barrier(PhaseBarrier bar);
+      inline void add_arrival_barrier(PhaseBarrier bar);
+      inline void add_wait_handshake(MPILegionHandshake handshake);
+      inline void add_arrival_handshake(MPILegionHandshake handshake);
+    public:
       RegionRequirement               requirement;
+      std::vector<Grant>              grants;
+      std::vector<PhaseBarrier>       wait_barriers;
+      std::vector<PhaseBarrier>       arrive_barriers;
       MapperID                        map_id;
       MappingTagID                    tag;
     public:
@@ -1429,7 +1585,10 @@ namespace Legion {
      */
     struct IndexCopyLauncher {
     public:
+      IndexCopyLauncher(void);
       IndexCopyLauncher(Domain domain, Predicate pred = Predicate::TRUE_PRED,
+                        MapperID id = 0, MappingTagID tag = 0);
+      IndexCopyLauncher(IndexSpace space, Predicate pred = Predicate::TRUE_PRED,
                         MapperID id = 0, MappingTagID tag = 0);
     public:
       inline unsigned add_copy_requirements(const RegionRequirement &src,
@@ -1448,10 +1607,103 @@ namespace Legion {
       std::vector<Grant>              grants;
       std::vector<PhaseBarrier>       wait_barriers;
       std::vector<PhaseBarrier>       arrive_barriers;
-      Domain                          domain;
+      Domain                          launch_domain;
+      IndexSpace                      launch_space;
       Predicate                       predicate;
       MapperID                        map_id;
       MappingTagID                    tag;
+    public:
+      // Inform the runtime about any static dependences
+      // These will be ignored outside of static traces
+      const std::vector<StaticDependence> *static_dependences;
+    public:
+      bool                            silence_warnings;
+    };
+
+    /**
+     * \struct GatherLauncher
+     * A gather launcher is used to perform a gather from an explicit 
+     * gather copy from a number of source logical regions into a 
+     * single destination logical region by indirecting through a
+     * mapping stored in a field.
+     */
+    struct GatherLauncher {
+    public:
+      GatherLauncher(LogicalRegion indirect_region, 
+                     FieldID indirect_fid,
+                     LogicalRegion indirect_parent,
+                     Predicate pred = Predicate::TRUE_PRED,
+                     MapperID id = 0, MappingTagID tag = 0);
+    public:
+      inline GatherLauncher& add_src_requirement(const RegionRequirement &req);
+      inline void set_destination_requirement(const RegionRequirement &req);
+    public:
+      inline void add_src_field(unsigned idx, FieldID fid, bool inst = true);
+      inline void add_dst_field(FieldID fid, bool inst = true);
+    public:
+      inline void add_grant(Grant g);
+      inline void add_wait_barrier(PhaseBarrier bar);
+      inline void add_arrival_barrier(PhaseBarrier bar);
+      inline void add_wait_handshake(MPILegionHandshake handshake);
+      inline void add_arrival_handshake(MPILegionHandshake handshake);
+    public:
+      LogicalRegion                   indirect_region;
+      FieldID                         indirect_field;
+      LogicalRegion                   indirect_parent;
+      std::vector<RegionRequirement>  src_requirements;
+      RegionRequirement               dst_requirement;
+      std::vector<Grant>              grants;
+      std::vector<PhaseBarrier>       wait_barriers;
+      std::vector<PhaseBarrier>       arrive_barriers;
+      Predicate                       predicate;
+      MapperID                        map_id;
+      MappingTagID                    tag;
+      DomainPoint                     point;
+    public:
+      // Inform the runtime about any static dependences
+      // These will be ignored outside of static traces
+      const std::vector<StaticDependence> *static_dependences;
+    public:
+      bool                            silence_warnings;
+    };
+
+    /**
+     * A scatter launcher is used to perform an explicit scatter 
+     * copy from a single logical region out to many other logical
+     * regions using a mapping stored in a field.
+     */
+    struct ScatterLauncher {
+    public:
+      ScatterLauncher(LogicalRegion indirect_region, 
+                      FieldID indirect_fid,
+                      LogicalRegion indirect_parent,
+                      Predicate pred = Predicate::TRUE_PRED,
+                      MapperID id = 0, MappingTagID tag = 0);
+    public:
+      inline void set_src_requirement(const RegionRequirement &req);
+      inline ScatterLauncher& add_dst_requirement(const RegionRequirement &req);
+    public:
+      inline void add_src_field(FieldID fid, bool inst = true);
+      inline void add_dst_field(unsigned idx, FieldID fid, bool inst = true);
+    public:
+      inline void add_grant(Grant g);
+      inline void add_wait_barrier(PhaseBarrier bar);
+      inline void add_arrival_barrier(PhaseBarrier bar);
+      inline void add_wait_handshake(MPILegionHandshake handshake);
+      inline void add_arrival_handshake(MPILegionHandshake handshake);
+    public:
+      LogicalRegion                   indirect_region;
+      FieldID                         indirect_field;
+      LogicalRegion                   indirect_parent;
+      RegionRequirement               src_requirement;
+      std::vector<RegionRequirement>  dst_requirements;
+      std::vector<Grant>              grants;
+      std::vector<PhaseBarrier>       wait_barriers;
+      std::vector<PhaseBarrier>       arrive_barriers;
+      Predicate                       predicate;
+      MapperID                        map_id;
+      MappingTagID                    tag;
+      DomainPoint                     point;
     public:
       // Inform the runtime about any static dependences
       // These will be ignored outside of static traces
@@ -1528,6 +1780,16 @@ namespace Legion {
                         ProjectionID projection = 0,
                         Predicate pred = Predicate::TRUE_PRED,
                         MapperID id = 0, MappingTagID tag = 0);
+      IndexFillLauncher(IndexSpace space, LogicalRegion handle, 
+                        LogicalRegion parent, TaskArgument arg,
+                        ProjectionID projection = 0,
+                        Predicate pred = Predicate::TRUE_PRED,
+                        MapperID id = 0, MappingTagID tag = 0);
+      IndexFillLauncher(IndexSpace space, LogicalRegion handle, 
+                        LogicalRegion parent, Future f,
+                        ProjectionID projection = 0,
+                        Predicate pred = Predicate::TRUE_PRED,
+                        MapperID id = 0, MappingTagID tag = 0);
       // Partition projection
       IndexFillLauncher(Domain domain, LogicalPartition handle, 
                         LogicalRegion parent, TaskArgument arg,
@@ -1535,6 +1797,16 @@ namespace Legion {
                         Predicate pred = Predicate::TRUE_PRED,
                         MapperID id = 0, MappingTagID tag = 0);
       IndexFillLauncher(Domain domain, LogicalPartition handle, 
+                        LogicalRegion parent, Future f,
+                        ProjectionID projection = 0,
+                        Predicate pred = Predicate::TRUE_PRED,
+                        MapperID id = 0, MappingTagID tag = 0);
+      IndexFillLauncher(IndexSpace space, LogicalPartition handle, 
+                        LogicalRegion parent, TaskArgument arg,
+                        ProjectionID projection = 0,
+                        Predicate pred = Predicate::TRUE_PRED,
+                        MapperID id = 0, MappingTagID tag = 0);
+      IndexFillLauncher(IndexSpace space, LogicalPartition handle, 
                         LogicalRegion parent, Future f,
                         ProjectionID projection = 0,
                         Predicate pred = Predicate::TRUE_PRED,
@@ -1549,7 +1821,8 @@ namespace Legion {
       inline void add_wait_handshake(MPILegionHandshake handshake);
       inline void add_arrival_handshake(MPILegionHandshake handshake);
     public:
-      Domain                          domain;
+      Domain                          launch_domain;
+      IndexSpace                      launch_space;
       LogicalRegion                   region;
       LogicalPartition                partition;
       LogicalRegion                   parent;
@@ -1870,16 +2143,23 @@ namespace Legion {
        * method instead. You can silence warnings about this blocking
        * call with the 'silence_warnings' parameter.
        */
-      LEGION_DEPRECATED("Requesting generic accessors are now deprecated. "
-                        "A field accessor should be requested instead.")
+      LEGION_DEPRECATED("All accessors in the LegionRuntime::Accessor "
+                        "namespace are now deprecated. FieldAccessor "
+                        "from the Legion namespace should be used now.")
       LegionRuntime::Accessor::RegionAccessor<
         LegionRuntime::Accessor::AccessorType::Generic> 
           get_accessor(bool silence_warnings = false) const;
       /**
+       * @deprecated
+       * You should be able to create accessors by passing this
+       * object directly to the constructor of an accessor
        * Return a field accessor for a specific field within the region.
        * You can silence warnings regarding this blocking call with
        * the 'silence_warnings' parameter.
        */
+      LEGION_DEPRECATED("All accessors in the LegionRuntime::Accessor "
+                        "namespace are now deprecated. FieldAccessor "
+                        "from the Legion namespace should be used now.")
       LegionRuntime::Accessor::RegionAccessor<
         LegionRuntime::Accessor::AccessorType::Generic> 
           get_field_accessor(FieldID field, 
@@ -1892,52 +2172,85 @@ namespace Legion {
        * Return a list of fields that the physical region contains.
        */
       void get_fields(std::vector<FieldID>& fields) const;
+    public:
+      template<int DIM, typename COORD_T>
+      DomainT<DIM,COORD_T> get_bounds(void) const;
+      // We'll also allow this to implicitly cast to a realm index space
+      // so that users can easily iterate over the points
+      template<int DIM, typename COORD_T>
+      operator DomainT<DIM,COORD_T>(void) const;
+      // They can implicitly cast to a rectangle if there is no
+      // sparsity map, runtime will check for this
+      template<int DIM, typename COORD_T>
+      operator Rect<DIM,COORD_T>(void) const;
+    protected:
+      // These methods can only be accessed by the FieldAccessor class
+      template<PrivilegeMode, typename, int, typename, typename, bool>
+      friend class FieldAccessor;
+      template<typename, int, typename, typename>
+      friend class UnsafeFieldAccessor;
+      Realm::RegionInstance get_instance_info(PrivilegeMode mode, 
+                                              FieldID fid, size_t field_size,
+                                              void *realm_is, TypeTag type_tag,
+                                              bool silence_warnings,
+                                              bool generic_accessor,
+                                              bool check_field_size,
+                                              ReductionOpID redop = 0) const;
+      void fail_bounds_check(DomainPoint p, FieldID fid,
+                             PrivilegeMode mode) const;
+    protected:
+      void get_bounds(void *realm_is, TypeTag type_tag) const;
     };
 
     /**
-     * \class IndexIterator
-     * This is a helper class for iterating over the points within
-     * an index space or the index space of a given logical region.
-     * It should never be copied and will assert fail if a copy is
-     * made of it.
+     * \class FieldAccessor
+     * A field accessor is a class used to get access to the data 
+     * inside of a PhysicalRegion object for a specific field. The
+     * default version of this class is empty, but the following
+     * specializations of this class with different privilege modes
+     * will provide different methods specific to that privilege type
+     *
+     * READ_ONLY
+     *  - FT read(const Point<N,T>&) const
+     *  - const FT* ptr(const Point<N,T>&) const (Affine Accessor only)
+     *  - const FT& operator[](const Point<N,T>&) const (Affine Accessor only)
+     *
+     * READ_WRITE
+     *  - FT read(const Point<N,T>&) const
+     *  - void write(const Point<N,T>&, FT val) const
+     *  - FT* ptr(const Point<N,T>&) const (Affine Accessor only)
+     *  - FT& operator[](const Point<N,T>&) const (Affine Accessor only)
+     *  - template<typename REDOP> void reduce(const Point<N,T>&, REDOP::RHS);
+     *    (Affine Accessor only)
+     *
+     *  WRITE_DISCARD
+     *  - void write(const Point<N,T>&, FT val) const
+     *  - FT* ptr(const Point<N,T>&) const (Affine Accessor only)
+     *  - FT& operator[](const Point<N,T>&) const (Affine Accessor only)
+     *
+     * REDUCE
+     *  - template<typename REDOP> void reduce(const Point<N,T>&, REDOP::RHS)
+     *    (Affine Accessor only)
      */
-    class IndexIterator {
+    template<PrivilegeMode M, typename FT, int N, typename COORD_T = coord_t,
+             typename A = Realm::GenericAccessor<FT,N,COORD_T>,
+#ifdef BOUNDS_CHECKS
+             bool CHECK_BOUNDS = true>
+#else
+             bool CHECK_BOUNDS = false>
+#endif
+    class FieldAccessor {
     public:
-      IndexIterator(const Domain &dom, ptr_t start = ptr_t());
-      IndexIterator(Runtime *rt, Context ctx, 
-                    IndexSpace space, ptr_t start = ptr_t());
-      IndexIterator(Runtime *rt, Context ctx, 
-                    LogicalRegion lr, ptr_t start = ptr_t());
-      IndexIterator(Runtime *rt,
-                    IndexSpace space, ptr_t start = ptr_t());
-      IndexIterator(const IndexIterator &rhs);
-      ~IndexIterator(void);
-    public:
-      /**
-       * Check to see if the iterator has a next point
-       */
-      inline bool has_next(void) const;
-      /**
-       * Get the current point in the iterator.  Advances
-       * the iterator to the next point.
-       */
-      inline ptr_t next(void);
-      /**
-       * Get the current point in the iterator and up to 'req_count'
-       * additional points in the index space.  Returns the actual
-       * count of contiguous points in 'act_count'.
-       */
-      inline ptr_t next_span(size_t& act_count, 
-                             size_t req_count = (size_t)-1LL);
-    public:
-      IndexIterator& operator=(const IndexIterator &rhs);
-    private:
-      Enumerator *enumerator;
-      bool finished;
-      coord_t current_pointer;
-      size_t remaining_elmts;
+      FieldAccessor(void) { }
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t element_count = 1,// number of FT elements in field
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false) { }
     };
-
  
     //==========================================================================
     //                      Software Coherence Classes
@@ -2160,6 +2473,7 @@ namespace Legion {
         RELEASE_MAPPABLE,
         CLOSE_MAPPABLE,
         FILL_MAPPABLE,
+        PARTITION_MAPPABLE,
       };
       virtual MappableType get_mappable_type(void) const = 0;
       virtual const Task* as_task(void) const = 0;
@@ -2169,6 +2483,7 @@ namespace Legion {
       virtual const Release* as_release(void) const = 0;
       virtual const Close* as_close(void) const = 0;
       virtual const Fill* as_fill(void) const = 0;
+      virtual const Partition* as_partition(void) const = 0;
     public:
       MapperID                                  map_id;
       MappingTagID                              tag;
@@ -2198,6 +2513,7 @@ namespace Legion {
       virtual const Release* as_release(void) const { return NULL; }
       virtual const Close* as_close(void) const { return NULL; }
       virtual const Fill* as_fill(void) const { return NULL; }
+      virtual const Partition* as_partition(void) const { return NULL; }
     public:
       // Task argument information
       Processor::TaskFuncID task_id; 
@@ -2249,6 +2565,7 @@ namespace Legion {
       virtual const Release* as_release(void) const { return NULL; }
       virtual const Close* as_close(void) const { return NULL; }
       virtual const Fill* as_fill(void) const { return NULL; }
+      virtual const Partition* as_partition(void) const { return NULL; }
     public:
       // Copy Launcher arguments
       std::vector<RegionRequirement>    src_requirements;
@@ -2285,9 +2602,13 @@ namespace Legion {
       virtual const Release* as_release(void) const { return NULL; }
       virtual const Close* as_close(void) const { return NULL; }
       virtual const Fill* as_fill(void) const { return NULL; }
+      virtual const Partition* as_partition(void) const { return NULL; }
     public:
       // Inline Launcher arguments
       RegionRequirement                 requirement;
+      std::vector<Grant>                grants;
+      std::vector<PhaseBarrier>         wait_barriers;
+      std::vector<PhaseBarrier>         arrive_barriers;
       LayoutConstraintID                layout_constraint_id; 
     public:
       // Parent task for the inline operation
@@ -2313,6 +2634,7 @@ namespace Legion {
       virtual const Release* as_release(void) const { return NULL; }
       virtual const Close* as_close(void) const { return NULL; }
       virtual const Fill* as_fill(void) const { return NULL; }
+      virtual const Partition* as_partition(void) const { return NULL; }
     public:
       // Acquire Launcher arguments
       LogicalRegion                     logical_region;
@@ -2345,6 +2667,7 @@ namespace Legion {
       virtual const Release* as_release(void) const { return this; }
       virtual const Close* as_close(void) const { return NULL; }
       virtual const Fill* as_fill(void) const { return NULL; }
+      virtual const Partition* as_partition(void) const { return NULL; }
     public:
       // Release Launcher arguments
       LogicalRegion                     logical_region;
@@ -2381,6 +2704,7 @@ namespace Legion {
       virtual const Release* as_release(void) const { return NULL; }
       virtual const Close* as_close(void) const { return this; }
       virtual const Fill* as_fill(void) const { return NULL; }
+      virtual const Partition* as_partition(void) const { return NULL; }
     public:
       // Synthesized region requirement
       RegionRequirement                 requirement;
@@ -2397,7 +2721,7 @@ namespace Legion {
      */
     class Fill : public Mappable {
     protected:
-      FRIEND_ALL_RUNTIME_CLASSES;
+      FRIEND_ALL_RUNTIME_CLASSES
       Fill(void);
     public:
       virtual MappableType get_mappable_type(void) const 
@@ -2409,6 +2733,7 @@ namespace Legion {
       virtual const Release* as_release(void) const { return NULL; }
       virtual const Close* as_close(void) const { return NULL; }
       virtual const Fill* as_fill(void) const { return this; }
+      virtual const Partition* as_partition(void) const { return NULL; }
     public:
       // Synthesized region requirement
       RegionRequirement               requirement;
@@ -2425,11 +2750,57 @@ namespace Legion {
       Task*                           parent_task;
     };
 
+    /**
+     * \class Partition
+     * This class represents a dependent partition 
+     * operation that is being performed by the
+     * runtime. These will be crated by calls to
+     * the runtime such as 'create_partition_by_field'.
+     */
+    class Partition : public Mappable {
+    protected:
+      FRIEND_ALL_RUNTIME_CLASSES
+      Partition(void);
+    public:
+      virtual MappableType get_mappable_type(void) const 
+        { return PARTITION_MAPPABLE; }
+      virtual const Task* as_task(void) const { return NULL; }
+      virtual const Copy* as_copy(void) const { return NULL; }
+      virtual const InlineMapping* as_inline(void) const { return NULL; }
+      virtual const Acquire* as_acquire(void) const { return NULL; }
+      virtual const Release* as_release(void) const { return NULL; }
+      virtual const Close* as_close(void) const { return NULL; }
+      virtual const Fill* as_fill(void) const { return NULL; }
+      virtual const Partition* as_partition(void) const { return this; }
+    public:
+      enum PartitionKind {
+        BY_FIELD, // create partition by field
+        BY_IMAGE, // create partition by image
+        BY_IMAGE_RANGE, // create partition by image range
+        BY_PREIMAGE, // create partition by preimage
+        BY_PREIMAGE_RANGE,  // create partition by preimage range
+        BY_ASSOCIATION,  // create partition by association
+      };
+      virtual PartitionKind get_partition_kind(void) const = 0;
+    public:
+      // Synthesized region requirement
+      RegionRequirement                   requirement;
+    public:
+      // Index partition argument information
+      bool                                is_index_space;
+      Domain                              index_domain;
+      DomainPoint                         index_point;
+    public:
+      // Parent task for the partition operation
+      Task*                               parent_task;
+    };
+
     //==========================================================================
     //                           Runtime Classes
     //==========================================================================
 
     /**
+     * @deprecated 
      * \struct ColoredPoints
      * Colored points struct for describing colorings.
      */
@@ -2626,26 +2997,108 @@ namespace Legion {
       //------------------------------------------------------------------------
       // Index Space Operations
       //------------------------------------------------------------------------
+      ///@{
       /**
-       * Create a new unstructured index space
+       * Create a new top-level index space based on the given domain bounds
+       * @param ctx the enclosing task context
+       * @param bounds the bounds for the new index space
+       * @return the handle for the new index space
+       */
+      IndexSpace create_index_space(Context ctx, Domain bounds);
+      // Template version
+      template<int DIM, typename COORD_T>
+      IndexSpaceT<DIM,COORD_T> create_index_space(Context ctx,
+                                                  Rect<DIM,COORD_T> bounds);
+      ///@}
+      ///@{
+      /**
+       * Create a new top-level index space from a vector of points
+       * @param ctx the enclosing task context
+       * @param points a vector of points to have in the index space
+       * @return the handle for the new index space
+       */
+      IndexSpace create_index_space(Context ctx, 
+                                    const std::vector<DomainPoint> &points);
+      // Template version
+      template<int DIM, typename COORD_T>
+      IndexSpaceT<DIM,COORD_T> create_index_space(Context ctx,
+                      const std::vector<Point<DIM,COORD_T> > &points);
+      ///@}
+      ///@{
+      /**
+       * Create a new top-level index space from a vector of rectangles
+       * @param ctx the enclosing task context
+       * @param rects a vector of rectangles to have in the index space
+       * @return the handle for the new index space
+       */
+      IndexSpace create_index_space(Context ctx,
+                                    const std::vector<Domain> &rects);
+      // Template version
+      template<int DIM, typename COORD_T>
+      IndexSpaceT<DIM,COORD_T> create_index_space(Context ctx,
+                      const std::vector<Rect<DIM,COORD_T> > &rects);
+      ///@}
+      ///@{
+      /**
+       * Create a new top-level index space by unioning together 
+       * several existing index spaces
+       * @param ctx the enclosing task context
+       * @param spaces the index spaces to union together
+       * @return the handle for the new index space
+       */
+      IndexSpace union_index_spaces(Context ctx, 
+                                    const std::vector<IndexSpace> &spaces);
+      // Template version
+      template<int DIM, typename COORD_T>
+      IndexSpaceT<DIM,COORD_T> union_index_spaces(Context ctx,
+                     const std::vector<IndexSpaceT<DIM,COORD_T> > &spaces);
+      ///@}
+      ///@{
+      /**
+       * Create a new top-level index space by intersecting 
+       * several existing index spaces
+       * @param ctx the enclosing task context
+       * @param spaces the index spaces to intersect
+       * @return the handle for the new index space
+       */
+      IndexSpace intersect_index_spaces(Context ctx,
+                                        const std::vector<IndexSpace> &spaces);
+      // Template version
+      template<int DIM, typename COORD_T>
+      IndexSpaceT<DIM,COORD_T> intersect_index_spaces(Context ctx,
+                         const std::vector<IndexSpaceT<DIM,COORD_T> > &spaces);
+      ///@}
+      ///@{
+      /**
+       * Create a new top-level index space by taking the
+       * set difference of two different index spaces
+       */
+      IndexSpace subtract_index_spaces(Context ctx, 
+                                       IndexSpace left, IndexSpace right);
+      // Template version
+      template<int DIM, typename COORD_T>
+      IndexSpaceT<DIM,COORD_T> subtract_index_spaces(Context ctx,
+           IndexSpaceT<DIM,COORD_T> left, IndexSpaceT<DIM,COORD_T> right);
+      ///@}
+      /**
+       * @deprecated
+       * Create a new top-level index space with the maximum number of elements
        * @param ctx the enclosing task context
        * @param max_num_elmts maximum number of elements in the index space
        * @return the handle for the new index space
        */
+      LEGION_DEPRECATED("Use the new index space creation routines with a "
+                        "single domain or rectangle.")
       IndexSpace create_index_space(Context ctx, size_t max_num_elmts);
       /**
-       * Create a new structured index space based on a domain
-       * @param ctx the enclosing task context
-       * @param domain the domain for the new index space
-       * @return the handle for the new index space
-       */
-      IndexSpace create_index_space(Context ctx, Domain domain);
-      /**
-       * Create a new structured index space based on a set of domains
+       * @deprecated
+       * Create a new top-level index space based on a set of domains
        * @param ctx the enclosing task context
        * @param domains the set of domains
        * @return the handle for the new index space
        */
+      LEGION_DEPRECATED("Use the new index space creation routines with a "
+                        "single domain or rectangle.")
       IndexSpace create_index_space(Context ctx, 
                                     const std::set<Domain> &domains);
       /**
@@ -2657,8 +3110,10 @@ namespace Legion {
     public:
       //------------------------------------------------------------------------
       // Index Partition Operations Based on Coloring
+      // (These are deprecated, use the dependent partitioning calls instead)
       //------------------------------------------------------------------------
       /**
+       * @deprecated
        * Create an index partition from a point coloring
        * @param ctx the enclosing task context
        * @param parent index space being partitioned
@@ -2669,11 +3124,12 @@ namespace Legion {
        * @param allocable whether the child index spaces are allocable
        * @return handle for the new index partition
        */
+      LEGION_DEPRECATED("Use the new dependent partitioning API calls instead.")
       IndexPartition create_index_partition(Context ctx, IndexSpace parent,
                                         const Domain &color_space,
                                         const PointColoring &coloring,
                                         PartitionKind part_kind = COMPUTE_KIND,
-                                        int color = AUTO_GENERATE_ID,
+                                        Color color = AUTO_GENERATE_ID,
                                         bool allocable = false);
       /**
        * @deprecated
@@ -2683,15 +3139,17 @@ namespace Legion {
        * @param parent index space being partitioned
        * @param coloring the coloring of the parent index space
        * @param disjoint whether the partitioning is disjoint or not
-       * @param part_color optional color name for the partition
+       * @param color optional color name for the partition
        * @return handle for the next index partition
        */
+      LEGION_DEPRECATED("Use the new dependent partitioning API calls instead.")
       IndexPartition create_index_partition(Context ctx, IndexSpace parent, 
                                             const Coloring &coloring, 
                                             bool disjoint, 
-                                            int part_color = -1);
+                                            Color color = AUTO_GENERATE_ID);
 
       /**
+       * @deprecated
        * Create an index partition from a domain point coloring
        * @param ctx the enclosing task context
        * @param parent the index space being partitioned
@@ -2701,11 +3159,12 @@ namespace Legion {
        * @param color optional color for the new partition
        * @return handle for the new index partition
        */
+      LEGION_DEPRECATED("Use the new dependent partitioning API calls instead.")
       IndexPartition create_index_partition(Context ctx, IndexSpace parent,
                                         const Domain &color_space,
                                         const DomainPointColoring &coloring,
                                         PartitionKind part_kind = COMPUTE_KIND,
-                                        int color = AUTO_GENERATE_ID);
+                                        Color color = AUTO_GENERATE_ID);
       /**
        * @deprecated
        * See the previous create index partition call
@@ -2715,16 +3174,18 @@ namespace Legion {
        * @param color_space the domain of colors 
        * @param coloring the domain coloring of the parent index space
        * @param disjoint whether the partitioning is disjoint or not
-       * @param part_color optional color name for the partition
+       * @param color optional color name for the partition
        * @return handle for the next index partition
        */
+      LEGION_DEPRECATED("Use the new dependent partitioning API calls instead.")
       IndexPartition create_index_partition(Context ctx, IndexSpace parent, 
 					    Domain color_space, 
                                             const DomainColoring &coloring,
 					    bool disjoint,
-                                            int part_color = -1);
+                                            Color color = AUTO_GENERATE_ID);
 
       /**
+       * @deprecated
        * Create an index partition from a multi-domain point coloring
        * @param ctx the enclosing task context
        * @param parent the index space being partitioned
@@ -2734,11 +3195,12 @@ namespace Legion {
        * @param color optional color for the new partition
        * @return handle for the new index partition
        */
+      LEGION_DEPRECATED("Use the new dependent partitioning API calls instead.")
       IndexPartition create_index_partition(Context ctx, IndexSpace parent,
                                       const Domain &color_space,
                                       const MultiDomainPointColoring &coloring,
                                       PartitionKind part_kind = COMPUTE_KIND,
-                                      int color = AUTO_GENERATE_ID);
+                                      Color color = AUTO_GENERATE_ID);
       /**
        * @deprecated
        * See the previous create index partition call
@@ -2750,26 +3212,29 @@ namespace Legion {
        * @param color_space the domain of colors
        * @param coloring the multi-domain coloring
        * @param disjoint whether the partitioning is disjoint or not
-       * @param part_color optional color name for the partition
+       * @param color optional color name for the partition
        * @return handle for the next index partition
        */
+      LEGION_DEPRECATED("Use the new dependent partitioning API calls instead.")
       IndexPartition create_index_partition(Context ctx, IndexSpace parent,
                                             Domain color_space,
                                             const MultiDomainColoring &coloring,
                                             bool disjoint,
-                                            int part_color = -1);
+                                            Color color = AUTO_GENERATE_ID);
       /**
+       * @deprecated
        * Create an index partitioning from a typed mapping.
        * @param ctx the enclosing task context
        * @param parent index space being partitioned
        * @param mapping the mapping of points to colors
-       * @param part_color optional color name for the partition
+       * @param color optional color name for the partition
        * @return handle for the next index partition
        */
       template <typename T>
+      LEGION_DEPRECATED("Use the new dependent partitioning API calls instead.")
       IndexPartition create_index_partition(Context ctx, IndexSpace parent,
 					    const T& mapping,
-					    int part_color = AUTO_GENERATE_ID);
+					    Color color = AUTO_GENERATE_ID);
 
       /**
        * @deprecated 
@@ -2789,10 +3254,11 @@ namespace Legion {
        * @param complete whether the partitioning is complete or not
        * @return handle for the next index partition
        */
+      LEGION_DEPRECATED("Use the new dependent partitioning API calls instead.")
       IndexPartition create_index_partition(Context ctx, IndexSpace parent,
        LegionRuntime::Accessor::RegionAccessor<
         LegionRuntime::Accessor::AccessorType::Generic> field_accessor,
-                                                        int part_color = -1);
+                                        Color color = AUTO_GENERATE_ID);
 
       /**
        * Destroy an index partition
@@ -2802,58 +3268,34 @@ namespace Legion {
       void destroy_index_partition(Context ctx, IndexPartition handle);
     public:
       //------------------------------------------------------------------------
-      // Functional Index Partition Operations
+      // Dependent Partitioning Operations
       //------------------------------------------------------------------------
-
+      ///@{
       /**
        * Create 'color_space' index subspaces (one for each point) in a 
        * common partition of the 'parent' index space. By definition the 
        * resulting partition will be disjoint. Users can also specify a 
        * minimum 'granularity' for the size of the index subspaces. Users 
-       * can specify an optional color for the index partition. The 
-       * 'allocable' field indicates whether dynamic allocation and 
-       * freeing are supported on the index subspaces.
+       * can specify an optional color for the index partition.
        * @param ctx the enclosing task context
        * @param parent index space of the partition to be made
        * @param color_space space of colors to create 
        * @param granularity the minimum size of the index subspaces
        * @param color optional color paramter for the partition
-       * @param allocable whether dynamic allocation of pointers is permitted
        * @return name of the created index partition
        */
       IndexPartition create_equal_partition(Context ctx, IndexSpace parent,
-                                            Domain color_space, 
+                                            IndexSpace color_space, 
                                             size_t granularity = 1,
-                                            int color = AUTO_GENERATE_ID,
-                                            bool allocable = false);
-
-      /**
-       * Create 'color_space' index subspaces (one for each point) in a 
-       * common partition of the 'parent' index space. By definition the 
-       * resulting partition will be disjoint. Users must also specify 
-       * weights for the number of entries to put in each index spaces. 
-       * The size of the 'weights' vector must be of the same as the
-       * volume of the 'color_space' domain. Users can also specify a 
-       * minimum 'granularity' of the size of the index subspaces. The 
-       * 'color' field gives users optional control over the color of the 
-       * created partition. The 'allocable' field indicates if dynamic 
-       * allocation and freeing of pointers is supported on the index subspaces.
-       * @param ctx the enclosing task context
-       * @param parent index space of the partition to be made
-       * @param color_space space of colors to create
-       * @param weights map from colors to weights
-       * @param granularity the minimum size of the index subspaces
-       * @param color optional color paramter for the partition
-       * @param allocable whether dynamic allocation of pointers is permitted
-       * @return name of the created index partition
-       */
-      IndexPartition create_weighted_partition(Context ctx, IndexSpace parent,
-                                       Domain color_space,
-                                       const std::map<DomainPoint,int> &weights,
-                                       size_t granularity = 1,
-                                       int color = AUTO_GENERATE_ID,
-                                       bool allocable = false); 
-
+                                            Color color = AUTO_GENERATE_ID);
+      template<int DIM, typename COORD_T, 
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexPartitionT<DIM,COORD_T> create_equal_partition(Context ctx,
+                        IndexSpaceT<DIM,COORD_T> parent,
+                        IndexSpaceT<COLOR_DIM,COLOR_COORD_T> color_space,
+                        size_t granularity = 1, Color color = AUTO_GENERATE_ID);
+      ///@}
+      ///@{
       /**
        * This function zips a union operation over all the index subspaces
        * in two different partitions. The zip operation is only applied 
@@ -2866,27 +3308,34 @@ namespace Legion {
        * (e.g. disjoint or aliased) can be specified with the 'part_kind'
        * argument. This argument can also be used to request that the 
        * runtime compute the kind of partition. The user can assign
-       * a color to the new partition by the 'color' argument. The
-       * 'allocable' argument controls if the new index subspaces
-       * support dynamic allocation and freeing of pointers. Note that
-       * this call only works for unstructured index spaces.
+       * a color to the new partition by the 'color' argument.
        * @param ctx the enclosing task context
        * @param parent the parent index space for the new partition
        * @param handle1 first index partition
        * @param handle2 second index partition
+       * @param color_space space of colors to zip over
        * @param part_kind indicate the kind of partition
        * @param color the new color for the index partition
-       * @param allocable whether dynamic allocation of pointers is permitted
        * @return name of the created index partition
        */
       IndexPartition create_partition_by_union(Context ctx,
                                        IndexSpace parent,
                                        IndexPartition handle1,
                                        IndexPartition handle2,
+                                       IndexSpace color_space,
                                        PartitionKind part_kind = COMPUTE_KIND,
-                                       int color = AUTO_GENERATE_ID,
-                                       bool allocable = false);
-
+                                       Color color = AUTO_GENERATE_ID);
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexPartitionT<DIM,COORD_T> create_partition_by_union(Context ctx,
+                              IndexSpaceT<DIM,COORD_T> parent,
+                              IndexPartitionT<DIM,COORD_T> handle1,
+                              IndexPartitionT<DIM,COORD_T> handle2,
+                              IndexSpaceT<COLOR_DIM,COLOR_COORD_T> color_space,
+                              PartitionKind part_kind = COMPUTE_KIND,
+                              Color color = AUTO_GENERATE_ID);
+      ///@}
+      ///@{
       /**
        * This function zips an intersection operation over all the index 
        * subspaces in two different partitions. The zip operation is only
@@ -2900,26 +3349,35 @@ namespace Legion {
        * an ancestor. The user can say whether the partition is disjoint
        * or not or ask the runtime to compute the result using the 
        * 'part_kind' argument. The user can assign a color to the new 
-       * partition by the 'color' argument. The 'allocable' argument 
-       * controls if the new index subspaces support dynamic allocation 
-       * and freeing of pointers.
+       * partition by the 'color' argument.
        * @param ctx the enclosing task context
        * @param parent the parent index space for the new partition
        * @param handle1 first index partition
        * @param handle2 second index partition
+       * @param color_space space of colors to zip over
        * @param part_kind indicate the kind of partition
        * @param color the new color for the index partition
-       * @param allocable whether dynamic allocation of pointers is permitted
        * @return name of the created index partition
        */
       IndexPartition create_partition_by_intersection(Context ctx,
                                         IndexSpace parent,
                                         IndexPartition handle1,
                                         IndexPartition handle2,
+                                        IndexSpace color_space,
                                         PartitionKind part_kind = COMPUTE_KIND,
-                                        int color = AUTO_GENERATE_ID,
-                                        bool allocable = false);
-
+                                        Color color = AUTO_GENERATE_ID);
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexPartitionT<DIM,COORD_T> create_partition_by_intersection(
+                              Context ctx,
+                              IndexSpaceT<DIM,COORD_T> parent,
+                              IndexPartitionT<DIM,COORD_T> handle1,
+                              IndexPartitionT<DIM,COORD_T> handle2,
+                              IndexSpaceT<COLOR_DIM,COLOR_COORD_T> color_space,
+                              PartitionKind part_kind = COMPUTE_KIND,
+                              Color color = AUTO_GENERATE_ID);
+      ///@}
+      ///@{
       /**
        * This function zips a set difference operation over all the index 
        * subspaces in two different partitions. The zip operation is only
@@ -2932,34 +3390,42 @@ namespace Legion {
        * ancestor. The user can say whether the partition is disjoint or
        * not or ask the runtime to compute the result using the 'part_kind'
        * argument. The user can assign a color to the new partition by
-       * the 'color' argument. The 'allocable' argument controls if the
-       * new index subspaces support dynamic allocation and freeing of 
-       * pointers. Note that this call only works for unstructured
+       * the 'color' argument.
        * index spaces.
        * @param ctx the enclosing task context
        * @param parent the parent index space for the new partition
        * @param handle1 first index partition
        * @param handle2 second index partition
+       * @param color_space space of colors to zip over
        * @param part_kind indicate the kind of partition
        * @param color the new color for the index partition
-       * @param allocable whether dynamic allocation of pointers is permitted
        * @return name of the created index partition
        */
       IndexPartition create_partition_by_difference(Context ctx,
                                         IndexSpace parent,
                                         IndexPartition handle1,
                                         IndexPartition handle2,
+                                        IndexSpace color_space,
                                         PartitionKind part_kind = COMPUTE_KIND,
-                                        int color = AUTO_GENERATE_ID,
-                                        bool allocable = false);
-
+                                        Color color = AUTO_GENERATE_ID);
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexPartitionT<DIM,COORD_T> create_partition_by_difference(Context ctx,
+                              IndexSpaceT<DIM,COORD_T> parent,
+                              IndexPartitionT<DIM,COORD_T> handle1,
+                              IndexPartitionT<DIM,COORD_T> handle2,
+                              IndexSpaceT<COLOR_DIM,COLOR_COORD_T> color_space,
+                              PartitionKind part_kind = COMPUTE_KIND,
+                              Color color = AUTO_GENERATE_ID);
+      ///@}
+      ///@{
       /**
        * This performs a cross product between two different index
        * partitions. For every index subspace in the first index 
        * partition the runtime will create a new index partition
-       * of that index space with each of the different index subspaces
-       * in the second index partition. As a result, whole set of new
-       * index partitions will be created. The user can request which
+       * of that index space by intersecting each of the different index 
+       * subspaces in the second index partition. As a result, whole set 
+       * of new index partitions will be created. The user can request which
        * partition names to return by specifying a map of domain points
        * from the color space of the first index partition. If the map
        * is empty, no index partitions will be returned. The user can
@@ -2967,41 +3433,170 @@ namespace Legion {
        * argument. The user can also specify a color for the new partitions
        * using the 'color' argument. If a specific color is specified, it
        * must be available for a partition in each of the index subspaces
-       * in the first index partition. The user can specify whether the new 
-       * index partitions support dynamic allocation and freeing of pointers 
-       * with the 'allocable' argument.
+       * in the first index partition.
        * @param ctx the enclosing task context
        * @param handle1 the first index partition
        * @param handle2 the second index partition
        * @param handle optional map for new partitions (can be empty)
        * @param part_kind indicate the kinds for the partitions
        * @param color optional color for each of the new partitions
-       * @param allocable whether dynamic allocation of pointers is permitted
+       * @return the color used for each of the partitions
        */
-      void create_cross_product_partitions(Context ctx,
+      Color create_cross_product_partitions(Context ctx,
                                   IndexPartition handle1,
                                   IndexPartition handle2,
-                                  std::map<DomainPoint,IndexPartition> &handles,
+                                  std::map<IndexSpace,IndexPartition> &handles,
                                   PartitionKind part_kind = COMPUTE_KIND,
-                                  int color = AUTO_GENERATE_ID,
-                                  bool allocable = false);
+                                  Color color = AUTO_GENERATE_ID);
+      template<int DIM, typename COORD_T, 
+               int COLOR_DIM, typename COLOR_COORD_T>
+      Color create_cross_product_partitions(Context ctx,
+                                  IndexPartitionT<DIM,COORD_T> handle1,
+                                  IndexPartitionT<DIM,COORD_T> handle2,
+                                  typename std::map<
+                                    IndexSpaceT<DIM,COORD_T>,
+                                    IndexPartitionT<DIM,COORD_T> > &handles,
+                                  PartitionKind part_kind = COMPUTE_KIND,
+                                  Color color = AUTO_GENERATE_ID);
+      ///@}
+      ///@{
+      /**
+       * Create association will construct an injective mapping between
+       * the points of two different index spaces. The mapping will 
+       * be constructed in a field of the domain logical region so that
+       * there is one entry for each point in the index space of the
+       * domain logical region. If the cardinality of domain index
+       * space is larger than the cardinality of the range index space
+       * then some entries in the field may not be written. It is the
+       * responsiblity of the user to have initialized the field with
+       * a "null" value to detect such cases. Users wishing to create
+       * a bi-directional mapping between index spaces can also use
+       * the versions of this method that take a logical region on
+       * the range as well.
+       * @param ctx the enclosing task context
+       * @param domain the region for the results and source index space
+       * @param domain_parent the region from which privileges are derived
+       * @param fid the field of domain in which to place the results
+       * @param range the index space to serve as the range of the mapping
+       * @param id the ID of the mapper to use for mapping the fields
+       * @param tag the tag to pass to the mapper for context
+       */
+      void create_association(Context ctx,
+                              LogicalRegion domain,
+                              LogicalRegion domain_parent,
+                              FieldID domain_fid,
+                              IndexSpace range,
+                              MapperID id = 0,
+                              MappingTagID tag = 0);
+      void create_bidirectional_association(Context ctx,
+                                            LogicalRegion domain,
+                                            LogicalRegion domain_parent,
+                                            FieldID domain_fid,
+                                            LogicalRegion range,
+                                            LogicalRegion range_parent,
+                                            FieldID range_fid,
+                                            MapperID id = 0,
+                                            MappingTagID tag = 0);
+      // Template versions
+      template<int DIM1, typename COORD_T1, int DIM2, typename COORD_T2>
+      void create_association(Context ctx,
+                              LogicalRegionT<DIM1,COORD_T1> domain,
+                              LogicalRegionT<DIM1,COORD_T1> domain_parent,
+                              FieldID domain_fid, // type: Point<DIM2,COORD_T2>
+                              IndexSpaceT<DIM2,COORD_T2> range,
+                              MapperID id = 0,
+                              MappingTagID tag = 0);
+      template<int DIM1, typename COORD_T1, int DIM2, typename COORD_T2>
+      void create_bidirectional_association(Context ctx,
+                              LogicalRegionT<DIM1,COORD_T1> domain,
+                              LogicalRegionT<DIM1,COORD_T1> domain_parent,
+                              FieldID domain_fid, // type: Point<DIM2,COORD_T2>
+                              LogicalRegionT<DIM2,COORD_T2> range,
+                              LogicalRegionT<DIM2,COORD_T2> range_parent,
+                              FieldID range_fid, // type: Point<DIM1,COORD_T1>
+                              MapperID id = 0,
+                              MappingTagID tag = 0);
+      ///@}
+      /**
+       * Create partition by restriction will make a new partition of a
+       * logical region by computing new restriction bounds for each 
+       * of the different subregions. All the sub-regions will have
+       * the same 'extent' (e.g. contain the same number of initial points).
+       * The particular location of the extent for each sub-region is
+       * determined by taking a point in the color space and transforming
+       * it by multiplying it by a 'transform' matrix to compute a 
+       * 'delta' for the particular subregion. This 'delta' is then added
+       * to the bounds of the 'extent' rectangle to generate a new bounding
+       * rectangle for the subregion of the given color. The runtime will
+       * also automatically intersect the resulting bounding rectangle with 
+       * the original bounds of the parent region to ensure proper containment.
+       * This may result in empty subregions.
+       * @param ctx the enclosing task context
+       * @param parent the parent index space to be partitioned
+       * @param color_space the color space of the partition
+       * @param transform a matrix transformation to be performed on each color
+       * @param extent the rectangle shape of each of the bounds
+       * @param part_kind the specify the partition kind
+       * @param color optional new color for the index partition
+       * @return a new index partition of the parent index space
+       */
+      template<int DIM, int COLOR_DIM, typename COORD_T>
+      IndexPartitionT<DIM,COORD_T> create_partition_by_restriction(Context ctx,
+                                IndexSpaceT<DIM,COORD_T> parent,
+                                IndexSpaceT<COLOR_DIM,COORD_T> color_space,
+                                Transform<DIM,COLOR_DIM,COORD_T> transform,
+                                Rect<DIM,COORD_T> extent,
+                                PartitionKind part_kind = COMPUTE_KIND,
+                                Color color = AUTO_GENERATE_ID);
 
+      /**
+       * Create partition by blockify is a special (but common) case of 
+       * create partition by restriction, that is guaranteed to create a 
+       * disjoint partition given the blocking factor specified for each 
+       * dimension. This call will also create an implicit color space
+       * for the partition that is the caller's responsibility to reclaim.
+       * This assumes an origin of (0)* for all dimensions of the extent.
+       * @param ctx the enclosing task context
+       * @param parent the parent index space to be partitioned
+       * @param blocking factor the blocking factors for each dimension
+       * @param color optional new color for the index partition
+       * @return a new index partition of the parent index space
+       */
+      template<int DIM, typename COORD_T>
+      IndexPartitionT<DIM,COORD_T> create_partition_by_blockify(Context ctx,
+                                    IndexSpaceT<DIM,COORD_T> parent,
+                                    Point<DIM,COORD_T> blocking_factor,
+                                    Color color = AUTO_GENERATE_ID);
+      /**
+       * An alternate version of create partition by blockify that also
+       * takes an origin to use for the computation of the extent.
+       * @param ctx the enclosing task context
+       * @param parent the parent index space to be partitioned
+       * @param blocking factor the blocking factors for each dimension
+       * @param origin the origin to use for computing the extent
+       * @param color optional new color for the index partition
+       * @return a new index partition of the parent index space
+       */
+      template<int DIM, typename COORD_T>
+      IndexPartitionT<DIM,COORD_T> create_partition_by_blockify(Context ctx,
+                                    IndexSpaceT<DIM,COORD_T> parent,
+                                    Point<DIM,COORD_T> blocking_factor,
+                                    Point<DIM,COORD_T> origin,
+                                    Color color = AUTO_GENERATE_ID);
+      ///@{
       /**
        * Create partition by field uses an existing field in a logical
        * region to perform a partitioning operation. The field type
-       * must be of 'Color' type (or int type) so that the runtime can 
-       * interpret the field as an enumerated function from 
-       * ptr_t -> Color. Pointers are assigned into index subspaces
-       * based on their assigned color. Pointers with negative entries
-       * will not be assigned into any index subspace. The resulting
-       * index partition is a partition of the index space of the logical 
-       * region over which the operation is performed. By definition
-       * this partition is disjoint. The 'color' argument can be used
-       * to specify an optional color for the index partition. The user 
-       * can control whether the index subspaces support dynamic allocation 
-       * and freeing of pointers using the 'allocable' argument. This
-       * operation is illegal to perform on structured index spaces.
-       * Note that this call only works for unstructured index spaces.
+       * must be of 'Point<COLOR_DIM,COLOR_COORD_T>' type so that the 
+       * runtime can interpret the field as an enumerated function from 
+       * Point<DIM,COORD_TT> -> Point<COLOR_DIM,COLOR_COORD_T>. Pointers 
+       * are assigned into index subspaces based on their assigned color. 
+       * Pointers with negative entries will not be assigned into any 
+       * index subspace. The resulting index partition is a partition 
+       * of the index space of the logical region over which the 
+       * operation is performed. By definition this partition is 
+       * disjoint. The 'color' argument can be used to specify an 
+       * optional color for the index partition.
        * @param ctx the enclosing task context
        * @param handle logical region handle containing the chosen
        *               field and of which a partition will be created
@@ -3009,17 +3604,29 @@ namespace Legion {
        * @param fid the field ID of the logical region containing the coloring
        * @param color_space space of colors for the partition
        * @param color optional new color for the index partition
-       * @param allocable whether dynamic allocation of pointers is permitted
+       * @param id the ID of the mapper to use for mapping the fields
+       * @param tag the context tag to pass to the mapper
        * @return a new index partition of the index space of the logical region
        */
       IndexPartition create_partition_by_field(Context ctx,
                                                LogicalRegion handle,
                                                LogicalRegion parent,
-                                               FieldID fid,
-                                               const Domain &color_space,
-                                               int color = AUTO_GENERATE_ID,
-                                               bool allocable = false);
-
+                                               FieldID fid, 
+                                               IndexSpace color_space,
+                                               Color color = AUTO_GENERATE_ID,
+                                               MapperID id = 0,
+                                               MappingTagID tag = 0);
+      template<int DIM, typename COORD_T, 
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexPartitionT<DIM,COORD_T> create_partition_by_field(Context ctx,
+                          LogicalRegionT<DIM,COORD_T> handle,
+                          LogicalRegionT<DIM,COORD_T> parent,
+                          FieldID fid, // type: Point<COLOR_DIM,COLOR_COORD_T>
+                          IndexSpaceT<COLOR_DIM,COLOR_COORD_T> color_space,
+                          Color color = AUTO_GENERATE_ID,
+                          MapperID id = 0, MappingTagID tag = 0);
+      ///@}
+      ///@{
       /**
        * Create partition by image creates a new index partition from an
        * existing field that represents an enumerated function from 
@@ -3033,11 +3640,7 @@ namespace Legion {
        * a corresponding index subspace. The runtime will automatically
        * compute if the resulting partition is disjoint or not. The
        * user can give the new partition a color by specifying the 
-       * 'color' argument. The user can also control whether dynamic
-       * allocation and freeing of pointers is available on the new
-       * index subspaces using the 'allocable' field. This method is
-       * illegal to perform on structured index spaces. Note that this
-       * call only works for unstructured index spaces.
+       * 'color' argument.
        * @param ctx the enclosing task context
        * @param handle the parent index space of the new index partition
        *               and the one in which all the ptr_t contained in
@@ -3047,9 +3650,11 @@ namespace Legion {
        * @param parent the parent region from which privileges are derived
        * @param fid the field ID of the 'projection' logical partition
        *            we are reading which contains ptr_t@handle
+       * @param color_space the index space of potential colors
        * @param part_kind specify the kind of partition
        * @param color optional new color for the index partition
-       * @param allocable whether dynamic allocation of pointers is permitted
+       * @param id the ID of the mapper to use for mapping field
+       * @param tag the mapper tag to provide context to the mapper
        * @return a new index partition of the 'handle' index space
        */
       IndexPartition create_partition_by_image(Context ctx,
@@ -3057,11 +3662,47 @@ namespace Legion {
                                          LogicalPartition projection,
                                          LogicalRegion parent,
                                          FieldID fid,
-                                         const Domain &color_space,
+                                         IndexSpace color_space,
                                          PartitionKind part_kind = COMPUTE_KIND,
-                                         int color = AUTO_GENERATE_ID,
-                                         bool allocable = false);
-                                               
+                                         Color color = AUTO_GENERATE_ID,
+                                         MapperID id = 0, MappingTagID tag = 0);
+      template<int DIM1, typename COORD_T1, 
+               int DIM2, typename COORD_T2, 
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexPartitionT<DIM2,COORD_T2> create_partition_by_image(Context ctx,
+                              IndexSpaceT<DIM2,COORD_T2> handle,
+                              LogicalPartitionT<DIM1,COORD_T1> projection,
+                              LogicalRegionT<DIM1,COORD_T1> parent,
+                              FieldID fid, // type: Point<DIM2,COORD_T2>
+                              IndexSpaceT<COLOR_DIM,COLOR_COORD_T> color_space,
+                              PartitionKind part_kind = COMPUTE_KIND,
+                              Color color = AUTO_GENERATE_ID,
+                              MapperID id = 0, MappingTagID tag = 0);
+      // Range versions of image
+      IndexPartition create_partition_by_image_range(Context ctx,
+                                         IndexSpace handle,
+                                         LogicalPartition projection,
+                                         LogicalRegion parent,
+                                         FieldID fid,
+                                         IndexSpace color_space,
+                                         PartitionKind part_kind = COMPUTE_KIND,
+                                         Color color = AUTO_GENERATE_ID,
+                                         MapperID id = 0, MappingTagID tag = 0);
+      template<int DIM1, typename COORD_T1, 
+               int DIM2, typename COORD_T2, 
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexPartitionT<DIM2,COORD_T2> create_partition_by_image_range(
+                              Context ctx,
+                              IndexSpaceT<DIM2,COORD_T2> handle,
+                              LogicalPartitionT<DIM1,COORD_T1> projection,
+                              LogicalRegionT<DIM1,COORD_T1> parent,
+                              FieldID fid, // type: Rect<DIM2,COORD_T2>
+                              IndexSpaceT<COLOR_DIM,COLOR_COORD_T> color_space,
+                              PartitionKind part_kind = COMPUTE_KIND,
+                              Color color = AUTO_GENERATE_ID,
+                              MapperID id = 0, MappingTagID tag = 0);
+      ///@}                                    
+      ///@{
       /**
        * Create partition by premimage performs the opposite operation
        * of create partition by image. The function will create a new
@@ -3076,19 +3717,17 @@ namespace Legion {
        * that its projected pointer belonged to. The runtime will compute
        * if the resulting partition is disjoint. The user can also assign
        * a color to the new index partition with the 'color' argument.
-       * The 'allocable' argument controls whether dynamic pointer allocation
-       * and freeing is supported on the new index subspaces. This
-       * method is illegal to perform on structured index spaces.
-       * Note that this call only works for unstructured index spaces.
        * @param ctx the enclosing task context
        * @param projection the index partition being projected
        * @param handle logical region over which to evaluate the function
        * @param parent the parent region from which privileges are derived
        * @param fid the field ID of the 'handle' logical region containing
        *            the function being evaluated
+       * @param color_space the space of colors for the partition
        * @param part_kind specify the kind of partition
        * @param color optional new color for the index partition
-       * @param allocable wehther dynamic allocation of pointers is permitted
+       * @param id the ID of the mapper to use for mapping field
+       * @param tag the mapper tag to provide context to the mapper
        * @return a new index partition of the index space of 'handle'
        */
       IndexPartition create_partition_by_preimage(Context ctx, 
@@ -3096,15 +3735,51 @@ namespace Legion {
                                         LogicalRegion handle,
                                         LogicalRegion parent,
                                         FieldID fid,
-                                        const Domain &color_space,
+                                        IndexSpace color_space,
                                         PartitionKind part_kind = COMPUTE_KIND,
-                                        int color = AUTO_GENERATE_ID,
-                                        bool allocable = false);
+                                        Color color = AUTO_GENERATE_ID,
+                                        MapperID id = 0, MappingTagID tag = 0);
+      template<int DIM1, typename COORD_T1,
+               int DIM2, typename COORD_T2,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexPartitionT<DIM1,COORD_T1> create_partition_by_preimage(Context ctx,
+                              IndexPartitionT<DIM2,COORD_T2> projection,
+                              LogicalRegionT<DIM1,COORD_T1> handle,
+                              LogicalRegionT<DIM1,COORD_T1> parent,
+                              FieldID fid, // type: Point<DIM2,COORD_T2>
+                              IndexSpaceT<COLOR_DIM,COLOR_COORD_T> color_space,
+                              PartitionKind part_kind = COMPUTE_KIND,
+                              Color color = AUTO_GENERATE_ID,
+                              MapperID id = 0, MappingTagID tag = 0);
+      // Range versions of preimage 
+      IndexPartition create_partition_by_preimage_range(Context ctx, 
+                                        IndexPartition projection,
+                                        LogicalRegion handle,
+                                        LogicalRegion parent,
+                                        FieldID fid,
+                                        IndexSpace color_space,
+                                        PartitionKind part_kind = COMPUTE_KIND,
+                                        Color color = AUTO_GENERATE_ID,
+                                        MapperID id = 0, MappingTagID tag = 0);
+      template<int DIM1, typename COORD_T1,
+               int DIM2, typename COORD_T2,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexPartitionT<DIM1,COORD_T1> create_partition_by_preimage_range(
+                              Context ctx,
+                              IndexPartitionT<DIM2,COORD_T2> projection,
+                              LogicalRegionT<DIM1,COORD_T1> handle,
+                              LogicalRegionT<DIM1,COORD_T1> parent,
+                              FieldID fid, // type: Rect<DIM2,COORD_T2>
+                              IndexSpaceT<COLOR_DIM,COLOR_COORD_T> color_space,
+                              PartitionKind part_kind = COMPUTE_KIND,
+                              Color color = AUTO_GENERATE_ID,
+                              MapperID id = 0, MappingTagID tag = 0);
+      ///@}
     public:
       //------------------------------------------------------------------------
       // Computed Index Spaces and Partitions 
       //------------------------------------------------------------------------
-
+      ///@{
       /**
        * Create a new index partition in which the individual sub-regions
        * will computed by one of the following calls:
@@ -3121,23 +3796,28 @@ namespace Legion {
        * the application must assign values to each of the different subspace
        * colors before querying the disjointness or deadlock will likely
        * result (unless a different task is guaranteed to compute any
-       * remaining index subspaces). Note that this call only works for
-       * unstructured index spaces.
+       * remaining index subspaces).
        * @param ctx the enclosing task context
        * @param parent the parent index space for the partition
        * @param color_space the color space for the new partition
        * @param part_kind optionally specify the partition kind
        * @param color optionally assign a color to the partition
-       * @param allocable specify if the sub-regions can allocate
        * @return handle of the new index partition
        */
       IndexPartition create_pending_partition(Context ctx,
                                               IndexSpace parent,
-                                              const Domain &color_space,
+                                              IndexSpace color_space,
                                   PartitionKind part_kind = COMPUTE_KIND, 
-                                  int color = AUTO_GENERATE_ID,
-                                  bool allocable = false);
-
+                                  Color color = AUTO_GENERATE_ID);
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexPartitionT<DIM,COORD_T> create_pending_partition(Context ctx,
+                              IndexSpaceT<DIM,COORD_T> parent,
+                              IndexSpaceT<COLOR_DIM,COLOR_COORD_T> color_space,
+                              PartitionKind part_kind = COMPUTE_KIND,
+                              Color color = AUTO_GENERATE_ID);
+      ///@}
+      ///@{
       /**
        * Create a new index space by unioning together a bunch of index spaces 
        * from a common index space tree. The resulting index space is assigned
@@ -3145,8 +3825,7 @@ namespace Legion {
        * partition. It is illegal to invoke this method with a 'parent' index
        * partition that was not created by a 'create_pending_partition' call.
        * All of the index spaces being unioned together must come from the
-       * same index space tree. Note that this call only works for 
-       * unstructured index spaces.
+       * same index space tree.
        * @param ctx the enclosing task context
        * @param parent the parent index partition 
        * @param color the color to assign the index space to in the parent
@@ -3156,7 +3835,15 @@ namespace Legion {
       IndexSpace create_index_space_union(Context ctx, IndexPartition parent, 
                                         const DomainPoint &color,
                                         const std::vector<IndexSpace> &handles);
-
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexSpaceT<DIM,COORD_T> create_index_space_union(Context ctx,
+                                IndexPartitionT<DIM,COORD_T> parent,
+                                Point<COLOR_DIM,COLOR_COORD_T> color,
+                                const typename std::vector<
+                                  IndexSpaceT<DIM,COORD_T> > &handles);
+      ///@}
+      ///@{
       /**
        * This method is the same as the one above, except the index
        * spaces all come from a common partition specified by 'handle'.
@@ -3171,7 +3858,14 @@ namespace Legion {
       IndexSpace create_index_space_union(Context ctx, IndexPartition parent,
                                           const DomainPoint &color,
                                           IndexPartition handle);
-
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexSpaceT<DIM,COORD_T> create_index_space_union(Context ctx,
+                                IndexPartitionT<DIM,COORD_T> parent,
+                                Point<COLOR_DIM,COLOR_COORD_T> color,
+                                IndexPartitionT<DIM,COORD_T> handle);
+      ///@}
+      ///@{
       /**
        * Create a new index space by intersecting together a bunch of index
        * spaces from a common index space tree. The resulting index space is
@@ -3180,7 +3874,6 @@ namespace Legion {
        * a 'parent' index partition that was not created by a call to 
        * 'create_pending_partition'. All of the index spaces being 
        * intersected together must come from the same index space tree.
-       * Note that this call only works for unstructured index spaces.
        * @param ctx the enclosing task context
        * @param parent the parent index partition
        * @param color the color to assign the index space to in the parent
@@ -3191,13 +3884,20 @@ namespace Legion {
                                                  IndexPartition parent,
                                                  const DomainPoint &color,
                                        const std::vector<IndexSpace> &handles);
-
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexSpaceT<DIM,COORD_T> create_index_space_intersection(Context ctx,
+                                IndexPartitionT<DIM,COORD_T> parent,
+                                Point<COLOR_DIM,COLOR_COORD_T> color,
+                                const typename std::vector<
+                                  IndexSpaceT<DIM,COORD_T> > &handles);
+      ///@}
+      ///@{
       /**
        * This method is the same as the one above, except the index
        * spaces all come from a common partition specified by 'handle'.
        * The resulting index space will be an intersection of all the index
-       * spaces of 'handle'. Note that this call only works for unstructured
-       * index spaces.
+       * spaces of 'handle'.
        * @param ctx the enlcosing task context
        * @param parent the parent index partition
        * @param color the color to assign the index space to in the parent
@@ -3208,20 +3908,26 @@ namespace Legion {
                                                  IndexPartition parent,
                                                  const DomainPoint &color,
                                                  IndexPartition handle);
-
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexSpaceT<DIM,COORD_T> create_index_space_intersection(Context ctx,
+                                IndexPartitionT<DIM,COORD_T> parent,
+                                Point<COLOR_DIM,COLOR_COORD_T> color,
+                                IndexPartitionT<DIM,COORD_T> handle);
+      ///@}
+      ///@{
       /**
        * Create a new index space by taking the set difference of
        * an existing index space with a set of other index spaces.
        * The resulting index space is assigned to be the index space
        * corresponding to 'color' of the 'parent' index partition.
        * It is illegal to invoke this method with a 'parent' index
-       * partition that was not created by a call to 'create_index_partition'.
+       * partition that was not created by a call to 'create_pending_partition'.
        * The 'initial' index space is the index space from which 
        * differences will be performed, and each of the index spaces in 
        * 'handles' will be subsequently subtracted from the 'initial' index
        * space. All of the index spaces in 'handles' as well as 'initial'
-       * must come from the same index space tree. Note that this call
-       * only works for unstructured index spaces.
+       * must come from the same index space tree.
        * @param ctx the enclosing task context
        * @param parent the parent index partition
        * @param color the color to assign the index space to in the parent
@@ -3234,6 +3940,15 @@ namespace Legion {
                                                const DomainPoint &color,
                                                IndexSpace initial,
                                         const std::vector<IndexSpace> &handles);
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexSpaceT<DIM,COORD_T> create_index_space_difference(Context ctx,
+                                IndexPartitionT<DIM,COORD_T> parent,
+                                Point<COLOR_DIM,COLOR_COORD_T> color,
+                                IndexSpaceT<DIM,COORD_T> initial,
+                                const typename std::vector<
+                                  IndexSpaceT<DIM,COORD_T> > &handles);
+      ///@}
     public:
       //------------------------------------------------------------------------
       // Index Tree Traversal Operations
@@ -3255,6 +3970,11 @@ namespace Legion {
       IndexPartition get_index_partition(IndexSpace parent, Color color);
       IndexPartition get_index_partition(IndexSpace parent, 
                                          const DomainPoint &color);
+      // Template version
+      template<int DIM, typename COORD_T>
+      IndexPartitionT<DIM,COORD_T> get_index_partition(
+                                  IndexSpaceT<DIM,COORD_T> parent, Color color);
+
       ///@}
       
       ///@{
@@ -3266,11 +3986,16 @@ namespace Legion {
        * @param color of index partition
        * @return true if an index partition exists with the specified color
        */
+      bool has_index_partition(Context ctx, IndexSpace parent, Color color);
       bool has_index_partition(Context ctx, IndexSpace parent,
                                const DomainPoint &color);
       // Context free
+      bool has_index_partition(IndexSpace parent, Color color);
       bool has_index_partition(IndexSpace parent,
                                const DomainPoint &color);
+      // Template version
+      template<int DIM, typename COORD_T>
+      bool has_index_partition(IndexSpaceT<DIM,COORD_T> parent, Color color);
       ///@}
 
       ///@{
@@ -3290,6 +4015,12 @@ namespace Legion {
       IndexSpace get_index_subspace(IndexPartition p, Color color);
       IndexSpace get_index_subspace(IndexPartition p,
                                     const DomainPoint &color);
+      // Template version
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexSpaceT<DIM,COORD_T> get_index_subspace(
+                                  IndexPartitionT<DIM,COORD_T> p,
+                                  Point<COLOR_DIM,COLOR_COORD_T> color);
       ///@}
 
       ///@{
@@ -3306,10 +4037,16 @@ namespace Legion {
       // Context free
       bool has_index_subspace(IndexPartition p,
                               const DomainPoint &color);
+      // Template version
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      bool has_index_subspace(IndexPartitionT<DIM,COORD_T> p,
+                              Point<COLOR_DIM,COLOR_COORD_T> color);
       ///@}
 
       ///@{
       /**
+       * @deprecated
        * Return if the given index space is represented by 
        * multiple domains or just a single one. If multiple
        * domains represent the index space then 'get_index_space_domains'
@@ -3318,8 +4055,10 @@ namespace Legion {
        * @param handle index space handle
        * @return true if the index space has multiple domains
        */
+      LEGION_DEPRECATED("Multiple domains are no longer supported.")
       bool has_multiple_domains(Context ctx, IndexSpace handle);
       // Context free
+      LEGION_DEPRECATED("Multiple domains are no longer supported.")
       bool has_multiple_domains(IndexSpace handle);
       ///@}
 
@@ -3334,10 +4073,15 @@ namespace Legion {
       Domain get_index_space_domain(Context ctx, IndexSpace handle);
       // Context free
       Domain get_index_space_domain(IndexSpace handle);
+      // Template version
+      template<int DIM, typename COORD_T>
+      DomainT<DIM,COORD_T> get_index_space_domain(
+                                        IndexSpaceT<DIM,COORD_T> handle);
       ///@}
 
       ///@{
       /**
+       * @deprecated
        * Return the domains that represent the index space.
        * While the previous call only works when there is a
        * single domain for the index space, this call will
@@ -3346,9 +4090,11 @@ namespace Legion {
        * @param handle index space handle
        * @param vector to populate with domains
        */
+      LEGION_DEPRECATED("Multiple domains are no longer supported.")
       void get_index_space_domains(Context ctx, IndexSpace handle,
                                    std::vector<Domain> &domains);
       // Context free
+      LEGION_DEPRECATED("Multiple domains are no longer supported.")
       void get_index_space_domains(IndexSpace handle,
                                    std::vector<Domain> &domains);
       ///@}
@@ -3364,6 +4110,29 @@ namespace Legion {
       Domain get_index_partition_color_space(Context ctx, IndexPartition p);
       // Context free
       Domain get_index_partition_color_space(IndexPartition p);
+      // Template version
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      DomainT<COLOR_DIM,COLOR_COORD_T>
+             get_index_partition_color_space(IndexPartitionT<DIM,COORD_T> p);
+      ///@}
+
+      ///@{
+      /**
+       * Return the name of the color space for a partition
+       * @param ctx enclosing task context
+       * @param p handle for the index partition
+       * @return the name of the color space of the specified partition
+       */
+      IndexSpace get_index_partition_color_space_name(Context ctx, 
+                                                      IndexPartition p);
+      // Context free
+      IndexSpace get_index_partition_color_space_name(IndexPartition p);
+      // Template version
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      IndexSpaceT<COLOR_DIM,COLOR_COORD_T> 
+           get_index_partition_color_space_name(IndexPartitionT<DIM,COORD_T> p);
       ///@}
 
       ///@{
@@ -3412,14 +4181,15 @@ namespace Legion {
       ///@}
 
       /**
-       * Get an index subspace from a partition with a given
-       * color point.
+       * @deprecated
+       * Get an index subspace from a partition with a given color point.
        * @param ctx enclosing task context
        * @param p parent index partition handle
        * @param color_point point containing color value of index subspace
        * @return the corresponding index space to the specified color point
        */
       template <unsigned DIM>
+      LEGION_DEPRECATED("Use the new templated methods for geting a subspace.")
       IndexSpace get_index_subspace(Context ctx, IndexPartition p, 
                                 LegionRuntime::Arrays::Point<DIM> color_point);
 
@@ -3437,6 +4207,11 @@ namespace Legion {
       // Context free
       Color get_index_space_color(IndexSpace handle);
       DomainPoint get_index_space_color_point(IndexSpace handle);
+      // Template version
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      Point<COLOR_DIM,COLOR_COORD_T>
+            get_index_space_color(IndexSpaceT<DIM,COORD_T> handle);
       ///@}
 
       ///@{
@@ -3465,6 +4240,10 @@ namespace Legion {
       IndexSpace get_parent_index_space(Context ctx, IndexPartition handle);
       // Context free
       IndexSpace get_parent_index_space(IndexPartition handle);
+      // Template version
+      template<int DIM, typename COORD_T>
+      IndexSpaceT<DIM,COORD_T> get_parent_index_space(
+                                      IndexPartitionT<DIM,COORD_T> handle);
       ///@}
 
       ///@{
@@ -3490,6 +4269,10 @@ namespace Legion {
       IndexPartition get_parent_index_partition(Context ctx, IndexSpace handle);
       // Context free
       IndexPartition get_parent_index_partition(IndexSpace handle);
+      // Template version
+      template<int DIM, typename COORD_T>
+      IndexPartitionT<DIM,COORD_T> get_parent_index_partition(
+                                              IndexSpaceT<DIM,COORD_T> handle);
       ///@}
 
       ///@{
@@ -3540,6 +4323,19 @@ namespace Legion {
        */
       DomainPoint safe_cast(Context ctx, DomainPoint point, 
                             LogicalRegion region);
+      
+      /**
+       * Safe case a domain point down to a target region.  If the point
+       * is not in the target region, returns false, otherwise returns true
+       * @param ctx enclosing task context
+       * @param point the domain point to be cast
+       * @param region the target logical region
+       * @return if the point is in the logical region
+       */
+      template<int DIM, typename COORD_T>
+      bool safe_cast(Context ctx, 
+                     Point<DIM,COORD_T> point,
+                     LogicalRegionT<DIM,COORD_T> region);
     public:
       //------------------------------------------------------------------------
       // Field Space Operations
@@ -3614,6 +4410,11 @@ namespace Legion {
        */
       LogicalRegion create_logical_region(Context ctx, IndexSpace index, 
                                           FieldSpace fields);
+      // Template version
+      template<int DIM, typename COORD_T>
+      LogicalRegionT<DIM,COORD_T> create_logical_region(Context ctx,
+                                      IndexSpaceT<DIM,COORD_T> index,
+                                      FieldSpace fields);
       /**
        * Destroy a logical region and all of its logical sub-regions.
        * @param ctx enclosing task context
@@ -3646,6 +4447,11 @@ namespace Legion {
       // Context free
       LogicalPartition get_logical_partition(LogicalRegion parent,
                                              IndexPartition handle);
+      // Template version
+      template<int DIM, typename COORD_T>
+      LogicalPartitionT<DIM,COORD_T> get_logical_partition(
+                                      LogicalRegionT<DIM,COORD_T> parent,
+                                      IndexPartitionT<DIM,COORD_T> handle);
       ///@}
       
       ///@{
@@ -3668,6 +4474,11 @@ namespace Legion {
                                                       Color c);
       LogicalPartition get_logical_partition_by_color(LogicalRegion parent,
                                                       const DomainPoint &c);
+      // Template version
+      template<int DIM, typename COORD_T>
+      LogicalPartitionT<DIM,COORD_T> get_logical_partition_by_color(
+                                        LogicalRegionT<DIM,COORD_T> parent,
+                                        Color c);
       ///@}
 
       ///@{
@@ -3705,6 +4516,11 @@ namespace Legion {
       LogicalPartition get_logical_partition_by_tree(IndexPartition handle, 
                                                      FieldSpace fspace, 
                                                      RegionTreeID tid);
+      // Template version
+      template<int DIM, typename COORD_T>
+      LogicalPartitionT<DIM,COORD_T> get_logical_partition_by_tree(
+                                      IndexPartitionT<DIM,COORD_T> handle,
+                                      FieldSpace fspace, RegionTreeID tid);
       ///@}
 
       ///@{
@@ -3722,6 +4538,11 @@ namespace Legion {
       // Context free
       LogicalRegion get_logical_subregion(LogicalPartition parent, 
                                           IndexSpace handle);
+      // Template version
+      template<int DIM, typename COORD_T>
+      LogicalRegionT<DIM,COORD_T> get_logical_subregion(
+                                          LogicalPartitionT<DIM,COORD_T> parent,
+                                          IndexSpaceT<DIM,COORD_T> handle);
       ///@}
 
       ///@{
@@ -3744,6 +4565,12 @@ namespace Legion {
                                                    Color c);
       LogicalRegion get_logical_subregion_by_color(LogicalPartition parent,
                                                    const DomainPoint &c);
+      // Template version
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      LogicalRegionT<DIM,COORD_T> get_logical_subregion_by_color(
+                                  LogicalPartitionT<DIM,COORD_T> parent,
+                                  Point<COLOR_DIM,COLOR_COORD_T> color);
       ///@}
 
       ///@{
@@ -3761,6 +4588,11 @@ namespace Legion {
       // Context free
       bool has_logical_subregion_by_color(LogicalPartition parent,
                                           const DomainPoint &c);
+      // Template version
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      bool has_logical_subregion_by_color(LogicalPartitionT<DIM,COORD_T> parent,
+                                  Point<COLOR_DIM,COLOR_COORD_T> color);
       ///@}
 
       ///@{
@@ -3781,6 +4613,11 @@ namespace Legion {
       LogicalRegion get_logical_subregion_by_tree(IndexSpace handle, 
                                                   FieldSpace fspace, 
                                                   RegionTreeID tid);
+      // Template version
+      template<int DIM, typename COORD_T>
+      LogicalRegionT<DIM,COORD_T> get_logical_subregion_by_tree(
+                                    IndexSpaceT<DIM,COORD_T> handle,
+                                    FieldSpace space, RegionTreeID tid);
       ///@}
 
       ///@{
@@ -3798,6 +4635,11 @@ namespace Legion {
       // Context free versions
       Color get_logical_region_color(LogicalRegion handle);
       DomainPoint get_logical_region_color_point(LogicalRegion handle);
+      // Template version
+      template<int DIM, typename COORD_T,
+               int COLOR_DIM, typename COLOR_COORD_T>
+      Point<COLOR_DIM,COLOR_COORD_T>
+        get_logical_region_color_point(LogicalRegionT<DIM,COORD_T> handle);
       ///@}
 
       ///@{
@@ -3827,6 +4669,10 @@ namespace Legion {
                                               LogicalPartition handle);
       // Context free
       LogicalRegion get_parent_logical_region(LogicalPartition handle);
+      // Template version
+      template<int DIM, typename COORD_T>
+      LogicalRegionT<DIM,COORD_T> get_parent_logical_region(
+                                    LogicalPartitionT<DIM,COORD_T> handle);
       ///@}
 
       ///@{
@@ -3852,18 +4698,42 @@ namespace Legion {
                                                     LogicalRegion handle);
       // Context free
       LogicalPartition get_parent_logical_partition(LogicalRegion handle);
+      // Template version
+      template<int DIM, typename COORD_T>
+      LogicalPartitionT<DIM,COORD_T> get_parent_logical_partition(
+                                          LogicalRegionT<DIM,COORD_T> handle);
       ///@}
     public:
       //------------------------------------------------------------------------
       // Allocator and Argument Map Operations 
       //------------------------------------------------------------------------
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
       /**
+       * @deprecated
        * Create an index allocator object for a given index space
+       * This method is deprecated becasue index spaces no longer support
+       * dynamic allocation. This will still work only if there is exactly
+       * one allocator made for the index space throughout the duration
+       * of its lifetime.
        * @param ctx enclosing task context
        * @param handle for the index space to create an allocator
        * @return a new index space allocator for the given index space
        */
+      LEGION_DEPRECATED("Dynamic index allocation is no longer supported.")
       IndexAllocator create_index_allocator(Context ctx, IndexSpace handle);
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
       /**
        * Create a field space allocator object for the given field space
@@ -5299,9 +6169,6 @@ namespace Legion {
        * -lg:sched <int> The run-ahead factor for the runtime.  How many
        *              outstanding tasks ready to run should be on each
        *              processor before backing off the mapping procedure.
-       * -lg:width <int> Scheduling granularity when handling dependence
-       *              analysis and issuing operations.  Effectively the
-       *              Legion runtime superscalar width.
        * -lg:inorder  Execute operations in strict propgram order. This
        *              flag will actually run the entire operation through
        *              the pipeline and wait for it to complete before
@@ -5399,6 +6266,22 @@ namespace Legion {
        *              all nodes are disabled. Zero will disable all
        *              profiling while each number greater than zero will
        *              profile on that number of nodes.
+       * -lg:serializer <string> Specify the kind of serializer to use:
+       *              'ascii' or 'binary'. The default is 'binary'.
+       * -lg:prof_logfile <filename> If using a binary serializer the
+       *              name of the output file to write to.
+       * -lg:prof_footprint <int> The maximum goal size of Legion Prof 
+       *              footprint during runtime in MBs. If the total data 
+       *              captured by the profiler exceeds this footprint, the 
+       *              runtime will begin dumping data out to the output file 
+       *              in a minimally invasive way while the application is 
+       *              still running. The default is 512 (MB).
+       * -lg:prof_latency <int> The goal latency in microseconds of 
+       *              intermediate profiling tasks to be writing to output
+       *              files if the maximum footprint size is exceeded.
+       *              This allows control over the granularity so they
+       *              can be made small enough to interleave with other
+       *              runtime work. The default is 100 (us).
        *
        * @param argc the number of input arguments
        * @param argv pointer to an array of string arguments of size argc
@@ -5953,6 +6836,57 @@ namespace Legion {
        */
       static Context get_context(void);
 #endif
+    private:
+      // Helper methods for templates
+      IndexSpace create_index_space_internal(Context ctx, const void *realm_is,
+                                             TypeTag type_tag);
+      IndexPartition create_restricted_partition(Context ctx,
+                                      IndexSpace parent,
+                                      IndexSpace color_space,
+                                      const void *transform,
+                                      size_t transform_size,
+                                      const void *extent, 
+                                      size_t extent_size,
+                                      PartitionKind part_kind, Color color);
+      IndexSpace create_index_space_union_internal(Context ctx,
+                                      IndexPartition parent,
+                                      const void *realm_color, TypeTag type_tag,
+                                      const std::vector<IndexSpace> &handles);
+      IndexSpace create_index_space_union_internal(Context ctx, 
+                                      IndexPartition parent, 
+                                      const void *realm_color, TypeTag type_tag,
+                                      IndexPartition handle);
+      IndexSpace create_index_space_intersection_internal(Context ctx,
+                                      IndexPartition parent,
+                                      const void *realm_color, TypeTag type_tag,
+                                      const std::vector<IndexSpace> &handles);
+      IndexSpace create_index_space_intersection_internal(Context ctx, 
+                                      IndexPartition parent, 
+                                      const void *realm_color, TypeTag type_tag,
+                                      IndexPartition handle);
+      IndexSpace create_index_space_difference_internal(Context ctx,
+                                      IndexPartition paretn,
+                                      const void *realm_color, TypeTag type_tag,
+                                      IndexSpace initial,
+                                      const std::vector<IndexSpace> &handles);
+      IndexSpace get_index_subspace_internal(IndexPartition handle, 
+                                      const void *realm_color,TypeTag type_tag);
+      bool has_index_subspace_internal(IndexPartition handle,
+                                      const void *realm_color,TypeTag type_tag);
+      void get_index_partition_color_space_internal(IndexPartition handle,
+                                      void *realm_is, TypeTag type_tag);
+      void get_index_space_domain_internal(IndexSpace handle, 
+                                      void *realm_is, TypeTag type_tag);
+      void get_index_space_color_internal(IndexSpace handle,
+                                      void *realm_color, TypeTag type_tag);
+      bool safe_cast_internal(Context ctx, LogicalRegion region,
+                                      const void *realm_point,TypeTag type_tag);
+      LogicalRegion get_logical_subregion_by_color_internal(
+                                      LogicalPartition parent,
+                                      const void *realm_color,TypeTag type_tag);
+      bool has_logical_subregion_by_color_internal(
+                                      LogicalPartition parent,
+                                      const void *realm_color,TypeTag type_tag);
     private:
       friend class FieldAllocator;
       FieldID allocate_field(Context ctx, FieldSpace space, 

@@ -552,11 +552,14 @@ namespace LegionRuntime {
     template <typename T> class GenericDenseSubrectIterator;
     template <typename T> class GenericLinearSubrectIterator;
     template <unsigned DIM> class GenericPointInRectIterator;
-  
+
+#ifdef OLD_STYLE_DYNAMIC_MAPPINGS  
     template <typename T> class DynamicMapping;
+#endif
 
     template <unsigned IDIM, unsigned ODIM> class Mapping;
 
+#ifdef OLD_STYLE_DYNAMIC_MAPPINGS  
     template <unsigned IDIM, unsigned ODIM>
     class MappingRegistry {
     public:
@@ -594,6 +597,7 @@ namespace LegionRuntime {
       std::vector<MappingDeserializerFn> ids_to_fns;
       std::map<MappingDeserializerFn, int> fns_to_ids;
     };
+#endif
 
     template <unsigned IDIM_, unsigned ODIM_>
     class Mapping {
@@ -613,6 +617,7 @@ namespace LegionRuntime {
       typedef GenericPointInRectIterator<IDIM> PointInInputRectIterator;
       typedef GenericPointInRectIterator<ODIM> PointInOutputRectIterator;
 
+#ifdef OLD_STYLE_DYNAMIC_MAPPINGS  
       static MappingRegistry<IDIM_, ODIM_>& registry(void);
 
       template <class T>
@@ -635,6 +640,7 @@ namespace LegionRuntime {
 	DynamicMapping<T> *m = new DynamicMapping<T>(_t);
 	return m;
       }
+#endif
 
       virtual Point<ODIM> image(const Point<IDIM> p) const = 0;
   
@@ -644,8 +650,8 @@ namespace LegionRuntime {
       virtual Rect<ODIM> image_dense_subrect(const Rect<IDIM> r, Rect<IDIM>& subrect) const = 0;
       virtual Point<ODIM> image_linear_subrect(const Rect<IDIM> r, Rect<IDIM>& subrect, Point<ODIM> strides[IDIM]) const = 0;
 
-      virtual Rect<IDIM> preimage(const Point<ODIM> p) const { assert(0); return Rect<IDIM>(); }//= 0;
-      virtual bool preimage_is_dense(const Point<ODIM> p) const { assert(0); return false; }//= 0;
+      virtual Rect<IDIM> preimage(const Point<ODIM> p) const = 0;//{ assert(0); return Rect<IDIM>(); }//= 0;
+      virtual bool preimage_is_dense(const Point<ODIM> p) const = 0;//{ assert(0); return false; }//= 0;
 
       inline void add_reference(void)
       {
@@ -659,6 +665,7 @@ namespace LegionRuntime {
       }
     };
 
+#ifdef OLD_STYLE_DYNAMIC_MAPPINGS  
     template <typename T>
     class DynamicMapping : public Mapping<T::IDIM, T::ODIM> {
     public:
@@ -721,6 +728,7 @@ namespace LegionRuntime {
 	return t.preimage_is_dense(p);
       }
     };
+#endif
 
     template <unsigned DIM>
     class GenericPointInRectIterator {
@@ -848,7 +856,7 @@ namespace LegionRuntime {
     class Translation {
     public:
       enum { IDIM = DIM, ODIM = DIM };
-      Translation(void) : offset((coord_t)0) {}
+      Translation(void) : offset(coord_t(0)) {}
       Translation(const Point<DIM> _offset) : offset(_offset) {}
   
       Point<ODIM> image(const Point<IDIM> p) const
@@ -877,7 +885,7 @@ namespace LegionRuntime {
 	subrect = r;
 	for(unsigned i = 0; i < DIM; i++) {
 	  // strides are unit vectors
-	  strides[i] = (coord_t)0;
+	  strides[i] = coord_t(0);
 	  strides[i].x[i] = 1;
 	}
 	return r.lo + offset;

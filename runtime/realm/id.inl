@@ -45,6 +45,11 @@ namespace Realm {
     return this->id == rhs.id;
   }
 
+  inline bool ID::operator!=(const ID& rhs) const 
+  {
+    return this->id != rhs.id;
+  }
+
   template <class T>
   T ID::convert(void) const { T thing_to_return; thing_to_return.id = id; return thing_to_return; }
 
@@ -190,6 +195,21 @@ namespace Realm {
   inline bool ID::is_idxspace(void) const
   {
     return this->idxspace.type_tag == FMT_IdxSpace::TAG_VALUE;
+  }
+
+  /*static*/ inline ID ID::make_sparsity(unsigned owner_node, unsigned creator_node, unsigned sparsity_idx)
+  {
+    ID id;
+    id.sparsity.type_tag = FMT_Sparsity::TAG_VALUE;
+    id.sparsity.owner_node = owner_node;
+    id.sparsity.creator_node = creator_node;
+    id.sparsity.sparsity_idx = sparsity_idx;
+    return id;
+  }
+
+  inline bool ID::is_sparsity(void) const
+  {
+    return this->sparsity.type_tag == FMT_Sparsity::TAG_VALUE;
   }
 
   /*static*/ inline ID ID::make_allocator(unsigned owner_node, unsigned creator_node, unsigned allocator_idx)

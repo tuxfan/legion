@@ -18,30 +18,31 @@
 
 #include "channel.h"
 
-namespace LegionRuntime {
-  namespace LowLevel {
+namespace Realm {
+
     class FileRequest : public Request {
     public:
       int fd;
-      char *mem_base;
+      void *mem_base; // could be source or dest
       off_t file_off;
     };
     class DiskRequest : public Request {
     public:
       int fd;
-      char *mem_base;
+      void *mem_base; // could be source or dest
       off_t disk_off;
     };
 
-    template<unsigned DIM>
     class FileXferDes : public XferDes {
     public:
       FileXferDes(
-          DmaRequest* _dma_request, gasnet_node_t _launch_node,
+          DmaRequest* _dma_request, NodeID _launch_node,
           XferDesID _guid, XferDesID _pre_guid, XferDesID _next_guid,
+	  uint64_t next_max_rw_gap,
+	  size_t src_ib_offset, size_t src_ib_size,
           bool mark_started, RegionInstance inst,
-          const Buffer& _src_buf, const Buffer& _dst_buf,
-          const Domain& _domain, const std::vector<OffsetsAndSize>& _oas_vec,
+	  Memory _src_mem, Memory _dst_mem,
+	  TransferIterator *_src_iter, TransferIterator *_dst_iter,
           uint64_t max_req_size, long max_nr, int _priority,
           XferOrder::Type _order, XferKind _kind, XferDesFence* _complete_fence);
 
@@ -56,17 +57,20 @@ namespace LegionRuntime {
       void flush();
     private:
       FileRequest* file_reqs;
+      std::string filename;
       int fd; // The file that stores the physical instance
-      const char *buf_base;
+      //const char *buf_base;
     };
 
-    template<unsigned DIM>
     class DiskXferDes : public XferDes {
     public:
-      DiskXferDes(DmaRequest* _dma_request, gasnet_node_t _launch_node,
+      DiskXferDes(DmaRequest* _dma_request, NodeID _launch_node,
                   XferDesID _guid, XferDesID _pre_xd_guid, XferDesID _next_xd_guid,
-                  bool mark_started, const Buffer& _src_buf, const Buffer& _dst_buf,
-                  const Domain& _domain, const std::vector<OffsetsAndSize>& _oas_vec,
+		  uint64_t next_max_rw_gap,
+		  size_t src_ib_offset, size_t src_ib_size,
+                  bool mark_started,
+		  Memory _src_mem, Memory _dst_mem,
+		  TransferIterator *_src_iter, TransferIterator *_dst_iter,
                   uint64_t _max_req_size, long max_nr, int _priority,
                   XferOrder::Type _order, XferKind _kind, XferDesFence* _complete_fence);
 
@@ -82,7 +86,7 @@ namespace LegionRuntime {
     private:
       int fd;
       DiskRequest* disk_reqs;
-      const char *buf_base;
+      //const char *buf_base;
     };
 
     class FileChannel : public Channel {
@@ -103,6 +107,6 @@ namespace LegionRuntime {
       long available();
     };
 
-  } // namespace LowLevel
-} // namespace LegionRuntime
+}; // namespace Realm
+
 #endif /*LOWLEVEL_CHANNEL_DISK*/

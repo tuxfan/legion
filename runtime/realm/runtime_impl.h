@@ -21,12 +21,13 @@
 #include "runtime.h"
 #include "id.h"
 
-#include "activemsg.h"
+#include <realm/activemsg.h>
 #include "operation.h"
 #include "profiling.h"
 
 #include "dynamic_table.h"
 #include "proc_impl.h"
+#include "deppart/partitions.h"
 
 // event and reservation impls are included directly in the node's dynamic tables,
 //  so we need their definitions here (not just declarations)
@@ -44,23 +45,16 @@
 #define typeof decltype
 #endif
 
-// dma channels are still in old namespace
-namespace LegionRuntime {
-  namespace LowLevel {
-    class MemPairCopierFactory;
-  };
-};
-
 namespace Realm {
 
-  class IndexSpaceImpl;
   class ProcessorGroup;
   class MemoryImpl;
   class ProcessorImpl;
   class RegionInstanceImpl;
   class Module;
 
-  typedef LegionRuntime::LowLevel::MemPairCopierFactory DMAChannel;
+  class MemPairCopierFactory;
+  typedef MemPairCopierFactory DMAChannel;
 
     template <typename _ET, size_t _INNER_BITS, size_t _LEAF_BITS>
     class DynamicTableAllocator {
@@ -80,7 +74,7 @@ namespace Realm {
       static ID make_id(const BarrierImpl& dummy, int owner, int index) { return ID::make_barrier(owner, index, 0); }
       static Reservation make_id(const ReservationImpl& dummy, int owner, int index) { return ID::make_reservation(owner, index).convert<Reservation>(); }
       static Processor make_id(const ProcessorGroup& dummy, int owner, int index) { return ID::make_procgroup(owner, 0, index).convert<Processor>(); }
-      static IndexSpace make_id(const IndexSpaceImpl& dummy, int owner, int index) { return ID::make_idxspace(owner, 0, index).convert<IndexSpace>(); }
+      static ID make_id(const SparsityMapImplWrapper& dummy, int owner, int index) { return ID::make_sparsity(owner, 0, index); }
       
       static LEAF_TYPE *new_leaf_node(IT first_index, IT last_index, 
 				      int owner, FreeList *free_list)
@@ -112,8 +106,8 @@ namespace Realm {
     typedef DynamicTableAllocator<GenEventImpl, 10, 8> EventTableAllocator;
     typedef DynamicTableAllocator<BarrierImpl, 10, 4> BarrierTableAllocator;
     typedef DynamicTableAllocator<ReservationImpl, 10, 8> ReservationTableAllocator;
-    typedef DynamicTableAllocator<IndexSpaceImpl, 10, 4> IndexSpaceTableAllocator;
     typedef DynamicTableAllocator<ProcessorGroup, 10, 4> ProcessorGroupTableAllocator;
+    typedef DynamicTableAllocator<SparsityMapImplWrapper, 10, 4> SparsityMapTableAllocator;
 
     // for each of the ID-based runtime objects, we're going to have an
     //  implementation class and a table to look them up in
@@ -128,8 +122,30 @@ namespace Realm {
       DynamicTable<EventTableAllocator> events;
       DynamicTable<BarrierTableAllocator> barriers;
       DynamicTable<ReservationTableAllocator> reservations;
-      DynamicTable<IndexSpaceTableAllocator> index_spaces;
       DynamicTable<ProcessorGroupTableAllocator> proc_groups;
+
+      // sparsity maps can be created by other nodes, so keep a
+      //  map per-creator_node
+      std::vector<DynamicTable<SparsityMapTableAllocator> *> sparsity_maps;
+    };
+
+    class RemoteIDAllocator {
+    public:
+      RemoteIDAllocator(void);
+      ~RemoteIDAllocator(void);
+
+      void set_request_size(ID::ID_Types id_type, int batch_size, int low_water_mark);
+      void make_initial_requests(void);
+
+      ID::IDType get_remote_id(NodeID target, ID::ID_Types id_type);
+
+      void add_id_range(NodeID target, ID::ID_Types id_type, ID::IDType first, ID::IDType last);
+
+    protected:
+      GASNetHSL mutex;
+      std::map<ID::ID_Types, int> batch_sizes, low_water_marks;
+      std::map<ID::ID_Types, std::set<NodeID> > reqs_in_flight;
+      std::map<ID::ID_Types, std::map<NodeID, std::vector<std::pair<ID::IDType, ID::IDType> > > > id_ranges;
     };
 
     // the "core" module provides the basic memories and processors used by Realm
@@ -208,8 +224,10 @@ namespace Realm {
       MemoryImpl *get_memory_impl(ID id);
       ProcessorImpl *get_processor_impl(ID id);
       ProcessorGroup *get_procgroup_impl(ID id);
-      IndexSpaceImpl *get_index_space_impl(ID id);
       RegionInstanceImpl *get_instance_impl(ID id);
+      SparsityMapImplWrapper *get_sparsity_impl(ID id);
+      SparsityMapImplWrapper *get_available_sparsity_impl(NodeID target_node);
+
 #ifdef DEADLOCK_TRACE
       void add_thread(const pthread_t *thread);
 #endif
@@ -230,8 +248,12 @@ namespace Realm {
       EventTableAllocator::FreeList *local_event_free_list;
       BarrierTableAllocator::FreeList *local_barrier_free_list;
       ReservationTableAllocator::FreeList *local_reservation_free_list;
-      IndexSpaceTableAllocator::FreeList *local_index_space_free_list;
       ProcessorGroupTableAllocator::FreeList *local_proc_group_free_list;
+
+      // keep a free list for each node we allocate maps on (i.e. indexed
+      //   by owner_node)
+      std::vector<SparsityMapTableAllocator::FreeList *> local_sparsity_map_free_lists;
+      RemoteIDAllocator remote_id_allocator;
 
       // legacy behavior if Runtime::run() is used
       bool run_method_called;
@@ -292,6 +314,39 @@ namespace Realm {
 
     // active messages
 
+    struct RemoteIDRequestMessage {
+      struct RequestArgs {
+	NodeID sender;
+	ID::ID_Types id_type;
+	int count;
+      };
+
+      static void handle_request(RequestArgs args);
+
+      typedef ActiveMessageShortNoReply<REMOTE_ID_REQUEST_MSGID,
+				        RequestArgs,
+				        handle_request> Message;
+
+      static void send_request(NodeID target, ID::ID_Types id_type, int count);
+    };
+
+    struct RemoteIDResponseMessage {
+      struct RequestArgs {
+	NodeID responder;
+	ID::ID_Types id_type;
+	ID::IDType first_id, last_id;
+      };
+
+      static void handle_request(RequestArgs args);
+
+      typedef ActiveMessageShortNoReply<REMOTE_ID_RESPONSE_MSGID,
+				        RequestArgs,
+				        handle_request> Message;
+
+      static void send_request(NodeID target, ID::ID_Types id_type,
+			       ID::IDType first_id, ID::IDType last_id);
+    };
+
     struct RuntimeShutdownMessage {
       struct RequestArgs {
 	int initiating_node;
@@ -304,7 +359,7 @@ namespace Realm {
 				        RequestArgs,
 				        handle_request> Message;
 
-      static void send_request(gasnet_node_t target);
+      static void send_request(NodeID target);
     };
       
 }; // namespace Realm

@@ -252,7 +252,8 @@ namespace Legion {
       RtEvent defer_perform_mapping(RtEvent precondition, MustEpochOp *op);
       RtEvent defer_launch_task(RtEvent precondition);
     protected:
-      void enqueue_ready_task(RtEvent wait_on = RtEvent::NO_RT_EVENT);
+      void enqueue_ready_task(bool use_target_processor,
+                              RtEvent wait_on = RtEvent::NO_RT_EVENT);
     protected:
       void pack_version_infos(Serializer &rez,
                               std::vector<VersionInfo> &infos,
@@ -270,7 +271,7 @@ namespace Legion {
                                  std::vector<ProjectionInfo> &infos);
       void unpack_projection_infos(Deserializer &derez,
                                    std::vector<ProjectionInfo> &infos,
-                                   const Domain &launch_domain);
+                                   IndexSpace launch_space);
     public:
       // Tell the parent context that this task is in a ready queue
       void activate_outstanding_task(void);
@@ -423,7 +424,7 @@ namespace Legion {
     public:
       virtual void add_copy_profiling_request(
                                       Realm::ProfilingRequestSet &requests);
-      virtual void report_profiling_response(
+      virtual void handle_profiling_response(
                                 const Realm::ProfilingResponse &respone);
     public:
       virtual void activate(void) = 0;
@@ -492,6 +493,12 @@ namespace Legion {
       int                                      profiling_priority;
       int                          outstanding_profiling_requests;
       RtUserEvent                              profiling_reported;
+#ifdef DEBUG_LEGION
+    protected:
+      // For checking that premapped instances didn't change during mapping
+      std::map<unsigned/*index*/,
+               std::vector<Mapping::PhysicalInstance> > premapped_instances;
+#endif
     };
 
     /**
@@ -510,7 +517,7 @@ namespace Legion {
       bool is_sliced(void) const;
       void slice_index_space(void);
       void trigger_slices(void);
-      void clone_multi_from(MultiTask *task, const Domain &d, Processor p,
+      void clone_multi_from(MultiTask *task, IndexSpace is, Processor p,
                             bool recurse, bool stealable);
     public:
       virtual void activate(void) = 0;
@@ -545,7 +552,7 @@ namespace Legion {
                                std::set<RtEvent> &ready_events) = 0;
       virtual void perform_inlining(void) = 0;
     public:
-      virtual SliceTask* clone_as_slice_task(const Domain &d,
+      virtual SliceTask* clone_as_slice_task(IndexSpace is,
           Processor p, bool recurse, bool stealable,
           long long scale_denominator) = 0;
       virtual void handle_future(const DomainPoint &point, const void *result,
@@ -566,7 +573,8 @@ namespace Legion {
       std::vector<ProjectionInfo> projection_infos;
       bool sliced;
     protected:
-      Domain internal_domain;
+      IndexSpace launch_space; // global set of points
+      IndexSpace internal_space; // local set of points
       ReductionOpID redop;
       const ReductionOp *reduction_op;
       FutureMap point_arguments;
@@ -614,6 +622,7 @@ namespace Legion {
       virtual bool has_prepipeline_stage(void) const { return true; }
       virtual void trigger_prepipeline_stage(void);
       virtual void trigger_dependence_analysis(void);
+      virtual void trigger_ready(void);
       virtual void report_interfering_requirements(unsigned idx1,unsigned idx2);
       virtual std::map<PhysicalManager*,std::pair<unsigned,bool> >*
                                        get_acquired_instances_ref(void);
@@ -807,10 +816,12 @@ namespace Legion {
     public:
       FutureMap initialize_task(TaskContext *ctx,
                                 const IndexTaskLauncher &launcher,
+                                IndexSpace launch_space,
                                 bool check_privileges,
                                 bool track = true);
       Future initialize_task(TaskContext *ctx,
                              const IndexTaskLauncher &launcher,
+                             IndexSpace launch_space,
                              ReductionOpID redop,
                              bool check_privileges,
                              bool track = true);
@@ -850,7 +861,7 @@ namespace Legion {
       virtual std::map<PhysicalManager*,std::pair<unsigned,bool> >*
                                        get_acquired_instances_ref(void);
     public:
-      virtual SliceTask* clone_as_slice_task(const Domain &d,
+      virtual SliceTask* clone_as_slice_task(IndexSpace is,
           Processor p, bool recurse, bool stealable,
           long long scale_denominator);
     public:
@@ -889,9 +900,6 @@ namespace Legion {
       unsigned mapped_points;
       unsigned complete_points;
       unsigned committed_points;
-      // Track whether or not we've received our commit command
-      bool complete_received;
-      bool commit_received; 
     protected:
       std::vector<RegionTreePath> privilege_paths;
       std::deque<SliceTask*> locally_mapped_slices;
@@ -959,7 +967,7 @@ namespace Legion {
                                std::set<RtEvent> &ready_events);
       virtual void perform_inlining(void);
     public:
-      virtual SliceTask* clone_as_slice_task(const Domain &d,
+      virtual SliceTask* clone_as_slice_task(IndexSpace is,
           Processor p, bool recurse, bool stealable,
           long long scale_denominator);
       virtual void handle_future(const DomainPoint &point, const void *result,
@@ -1048,36 +1056,6 @@ namespace Legion {
       std::map<PhysicalManager*,std::pair<unsigned,bool> > acquired_instances;
       std::set<RtEvent> map_applied_conditions;
       std::set<ApEvent> restrict_postconditions;
-    };
-
-    /**
-     * \class DeferredSlicer
-     * A class for helping with parallelizing the triggering
-     * of slice tasks from within MultiTasks
-     */
-    class DeferredSlicer {
-    public:
-      struct DeferredSliceArgs : public LgTaskArgs<DeferredSliceArgs> {
-      public:
-        static const LgTaskID TASK_ID = LG_DEFERRED_SLICE_ID;
-      public:
-        DeferredSlicer *slicer;
-        SliceTask *slice;
-      };
-    public:
-      DeferredSlicer(MultiTask *owner);
-      DeferredSlicer(const DeferredSlicer &rhs);
-      ~DeferredSlicer(void);
-    public:
-      DeferredSlicer& operator=(const DeferredSlicer &rhs);
-    public:
-      void trigger_slices(std::list<SliceTask*> &slices);
-      void perform_slice(SliceTask *slice);
-    public:
-      static void handle_slice(const void *args);
-    private:
-      Reservation slice_lock;
-      MultiTask *const owner;
     };
 
   }; // namespace Internal 

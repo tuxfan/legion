@@ -26,5 +26,11 @@ if(Legion_USE_HDF5)
   add_subdirectory(hdf_attach_subregion_parallel)
 endif()
 
+<<<<<<< HEAD
 add_subdirectory(visualization)
 
+=======
+if(Legion_USE_Python)
+  add_subdirectory(python_bindings)
+endif()
+>>>>>>> master

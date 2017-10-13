@@ -25,7 +25,6 @@
 #include "legion_views.h"
 #include "legion_analysis.h"
 #include "legion_context.h"
-#include "logger_message_descriptor.h"
 
 namespace Legion {
   namespace Internal {
@@ -76,7 +75,7 @@ namespace Legion {
     }
     
     //--------------------------------------------------------------------------
-    PhysicalUser::PhysicalUser(const RegionUsage &u, const ColorPoint &c,
+    PhysicalUser::PhysicalUser(const RegionUsage &u, const LegionColor c,
                                UniqueID id, unsigned idx, RegionNode *n)
       : usage(u), child(c), op_id(id), index(idx), node(n)
     //--------------------------------------------------------------------------
@@ -910,7 +909,8 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void VersionInfo::clone_to_depth(unsigned depth, const FieldMask &mask,
-                                     VersionInfo &target_info) const
+                               InnerContext *context, VersionInfo &target_info,
+                               std::set<RtEvent> &ready_events) const
     //--------------------------------------------------------------------------
     {
       // If the upper bound nodes are the same, we are done
@@ -929,11 +929,11 @@ namespace Legion {
 #ifdef DEBUG_LEGION
         assert(state != NULL);
 #endif
-        FieldMask split_overlap = split_masks[idx] & mask;
+        const FieldMask split_overlap = split_masks[idx] & mask;
         if (!!split_overlap)
           target_info.record_split_fields(state->node, split_overlap);
         // Also copy over the needed version states
-        state->clone_to(mask, target_info);
+        state->clone_to(mask, split_overlap, context, target_info,ready_events);
       }
     }
 
@@ -1588,18 +1588,11 @@ namespace Legion {
       if (!local_node->dominates(node))
       {
         if (local_node->intersects_with(node))
-        {
-          MessageDescriptor ILLEGAL_PARTIAL_ACQUIRE(1100, "undefined");
-          log_run.error(ILLEGAL_PARTIAL_ACQUIRE.id(),
+          REPORT_LEGION_ERROR(ERROR_ILLEGAL_PARTIAL_ACQUIRE, 
                         "Illegal partial acquire operation (ID %lld) "
                         "performed in task %s (ID %lld)", op->get_unique_id(),
                         op->get_context()->get_task_name(),
-                        op->get_context()->get_unique_id());
-#ifdef DEBUG_LEGION
-          assert(false);
-#endif
-          exit(ERROR_ILLEGAL_PARTIAL_ACQUISITION);
-        }
+                        op->get_context()->get_unique_id())
         return;
       }
       // At this point we know we'll be handling the fields one 
@@ -1666,16 +1659,11 @@ namespace Legion {
           return;
       }
       // It's bad if we get here
-      MessageDescriptor ILLEGAL_INTERFERING_RESTRICTON(1101, "undefined");
-      log_run.error(ILLEGAL_INTERFERING_RESTRICTON.id(),
+      REPORT_LEGION_ERROR(ERROR_ILLEGAL_INTERFERING_RESTRICTON, 
                     "Illegal interfering restriction performed by attach "
                     "operation (ID %lld) in task %s (ID %lld)",
                     op->get_unique_op_id(), op->get_context()->get_task_name(),
-                    op->get_context()->get_unique_id());
-#ifdef DEBUG_LEGION
-      assert(false);
-#endif
-      exit(ERROR_ILLEGAL_INTERFERING_RESTRICTIONS);
+                    op->get_context()->get_unique_id())
     }
     
     //--------------------------------------------------------------------------
@@ -1811,16 +1799,11 @@ namespace Legion {
           return;
       }
       // It's bad if we get here
-      MessageDescriptor ILLEGAL_INTERFERING_ACQUIRE(1102, "undefined");
-      log_run.error(ILLEGAL_INTERFERING_ACQUIRE.id(),
+      REPORT_LEGION_ERROR(ERROR_ILLEGAL_INTERFERING_ACQUIRE, 
                     "Illegal interfering acquire operation performed by "
                     "acquire operation (ID %lld) in task %s (ID %lld)",
                     op->get_unique_op_id(), op->get_context()->get_task_name(),
-                    op->get_context()->get_unique_id());
-#ifdef DEBUG_LEGION
-      assert(false);
-#endif
-      exit(ERROR_ILLEGAL_INTERFERING_ACQUISITIONS);
+                    op->get_context()->get_unique_id())
     }
 
     //--------------------------------------------------------------------------
@@ -1852,19 +1835,12 @@ namespace Legion {
       if (!local_node->dominates(node))
       {
         if (local_node->intersects_with(node))
-        {
-          MessageDescriptor ILLEGAL_PARTIAL_RESTRICTION(1103, "undefined");
-          log_run.error(ILLEGAL_PARTIAL_RESTRICTION.id(),
+          REPORT_LEGION_ERROR(ERROR_ILLEGAL_PARTIAL_RESTRICTION, 
                         "Illegal partial restriction operation performed by "
                         "attach operation (ID %lld) in task %s (ID %lld)",
                         op->get_unique_op_id(), 
                         op->get_context()->get_task_name(),
-                        op->get_context()->get_unique_id());
-#ifdef DEBUG_LEGION
-          assert(false);
-#endif
-          exit(ERROR_ILLEGAL_PARTIAL_RESTRICTION);
-        }
+                        op->get_context()->get_unique_id())
         return;
       }
       // At this point we know we'll be able to do the restriction
@@ -1938,12 +1914,13 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     ProjectionInfo::ProjectionInfo(Runtime *runtime, 
-                      const RegionRequirement &req, const Domain &launch_domain)
+                      const RegionRequirement &req, IndexSpace launch_space)
       : projection((req.handle_type != SINGULAR) ? 
           runtime->find_projection_function(req.projection) : NULL),
         projection_type(req.handle_type),
-        projection_domain((req.handle_type != SINGULAR) ?
-            launch_domain : Domain::NO_DOMAIN), dirty_reduction(false)
+        projection_space((req.handle_type != SINGULAR) ?
+            runtime->forest->get_node(launch_space) : NULL),
+        dirty_reduction(false)
     //--------------------------------------------------------------------------
     {
     }
@@ -1967,7 +1944,7 @@ namespace Legion {
     {
       projection = NULL;
       projection_type = SINGULAR;
-      projection_domain = Domain::NO_DOMAIN;
+      projection_space = NULL;
       projection_epochs.clear();
       dirty_reduction = false;
     }
@@ -1988,14 +1965,14 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void ProjectionInfo::unpack_info(Deserializer &derez, Runtime *runtime,
-                      const RegionRequirement &req, const Domain &launch_domain)
+                      const RegionRequirement &req, IndexSpaceNode *launch_node)
     //--------------------------------------------------------------------------
     {
       projection_type = req.handle_type;
       if (req.handle_type != SINGULAR)
       {
         projection = runtime->find_projection_function(req.projection);
-        projection_domain = launch_domain; 
+        projection_space = launch_node; 
       }
       size_t num_epochs;
       derez.deserialize(num_epochs);
@@ -2439,13 +2416,14 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void ProjectionEpoch::insert(ProjectionFunction *function, const Domain &d)
+    void ProjectionEpoch::insert(ProjectionFunction *function, 
+                                 IndexSpaceNode* node)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
       assert(!!valid_fields);
 #endif
-      projections[function].insert(d);
+      projections[function].insert(node);
     }
 
     /////////////////////////////////////////////////////////////
@@ -2553,8 +2531,8 @@ namespace Legion {
           it = field_states.erase(it);
           continue;
         }
-        std::vector<ColorPoint> to_delete;
-        for (LegionMap<ColorPoint,FieldMask>::aligned::iterator child_it = 
+        std::vector<LegionColor> to_delete;
+        for (LegionMap<LegionColor,FieldMask>::aligned::iterator child_it = 
               it->open_children.begin(); child_it != 
               it->open_children.end(); child_it++)
         {
@@ -2564,7 +2542,7 @@ namespace Legion {
         }
         if (!to_delete.empty())
         {
-          for (std::vector<ColorPoint>::const_iterator cit = to_delete.begin();
+          for (std::vector<LegionColor>::const_iterator cit = to_delete.begin();
                 cit != to_delete.end(); cit++)
             it->open_children.erase(*cit);
         }
@@ -2662,7 +2640,7 @@ namespace Legion {
       // If it didn't already exist, start a new projection epoch
       ProjectionEpoch *new_epoch = 
         new ProjectionEpoch(ProjectionEpoch::first_epoch, capture_mask);
-      new_epoch->insert(info.projection, info.projection_domain);
+      new_epoch->insert(info.projection, info.projection_space);
       projection_epochs.push_back(new_epoch);
       // Record it
       info.record_projection_epoch(ProjectionEpoch::first_epoch, capture_mask);
@@ -2697,7 +2675,7 @@ namespace Legion {
         FieldMask overlap = (*it)->valid_fields & update_mask;
         if (!overlap)
           continue;
-        (*it)->insert(info.projection, info.projection_domain);
+        (*it)->insert(info.projection, info.projection_space);
         update_mask -= overlap;
         if (!update_mask)
           return;
@@ -2708,7 +2686,7 @@ namespace Legion {
       // If we get here will still have an update mask so make an epoch
       ProjectionEpoch *new_epoch = 
         new ProjectionEpoch(ProjectionEpoch::first_epoch, update_mask);
-      new_epoch->insert(info.projection, info.projection_domain);
+      new_epoch->insert(info.projection, info.projection_space);
       projection_epochs.push_back(new_epoch);
     }
 
@@ -2719,16 +2697,16 @@ namespace Legion {
     //--------------------------------------------------------------------------
     FieldState::FieldState(void)
       : open_state(NOT_OPEN), redop(0), projection(NULL), 
-        projection_domain(Domain::NO_DOMAIN), rebuild_timeout(1)
+        projection_space(NULL), rebuild_timeout(1)
     //--------------------------------------------------------------------------
     {
     }
 
     //--------------------------------------------------------------------------
     FieldState::FieldState(const GenericUser &user, const FieldMask &m, 
-                           const ColorPoint &c)
+                           const LegionColor c)
       : ChildState(m), redop(0), projection(NULL), 
-        projection_domain(Domain::NO_DOMAIN), rebuild_timeout(1)
+        projection_space(NULL), rebuild_timeout(1)
     //--------------------------------------------------------------------------
     {
       if (IS_READ_ONLY(user.usage))
@@ -2745,10 +2723,10 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     FieldState::FieldState(const RegionUsage &usage, const FieldMask &m,
-                           ProjectionFunction *proj, const Domain &proj_dom, 
+                           ProjectionFunction *proj, IndexSpaceNode *proj_space,
                            bool disjoint, bool dirty_reduction)
       : ChildState(m), redop(0), projection(proj), 
-        projection_domain(proj_dom), rebuild_timeout(1)
+        projection_space(proj_space), rebuild_timeout(1)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
@@ -2779,7 +2757,7 @@ namespace Legion {
       if (projection != rhs.projection)
         return false;
       // Only do this test if they are both projections
-      if ((projection != NULL) && (projection_domain != rhs.projection_domain))
+      if ((projection != NULL) && (projection_space != rhs.projection_space))
         return false;
       if (redop == 0)
         return (open_state == rhs.open_state);
@@ -2806,10 +2784,10 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       valid_fields |= rhs.valid_fields;
-      for (LegionMap<ColorPoint,FieldMask>::aligned::const_iterator it = 
+      for (LegionMap<LegionColor,FieldMask>::aligned::const_iterator it = 
             rhs.open_children.begin(); it != rhs.open_children.end(); it++)
       {
-        LegionMap<ColorPoint,FieldMask>::aligned::iterator finder = 
+        LegionMap<LegionColor,FieldMask>::aligned::iterator finder = 
                                       open_children.find(it->first);
         if (finder == open_children.end())
           open_children[it->first] = it->second;
@@ -2844,47 +2822,20 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    bool FieldState::projection_domain_dominates(const Domain &next_dom) const
+    bool FieldState::projection_domain_dominates(
+                                               IndexSpaceNode *next_space) const
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
-      assert(projection_domain.get_dim() > 0);
+      assert(projection_space != NULL);
 #endif
-      // If the domains do not have the same dimension, the answer must be no
-      if (projection_domain.get_dim() != next_dom.get_dim())
-        return false;
-      if (projection_domain == next_dom)
+      if (projection_space == next_space)
         return true;
-      switch (projection_domain.get_dim())
-      {
-        case 1:
-          {
-            LegionRuntime::Arrays::Rect<1> local_rect =  
-              projection_domain.get_rect<1>();
-            LegionRuntime::Arrays::Rect<1> next_rect = 
-              next_dom.get_rect<1>();
-            return local_rect.dominates(next_rect);
-          }
-        case 2:
-          {
-            LegionRuntime::Arrays::Rect<2> local_rect =  
-              projection_domain.get_rect<2>();
-            LegionRuntime::Arrays::Rect<2> next_rect = 
-              next_dom.get_rect<2>();
-            return local_rect.dominates(next_rect);
-          }
-        case 3:
-          {
-            LegionRuntime::Arrays::Rect<3> local_rect =  
-              projection_domain.get_rect<3>();
-            LegionRuntime::Arrays::Rect<3> next_rect = 
-              next_dom.get_rect<3>();
-            return local_rect.dominates(next_rect);
-          }
-        default:
-          assert(false);
-      }
-      return false;
+      // If the domains do not have the same type, the answer must be no
+      if (projection_space->handle.get_type_tag() != 
+          next_space->handle.get_type_tag())
+        return false;
+      return projection_space->dominates(next_space);
     }
 
     //--------------------------------------------------------------------------
@@ -2946,44 +2897,14 @@ namespace Legion {
           assert(false);
       }
       logger->down();
-      for (LegionMap<ColorPoint,FieldMask>::aligned::const_iterator it = 
+      for (LegionMap<LegionColor,FieldMask>::aligned::const_iterator it = 
             open_children.begin(); it != open_children.end(); it++)
       {
         FieldMask overlap = it->second & capture_mask;
         if (!overlap)
           continue;
         char *mask_buffer = overlap.to_string();
-        switch (it->first.get_dim())
-        {
-          case 0:
-            {
-              logger->log("Color %d   Mask %s", 
-                          it->first.get_index(), mask_buffer);
-              break;
-            }
-          case 1:
-            {
-              logger->log("Color %d   Mask %s", 
-                          it->first[0], mask_buffer);
-              break;
-            }
-          case 2:
-            {
-              logger->log("Color (%d,%d)   Mask %s", 
-                          it->first[0], it->first[1],
-                          mask_buffer);
-              break;
-            }
-          case 3:
-            {
-              logger->log("Color %d   Mask %s", 
-                          it->first[0], it->first[1],
-                          it->first[2], mask_buffer);
-              break;
-            }
-          default:
-            assert(false); // implemenent more dimensions
-        }
+        logger->log("Color %d   Mask %s", it->first, mask_buffer);
         free(mask_buffer);
       }
       logger->up();
@@ -3039,10 +2960,10 @@ namespace Legion {
 #endif
       ClosedNode *result = new ClosedNode(child_node);
       for (std::map<ProjectionFunction*,
-                    LegionMap<Domain,FieldMask>::aligned>::const_iterator pit =
+            LegionMap<IndexSpaceNode*,FieldMask>::aligned>::const_iterator pit =
             projections.begin(); pit != projections.end(); pit++)
       {
-        for (LegionMap<Domain,FieldMask>::aligned::const_iterator it = 
+        for (LegionMap<IndexSpaceNode*,FieldMask>::aligned::const_iterator it = 
               pit->second.begin(); it != pit->second.end(); it++)
         {
           FieldMask overlap = it->second & close_mask;
@@ -3056,10 +2977,10 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void ClosedNode::record_projection(ProjectionFunction *function,
-                                    const Domain &domain, const FieldMask &mask)
+                                   IndexSpaceNode *space, const FieldMask &mask)
     //--------------------------------------------------------------------------
     {
-      projections[function][domain] |= mask;
+      projections[function][space] |= mask;
     }
 
     //--------------------------------------------------------------------------
@@ -3091,17 +3012,18 @@ namespace Legion {
                                         const FieldMask &fields)
     //--------------------------------------------------------------------------
     {
-      for (std::map<ProjectionFunction*,std::set<Domain> >::const_iterator pit =
-            epoch->projections.begin(); pit != epoch->projections.end(); pit++)
+      for (std::map<ProjectionFunction*,std::set<IndexSpaceNode*> >::
+            const_iterator pit = epoch->projections.begin(); 
+            pit != epoch->projections.end(); pit++)
       {
-        std::map<ProjectionFunction*,LegionMap<Domain,FieldMask>::aligned>::
-          iterator finder = projections.find(pit->first);
+        std::map<ProjectionFunction*,LegionMap<IndexSpaceNode*,FieldMask>::
+          aligned>::iterator finder = projections.find(pit->first);
         if (finder != projections.end())
         {
-          for (std::set<Domain>::const_iterator it = pit->second.begin();
-                it != pit->second.end(); it++)
+          for (std::set<IndexSpaceNode*>::const_iterator it = 
+                pit->second.begin(); it != pit->second.end(); it++)
           {
-            LegionMap<Domain,FieldMask>::aligned::iterator finder2 = 
+            LegionMap<IndexSpaceNode*,FieldMask>::aligned::iterator finder2 = 
               finder->second.find(*it);
             if (finder2 == finder->second.end())
               finder->second[*it] = fields;
@@ -3112,10 +3034,11 @@ namespace Legion {
         else
         {
           // Didn't exist before so we can just insert 
-          LegionMap<Domain,FieldMask>::aligned &doms = projections[pit->first];
-          for (std::set<Domain>::const_iterator it = pit->second.begin();
-                it != pit->second.end(); it++)
-            doms[*it] = fields;
+          LegionMap<IndexSpaceNode*,FieldMask>::aligned &spaces = 
+            projections[pit->first];
+          for (std::set<IndexSpaceNode*>::const_iterator it = 
+                pit->second.begin(); it != pit->second.end(); it++)
+            spaces[*it] = fields;
         }
       }
     }
@@ -3163,11 +3086,11 @@ namespace Legion {
       if (!projections.empty())
       {
         for (std::map<ProjectionFunction*,
-                  LegionMap<Domain,FieldMask>::aligned>::const_iterator pit = 
-              projections.begin(); pit != projections.end(); pit++) 
+                  LegionMap<IndexSpaceNode*,FieldMask>::aligned>::const_iterator
+              pit = projections.begin(); pit != projections.end(); pit++) 
         {
-          for (LegionMap<Domain,FieldMask>::aligned::const_iterator it = 
-                pit->second.begin(); it != pit->second.end(); it++)
+          for (LegionMap<IndexSpaceNode*,FieldMask>::aligned::const_iterator 
+                it = pit->second.begin(); it != pit->second.end(); it++)
             valid_fields |= it->second;
         }
       }
@@ -3203,55 +3126,25 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    /*static*/ bool ClosedNode::dominates(const Domain &lhs, const Domain &rhs)
-    //--------------------------------------------------------------------------
-    {
-      switch (lhs.get_dim())
-      {
-        case 1:
-          {
-            LegionRuntime::Arrays::Rect<1> lhs_rect = lhs.get_rect<1>();
-            LegionRuntime::Arrays::Rect<1> rhs_rect = rhs.get_rect<1>();
-            return lhs_rect.dominates(rhs_rect);
-          }
-        case 2:
-          {
-            LegionRuntime::Arrays::Rect<2> lhs_rect = lhs.get_rect<2>();
-            LegionRuntime::Arrays::Rect<2> rhs_rect = rhs.get_rect<2>();
-            return lhs_rect.dominates(rhs_rect);
-          }
-        case 3:
-          {
-            LegionRuntime::Arrays::Rect<3> lhs_rect = lhs.get_rect<3>();
-            LegionRuntime::Arrays::Rect<3> rhs_rect = rhs.get_rect<3>();
-            return lhs_rect.dominates(rhs_rect);
-          }
-        default:
-          assert(false); // bad dimension size
-	  return false;
-      }
-    }
-
-    //--------------------------------------------------------------------------
     void ClosedNode::filter_dominated_projection_fields(
         FieldMask &non_dominated_mask,
         const std::map<ProjectionFunction*,
-                  LegionMap<Domain,FieldMask>::aligned> &new_projections) const
+          LegionMap<IndexSpaceNode*,FieldMask>::aligned> &new_projections) const
     //--------------------------------------------------------------------------
     {
       // In order to remove a dominated field, for each of our projection
       // operations, we need to find one in the new set that dominates it
       FieldMask dominated_mask = non_dominated_mask;
       for (std::map<ProjectionFunction*,
-                    LegionMap<Domain,FieldMask>::aligned>::const_iterator pit =
-            projections.begin(); pit != projections.end(); pit++)
+              LegionMap<IndexSpaceNode*,FieldMask>::aligned>::const_iterator 
+            pit = projections.begin(); pit != projections.end(); pit++)
       {
         // Set this iterator to the begining to start
         // Use it later to find domains with the same projection function
         std::map<ProjectionFunction*,
-                 LegionMap<Domain,FieldMask>::aligned>::const_iterator
+                 LegionMap<IndexSpaceNode*,FieldMask>::aligned>::const_iterator
                    finder = new_projections.begin();
-        for (LegionMap<Domain,FieldMask>::aligned::const_iterator dit = 
+        for (LegionMap<IndexSpaceNode*,FieldMask>::aligned::const_iterator dit =
               pit->second.begin(); dit != pit->second.end(); dit++)
         {
           FieldMask overlap = dit->second & dominated_mask;
@@ -3263,17 +3156,18 @@ namespace Legion {
           // If we found it then we can try to find overlapping domains
           if (finder != new_projections.end())
           {
-            for (LegionMap<Domain,FieldMask>::aligned::const_iterator it = 
-                  finder->second.begin(); it != finder->second.end(); it++)
+            for (LegionMap<IndexSpaceNode*,FieldMask>::aligned::const_iterator 
+                  it = finder->second.begin(); it != finder->second.end(); it++)
             {
               FieldMask dom_overlap = overlap & it->second;
               if (!dom_overlap)
                 continue; 
-              // Dimensions don't have to match, if they don't we don't care
-              if (it->first.get_dim() != dit->first.get_dim())
+              // Types don't have to match, if they don't we don't care
+              if (it->first->handle.get_type_tag() !=
+                  dit->first->handle.get_type_tag())
                 continue;
               // See if the domain dominates
-              if (dominates(it->first, dit->first))
+              if (it->first->dominates(dit->first))
               {
                 overlap -= dom_overlap;
                 if (!overlap)
@@ -3310,20 +3204,23 @@ namespace Legion {
       for (std::map<RegionTreeNode*,ClosedNode*>::const_iterator it =
             new_children.begin(); it != new_children.end(); it++)
       {
-        if (it->first->is_region() || it->second->projections.empty()) continue;
+        if (it->first->is_region() || it->second->projections.empty()) 
+          continue;
         PartitionNode *node = it->first->as_partition_node();
         // The disjointness check here is to prevent nested composite instances
         // from being pruned when the new composite instance consists of
         // reduction instances
-        if (!node->is_complete()) continue;
-        const Domain &color_space = node->row_source->color_space;
+        if (!node->is_complete()) 
+          continue;
+        IndexSpaceNode *color_space = node->row_source->color_space;
         std::map<ProjectionFunction*,
-                 LegionMap<Domain,FieldMask>::aligned>::const_iterator finder =
-                   it->second->projections.find(identity);
-        if (finder == it->second->projections.end()) continue;
+                 LegionMap<IndexSpaceNode*,FieldMask>::aligned>::const_iterator 
+            finder = it->second->projections.find(identity);
+        if (finder == it->second->projections.end()) 
+          continue;
 
         FieldMask new_child_dominated;
-        for (LegionMap<Domain,FieldMask>::aligned::const_iterator dit =
+        for (LegionMap<IndexSpaceNode*,FieldMask>::aligned::const_iterator dit =
               finder->second.begin(); dit != finder->second.end(); dit++)
         {
           const FieldMask overlap = non_dominated_mask & dit->second;
@@ -3332,8 +3229,8 @@ namespace Legion {
           // Make sure they are the same dimension then see if we
           // dominate the color space in which case we know we cover
           // the entire partition
-          if ((color_space.get_dim() == dit->first.get_dim()) && 
-              dominates(dit->first, color_space))
+          if ((color_space->get_num_dims() == dit->first->get_num_dims()) &&
+              dit->first->dominates(color_space))
             new_child_dominated |= overlap;
         }
         // See if we have any dominated fields
@@ -3360,11 +3257,11 @@ namespace Legion {
       if (!projections.empty())
       {
         for (std::map<ProjectionFunction*,
-                      LegionMap<Domain,FieldMask>::aligned>::const_iterator
+                LegionMap<IndexSpaceNode*,FieldMask>::aligned>::const_iterator
               pit = projections.begin(); pit != projections.end(); pit++)
         {
-          for (LegionMap<Domain,FieldMask>::aligned::const_iterator it = 
-                pit->second.begin(); it != pit->second.end(); it++)
+          for (LegionMap<IndexSpaceNode*,FieldMask>::aligned::const_iterator 
+                it = pit->second.begin(); it != pit->second.end(); it++)
           {
             const FieldMask overlap = it->second & dominated_fields;
             if (!overlap)
@@ -3411,15 +3308,15 @@ namespace Legion {
       rez.serialize(covered_fields);
       rez.serialize<size_t>(projections.size());
       for (std::map<ProjectionFunction*,
-                    LegionMap<Domain,FieldMask>::aligned>::const_iterator pit =
-            projections.begin(); pit != projections.end(); pit++)
+              LegionMap<IndexSpaceNode*,FieldMask>::aligned>::const_iterator 
+            pit = projections.begin(); pit != projections.end(); pit++)
       {
         rez.serialize(pit->first->projection_id);
         rez.serialize<size_t>(pit->second.size());
-        for (LegionMap<Domain,FieldMask>::aligned::const_iterator it = 
+        for (LegionMap<IndexSpaceNode*,FieldMask>::aligned::const_iterator it =
               pit->second.begin(); it != pit->second.end(); it++)
         {
-          rez.serialize(it->first);
+          rez.serialize(it->first->handle);
           rez.serialize(it->second);
         }
       }
@@ -3443,14 +3340,16 @@ namespace Legion {
         ProjectionID pid;
         derez.deserialize(pid);
         ProjectionFunction *function = runtime->find_projection_function(pid);
-        LegionMap<Domain,FieldMask>::aligned &doms = projections[function];
+        LegionMap<IndexSpaceNode*,FieldMask>::aligned &spaces = 
+          projections[function];
         size_t num_doms;
         derez.deserialize(num_doms);
         for (unsigned idx2 = 0; idx2 < num_doms; idx2++)
         {
-          Domain dom;
-          derez.deserialize(dom);
-          derez.deserialize(doms[dom]);
+          IndexSpace handle;
+          derez.deserialize(handle);
+          IndexSpaceNode *node = runtime->forest->get_node(handle);
+          derez.deserialize(spaces[node]);
         }
       }
       size_t num_children;
@@ -3678,7 +3577,7 @@ namespace Legion {
           // will be a part of
           ProjectionInfo &proj_info = 
             normal_close_op->initialize_disjoint_close(disjoint_close_mask,
-                  root_node->as_partition_node()->row_source->color_space);
+               root_node->as_partition_node()->row_source->color_space->handle);
           // Advance these epochs and then mark that we no longer need
           // to advance them during update_state
           state.advance_projection_epochs(disjoint_close_mask);
@@ -3729,6 +3628,53 @@ namespace Legion {
               LegionList<LogicalUser,PREV_LOGICAL_ALLOC>::track_aligned &pusers)
     //--------------------------------------------------------------------------
     {
+      // A slightly strange case that can occur is if we close two different
+      // children of the same node for the same field in different modes then
+      // we can get both a normal close operation and a read-only close 
+      // operation for the same field, in which case they need to share users
+      // This should be a very rare case
+      const FieldMask close_overlap = normal_close_mask & read_only_close_mask;
+      if (!!close_overlap)
+      {
+        LegionVector<LogicalUser>::aligned add_normal_closed_users;
+        for (std::list<LogicalUser>::const_iterator it = 
+              read_only_closed_users.begin(); it != 
+              read_only_closed_users.end(); it++)
+        {
+          const FieldMask overlap = it->field_mask & close_overlap;
+          if (!overlap)
+            continue;
+#ifdef LEGION_SPY
+          it->op->add_mapping_reference(it->gen);
+#else
+          if (!it->op->add_mapping_reference(it->gen))
+            continue;
+#endif
+          add_normal_closed_users.push_back(*it);
+          add_normal_closed_users.back().field_mask = overlap;
+        }
+        LegionVector<LogicalUser>::aligned add_read_only_closed_users;
+        for (std::list<LogicalUser>::const_iterator it = 
+              normal_closed_users.begin(); it != 
+              normal_closed_users.end(); it++)
+        {
+          const FieldMask overlap = it->field_mask & close_overlap;
+          if (!overlap)
+            continue;
+#ifdef LEGION_SPY
+          it->op->add_mapping_reference(it->gen);
+#else
+          if (!it->op->add_mapping_reference(it->gen))
+            continue;
+#endif
+          add_read_only_closed_users.push_back(*it);
+          add_read_only_closed_users.back().field_mask = overlap;
+        }
+        normal_closed_users.insert(normal_closed_users.end(),
+          add_normal_closed_users.begin(), add_normal_closed_users.end());
+        read_only_closed_users.insert(read_only_closed_users.end(),
+          add_read_only_closed_users.begin(), add_read_only_closed_users.end());
+      }
       // We also need to do dependence analysis against all the other operations
       // that this operation recorded dependences on above in the tree so we
       // don't run too early.
@@ -4067,8 +4013,11 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void PhysicalState::clone_to(const FieldMask &mask, 
-                                 VersionInfo &target_info) const
+    void PhysicalState::clone_to(const FieldMask &version_mask, 
+                                 const FieldMask &split_mask,
+                                 InnerContext *context,
+                                 VersionInfo &target_info,
+                                 std::set<RtEvent> &ready_events) const
     //--------------------------------------------------------------------------
     {
       // Should only be calling this on path only nodes
@@ -4077,21 +4026,68 @@ namespace Legion {
 #endif
       if (!version_states.empty())
       {
-        for (PhysicalVersions::iterator it = version_states.begin();
-              it != version_states.end(); it++)
+        // Three different cases here depending on whether we have a split mask
+        if (!split_mask)
         {
-          FieldMask overlap = it->second & mask;
-          if (!overlap)
-            continue;
-          target_info.add_current_version(it->first, overlap, path_only);
+          // No split mask: just need initial versions of everything
+          for (PhysicalVersions::iterator it = version_states.begin();
+                it != version_states.end(); it++)
+          {
+            const FieldMask overlap = it->second & version_mask;
+            if (!overlap)
+              continue;
+            target_info.add_current_version(it->first, overlap, path_only);
+            it->first->request_initial_version_state(context, overlap,
+                                                     ready_events);
+          }
+        }
+        else if (split_mask == version_mask)
+        {
+          // All fields are split, need final versions of everything
+          for (PhysicalVersions::iterator it = version_states.begin();
+                it != version_states.end(); it++)
+          {
+            const FieldMask overlap = it->second & version_mask;
+            if (!overlap)
+              continue;
+            target_info.add_current_version(it->first, overlap, path_only);
+            it->first->request_final_version_state(context, overlap,
+                                                   ready_events);
+          }
+        }
+        else
+        {
+          // Mixed, need to figure out which ones we need initial/final versions
+          for (PhysicalVersions::iterator it = version_states.begin();
+                it != version_states.end(); it++)
+          {
+            FieldMask overlap = it->second & version_mask;
+            if (!overlap)
+              continue;
+            target_info.add_current_version(it->first, overlap, path_only);
+            const FieldMask split_overlap = overlap & split_mask; 
+            if (!!split_overlap)
+            {
+              it->first->request_final_version_state(context, split_overlap,
+                                                     ready_events);
+              const FieldMask non_split_overlap = version_mask - split_overlap;
+              if (!!non_split_overlap)
+                it->first->request_initial_version_state(context, 
+                                  non_split_overlap, ready_events);
+            }
+            else
+              it->first->request_initial_version_state(context, overlap,
+                                                       ready_events);
+          }
         }
       }
+      // For advance states we don't need to request any versions
       if (!advance_states.empty())
       {
         for (PhysicalVersions::iterator it = advance_states.begin();
               it != advance_states.end(); it++)
         {
-          FieldMask overlap = it->second & mask;
+          FieldMask overlap = it->second & version_mask;
           if (!overlap)
             continue;
           target_info.add_advance_version(it->first, overlap, path_only);
@@ -4101,7 +4097,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void PhysicalState::print_physical_state(const FieldMask &capture_mask,
-                          LegionMap<ColorPoint,FieldMask>::aligned &to_traverse,
+                         LegionMap<LegionColor,FieldMask>::aligned &to_traverse,
                                              TreeStateLogger *logger)
     //--------------------------------------------------------------------------
     {
@@ -4226,6 +4222,7 @@ namespace Legion {
       is_owner = false;
       current_context = NULL;
       remote_valid_fields.clear();
+      pending_remote_advances.clear();
       remote_valid.clear();
       previous_opens.clear();
       previous_advancers.clear();
@@ -4317,6 +4314,9 @@ namespace Legion {
         if (!is_owner)
         {
           FieldMask request_mask = version_mask - remote_valid_fields;
+          // Handle the case where we have stale data from advances
+          if (!!pending_remote_advances)
+            request_mask |= (pending_remote_advances & version_mask);
           if (!!request_mask)
           {
             // Release the lock before sending the message
@@ -4377,6 +4377,9 @@ namespace Legion {
         if (!is_owner)
         {
           FieldMask request_mask = version_mask - remote_valid_fields;
+          // Handle the case where we have stale data from advances
+          if (!!pending_remote_advances)
+            request_mask |= (pending_remote_advances & version_mask);
           if (!!request_mask)
           {
             // Release the lock before sending the message
@@ -4505,6 +4508,9 @@ namespace Legion {
       if (!is_owner)
       {
         FieldMask request_mask = version_mask - remote_valid_fields;
+        // Handle the case where we have stale data from advances
+        if (!!pending_remote_advances)
+          request_mask |= (pending_remote_advances & version_mask);
         if (!!request_mask)
         {
           // Release the lock before sending the message
@@ -4564,6 +4570,9 @@ namespace Legion {
       if (!is_owner)
       {
         FieldMask request_mask = version_mask - remote_valid_fields;
+        // Handle the case where we have stale data from advances
+        if (!!pending_remote_advances)
+          request_mask |= (pending_remote_advances & version_mask);
         if (!!request_mask)
         {
           // Release the lock before sending the message
@@ -4625,6 +4634,9 @@ namespace Legion {
       if (!is_owner)
       {
         FieldMask request_mask = version_mask - remote_valid_fields;
+        // Handle the case where we have stale data from advances
+        if (!!pending_remote_advances)
+          request_mask |= (pending_remote_advances & version_mask);
         if (!!request_mask)
         {
           // Release the lock before sending the message
@@ -4853,6 +4865,9 @@ namespace Legion {
       if (!is_owner)
       {
         FieldMask request_mask = version_mask - remote_valid_fields;
+        // Handle the case where we have stale data from advances
+        if (!!pending_remote_advances)
+          request_mask |= (pending_remote_advances & version_mask);
         if (!!request_mask)
         {
           // Release the lock before sending the message
@@ -4903,7 +4918,6 @@ namespace Legion {
                                           UniqueID logical_context_uid,
                                           InnerContext *physical_context, 
                                           bool update_parent_state,
-                                          AddressSpaceID source_space,
                                           std::set<RtEvent> &applied_events,
                                           bool dedup_opens,
                                           ProjectionEpochID open_epoch,
@@ -4934,9 +4948,11 @@ namespace Legion {
                                                dedup_advances, advance_epoch,
                                                dirty_previous, proj_info);
         applied_events.insert(advanced); 
-        // Now filter out any of our current version states that are
-        // no longer valid for the given fields
-        invalidate_version_infos(mask);
+        // Then record that we have an advance in flight, we can do 
+        // this afterwards as we know the advance will always come before
+        // any valid requests for a given task's region requirements
+        AutoLock m_lock(manager_lock);
+        pending_remote_advances |= mask;
         return;
       }
       // If we are deduplicating advances, do that now
@@ -5104,17 +5120,9 @@ namespace Legion {
         if (!remote_valid.empty() && !(remote_valid_fields * mask))
         {
           std::vector<AddressSpaceID> to_delete;
-          bool skipped_source = false;
           for (LegionMap<AddressSpaceID,FieldMask>::aligned::iterator it = 
                 remote_valid.begin(); it != remote_valid.end(); it++)
           {
-            // If this is the source, then we can skip it
-            // because it already knows to do its own invalidate
-            if (it->first == source_space)
-            {
-              skipped_source = true;
-              continue;
-            }
             FieldMask overlap = mask & it->second;
             if (!overlap)
               continue;
@@ -5131,10 +5139,6 @@ namespace Legion {
               remote_valid.erase(*it);
           }
           remote_valid_fields -= mask;
-          // If we skipped the source, then make sure to
-          // keep its remote valid fields in the remote valid mask
-          if (skipped_source)
-            remote_valid_fields |= remote_valid[source_space];
         }
         // Otherwise we are the owner node so we can do the update
 #ifdef DEBUG_LEGION
@@ -5425,7 +5429,7 @@ namespace Legion {
 #endif
         VersionManager &parent_manager = 
           parent->get_current_version_manager(ctx);
-        const ColorPoint &color = node->get_color();
+        const LegionColor color = node->get_color();
         // This destroys new states, but whatever we're done anyway
         parent_manager.update_child_versions(physical_context, color, 
                                              new_states, applied_events);
@@ -5577,7 +5581,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void VersionManager::update_child_versions(InnerContext *context,
-                                              const ColorPoint &child_color,
+                                              const LegionColor child_color,
                                               VersioningSet<> &new_states,
                                               std::set<RtEvent> &applied_events)
     //--------------------------------------------------------------------------
@@ -5599,6 +5603,10 @@ namespace Legion {
       {
         FieldMask request_mask = 
           new_states.get_valid_mask() - remote_valid_fields;
+        // Handle the case where we have stale data from advances
+        if (!!pending_remote_advances)
+          request_mask |= (pending_remote_advances & 
+                            new_states.get_valid_mask());
         if (!!request_mask)
         {
           // Release the lock before sending the message
@@ -5653,6 +5661,8 @@ namespace Legion {
 #endif
       // This invalidates our local fields
       remote_valid_fields -= invalid_mask;
+      // We can also remove this from the remote advances
+      pending_remote_advances -= invalid_mask;
       filter_version_info(invalid_mask, current_version_infos);
       filter_version_info(invalid_mask, previous_version_infos);
 #ifdef DEBUG_LEGION
@@ -5706,7 +5716,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     void VersionManager::print_physical_state(RegionTreeNode *arg_node,
                                 const FieldMask &capture_mask,
-                          LegionMap<ColorPoint,FieldMask>::aligned &to_traverse,
+                         LegionMap<LegionColor,FieldMask>::aligned &to_traverse,
                                 TreeStateLogger *logger)
     //--------------------------------------------------------------------------
     {
@@ -5814,7 +5824,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     /*static*/ void VersionManager::handle_remote_advance(Deserializer &derez,
-                                  Runtime *runtime, AddressSpaceID source_space)
+                                                          Runtime *runtime)
     //--------------------------------------------------------------------------
     {
       DerezCheck z(derez);
@@ -5869,7 +5879,7 @@ namespace Legion {
       VersionManager &manager = node->get_current_version_manager(ctx);
       std::set<RtEvent> done_preconditions;
       manager.advance_versions(advance_mask, logical_context_uid, context, 
-                               update_parent, source_space, done_preconditions, 
+                               update_parent, done_preconditions, 
                                dedup_opens, open_epoch, 
                                dedup_advances, advance_epoch,
                                has_dirty_previous ? &dirty_previous : NULL,
@@ -6073,13 +6083,24 @@ namespace Legion {
 #ifdef DEBUG_LEGION
         sanity_check();
 #endif
+        FieldMask send_mask = request_mask;
+        // We only need to send it if we know that it is not valid anymore
+        LegionMap<AddressSpaceID,FieldMask>::aligned::const_iterator
+          finder = remote_valid.find(target);
+        // Remove any fields that we've already sent a response for
+        if (finder != remote_valid.end())
+          send_mask -= finder->second;
         LegionMap<VersionState*,FieldMask>::aligned send_infos;
         // Do the current infos first
-        find_send_infos(current_version_infos, request_mask, send_infos);
+        if (!!send_mask)
+          find_send_infos(current_version_infos, send_mask, send_infos);
         pack_send_infos(rez, send_infos);
-        send_infos.clear();
-        // Then do the previous infos
-        find_send_infos(previous_version_infos, request_mask, send_infos);
+        if (!!send_mask)
+        {
+          send_infos.clear();
+          // Then do the previous infos
+          find_send_infos(previous_version_infos, request_mask, send_infos);
+        }
         pack_send_infos(rez, send_infos);
       }
       // Need exclusive access at the end to update the remote information
@@ -6156,6 +6177,8 @@ namespace Legion {
         merge_send_infos(previous_version_infos, previous_update);
         // Update the remote valid fields
         remote_valid_fields |= update_mask;
+        // Any update that we get also filters the remote_valid_fields
+        pending_remote_advances -= update_mask;
         // Remove our outstanding request
 #ifdef DEBUG_LEGION
         assert(outstanding_requests.find(done) != outstanding_requests.end());
@@ -6317,7 +6340,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       if (is_owner() && registered_with_runtime)
-        unregister_with_runtime(DEFAULT_VIRTUAL_CHANNEL);
+        unregister_with_runtime(REFERENCE_VIRTUAL_CHANNEL);
       state_lock.destroy_reservation();
       state_lock = Reservation::NO_RESERVATION;
 #ifdef DEBUG_LEGION
@@ -6506,7 +6529,7 @@ namespace Legion {
     {
       // Need the lock in read only mode to access these data structures
       AutoLock s_lock(state_lock,1,false/*exclusive*/);
-      for (LegionMap<ColorPoint,StateVersions>::aligned::const_iterator cit = 
+      for (LegionMap<LegionColor,StateVersions>::aligned::const_iterator cit =
             open_children.begin(); cit != open_children.end(); cit++)
       {
         FieldMask child_overlap = closing_mask & cit->second.get_valid_mask();
@@ -6609,7 +6632,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void VersionState::reduce_open_children(const ColorPoint &child_color,
+    void VersionState::reduce_open_children(const LegionColor child_color,
                                             const FieldMask &update_mask,
                                             VersioningSet<> &new_states,
                                             std::set<RtEvent> &applied_events,
@@ -6625,7 +6648,7 @@ namespace Legion {
         return;
       }
       WrapperReferenceMutator mutator(applied_events);
-      LegionMap<ColorPoint,StateVersions>::aligned::iterator finder =
+      LegionMap<LegionColor,StateVersions>::aligned::iterator finder =
         open_children.find(child_color);
       // We only have to do insertions if the entry didn't exist before
       // or its fields are disjoint with the update mask
@@ -6999,7 +7022,7 @@ namespace Legion {
           if (request_kind != INITIAL_VERSION_REQUEST)
           {
             rez.serialize<size_t>(open_children.size());
-            for (LegionMap<ColorPoint,StateVersions>::aligned::const_iterator 
+            for (LegionMap<LegionColor,StateVersions>::aligned::const_iterator 
                  cit = open_children.begin(); cit != open_children.end(); cit++)
             {
               rez.serialize(cit->first);
@@ -7075,7 +7098,7 @@ namespace Legion {
             {
               Serializer child_rez;
               size_t count = 0;
-              for (LegionMap<ColorPoint,StateVersions>::aligned::const_iterator 
+              for (LegionMap<LegionColor,StateVersions>::aligned::const_iterator
                     cit = open_children.begin(); 
                     cit != open_children.end(); cit++)
               {
@@ -7333,8 +7356,8 @@ namespace Legion {
         {
           // See if we have any children we need to send
           bool has_children = false;
-          for (LegionMap<ColorPoint,StateVersions>::aligned::const_iterator it =
-                open_children.begin(); it != open_children.end(); it++)
+          for (LegionMap<LegionColor,StateVersions>::aligned::const_iterator 
+                it = open_children.begin(); it != open_children.end(); it++)
           {
             if (it->second.get_valid_mask() * overlap)
               continue;
@@ -7542,7 +7565,7 @@ namespace Legion {
             derez.deserialize(num_children);
             for (unsigned idx = 0; idx < num_children; idx++)
             {
-              ColorPoint child;
+              LegionColor child;
               derez.deserialize(child);
               StateVersions &versions = open_children[child]; 
               size_t num_states;
@@ -7616,7 +7639,7 @@ namespace Legion {
             derez.deserialize(num_children);
             for (unsigned idx = 0; idx < num_children; idx++)
             {
-              ColorPoint child;
+              LegionColor child;
               derez.deserialize(child);
               size_t num_states;
               derez.deserialize(num_states);
@@ -8035,7 +8058,7 @@ namespace Legion {
       {
         // Only need this in read only mode since we're just reading
         AutoLock s_lock(state_lock,1,false/*exclusive*/);
-        for (LegionMap<ColorPoint,StateVersions>::aligned::const_iterator cit =
+        for (LegionMap<LegionColor,StateVersions>::aligned::const_iterator cit =
               open_children.begin(); cit != open_children.end(); cit++)
         {
           if (cit->second.get_valid_mask() * capture_mask)
@@ -8138,7 +8161,7 @@ namespace Legion {
           target->record_reduction_view(it->first, overlap);
         }
       }
-      for (LegionMap<ColorPoint,StateVersions>::aligned::const_iterator cit =
+      for (LegionMap<LegionColor,StateVersions>::aligned::const_iterator cit =
             open_children.begin(); cit != open_children.end(); cit++)
       {
         if (cit->second.get_valid_mask() * capture_mask)
@@ -8243,12 +8266,12 @@ namespace Legion {
 #endif
       min_depth = min;
       max_depth = max;
-      path.resize(max_depth+1);
+      path.resize(max_depth+1, INVALID_COLOR);
     }
 
     //--------------------------------------------------------------------------
     void RegionTreePath::register_child(unsigned depth, 
-                                        const ColorPoint &color)
+                                        const LegionColor color)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
@@ -8291,11 +8314,11 @@ namespace Legion {
     {
       assert(min_depth <= depth);
       assert(depth <= max_depth);
-      return path[depth].is_valid();
+      return (path[depth] != INVALID_COLOR);
     }
 
     //--------------------------------------------------------------------------
-    const ColorPoint& RegionTreePath::get_child(unsigned depth) const
+    LegionColor RegionTreePath::get_child(unsigned depth) const
     //--------------------------------------------------------------------------
     {
       assert(min_depth <= depth);
@@ -9138,7 +9161,7 @@ namespace Legion {
       if (invalidate_all)
         node->invalidate_version_managers();
       else
-        return node->invalidate_version_state(ctx);
+        node->invalidate_version_state(ctx);
       return true;
     }
 
@@ -9149,7 +9172,7 @@ namespace Legion {
       if (invalidate_all)
         node->invalidate_version_managers();
       else
-        return node->invalidate_version_state(ctx);
+        node->invalidate_version_state(ctx);
       return true;
     }
 

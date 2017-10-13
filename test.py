@@ -33,6 +33,9 @@ else:
 # available physical cores.
 app_cores = max(physical_cores - 2, 1)
 
+# for backward-compatibility, use app_cores if PERF_CORES_PER_NODE is not specified
+perf_cores_per_node = os.environ.get('PERF_CORES_PER_NODE', str(app_cores))
+
 legion_cxx_tests = [
     # Tutorial
     ['tutorial/00_hello_world/hello_world', []],
@@ -76,6 +79,14 @@ legion_openmp_cxx_tests = [
     ['examples/omp_saxpy/omp_saxpy', []],
 ]
 
+legion_python_cxx_tests = [
+    # Examples
+    ['examples/python_interop/python_interop', ['-ll:py', '1']],
+
+    # Tests
+    ['test/python_bindings/python_bindings', ['-ll:py', '1']],
+]
+
 legion_hdf_cxx_tests = [
     # Examples
     ['examples/attach_file/attach_file', []],
@@ -87,7 +98,7 @@ legion_hdf_cxx_tests = [
 legion_cxx_perf_tests = [
     # Circuit: Heavy Compute
     ['examples/circuit/circuit',
-     ['-l', '10', '-p', str(app_cores), '-npp', '2500', '-wpp', '10000', '-ll:cpu', str(app_cores)]],
+     ['-l', '10', '-p', perf_cores_per_node, '-npp', '2500', '-wpp', '10000', '-ll:cpu', perf_cores_per_node]],
 
     # Circuit: Light Compute
     ['examples/circuit/circuit',
@@ -97,8 +108,8 @@ legion_cxx_perf_tests = [
 regent_perf_tests = [
     # Circuit: Heavy Compute
     ['language/examples/circuit_sparse.rg',
-     ['-l', '10', '-p', str(app_cores), '-npp', '2500', '-wpp', '10000', '-ll:cpu', str(app_cores),
-      '-fflow-spmd-shardsize', str(app_cores)]],
+     ['-l', '10', '-p', perf_cores_per_node, '-npp', '2500', '-wpp', '10000', '-ll:cpu', perf_cores_per_node,
+      '-fflow-spmd-shardsize', perf_cores_per_node]],
 
     # Circuit: Light Compute
     ['language/examples/circuit_sparse.rg',
@@ -109,8 +120,8 @@ regent_perf_tests = [
     ['language/examples/pennant_fast.rg',
      ['pennant.tests/sedovbig3x30/sedovbig.pnt',
       '-seq_init', '0', '-par_init', '1', '-print_ts', '1', '-prune', '5',
-      '-npieces', str(app_cores), '-numpcx', '1', '-numpcy', str(app_cores),
-      '-ll:csize', '8192', '-ll:cpu', str(app_cores), '-fflow-spmd-shardsize', str(app_cores),
+      '-npieces', perf_cores_per_node, '-numpcx', '1', '-numpcy', perf_cores_per_node,
+      '-ll:csize', '8192', '-ll:cpu', perf_cores_per_node, '-fflow-spmd-shardsize', perf_cores_per_node,
       '-fvectorize-unsafe', '1']],
 ]
 
@@ -130,6 +141,10 @@ def run_cxx(tests, flags, launcher, root_dir, bin_dir, env, thread_count):
             test_path = os.path.join(root_dir, test_file)
             cmd(['make', '-C', test_dir, '-j', str(thread_count)], env=env)
         cmd(launcher + [test_path] + flags + test_flags, env=env, cwd=test_dir)
+        # after a successful run, clean up libraries/executables to keep disk
+        #  usage down
+        if not bin_dir:
+            cmd(['find', test_dir , '-type', 'f', '(', '-name', '*.a', '-o', '-name', os.path.basename(test_file), ')', '-exec', 'rm', '-v', '{}', ';'])
 
 def run_regent(tests, flags, launcher, root_dir, env, thread_count):
     for test_file, test_flags in tests:
@@ -149,6 +164,10 @@ def run_test_legion_openmp_cxx(launcher, root_dir, tmp_dir, bin_dir, env, thread
     flags = ['-logfile', 'out_%.log']
     run_cxx(legion_openmp_cxx_tests, flags, launcher, root_dir, bin_dir, env, thread_count)
 
+def run_test_legion_python_cxx(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
+    flags = ['-logfile', 'out_%.log']
+    run_cxx(legion_python_cxx_tests, flags, launcher, root_dir, bin_dir, env, thread_count)
+
 def run_test_legion_hdf_cxx(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
     flags = ['-logfile', 'out_%.log']
     run_cxx(legion_hdf_cxx_tests, flags, launcher, root_dir, bin_dir, env, thread_count)
@@ -157,6 +176,8 @@ def run_test_fuzzer(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
     env = dict(list(env.items()) + [('WARN_AS_ERROR', '0')])
     fuzz_dir = os.path.join(tmp_dir, 'fuzz-tester')
     cmd(['git', 'clone', 'https://github.com/StanfordLegion/fuzz-tester', fuzz_dir])
+    # TODO; Merge deppart branch into master after this makes it to stable Legion branch
+    cmd(['git', 'checkout', 'deppart'], cwd=fuzz_dir)
     cmd(['python', 'main.py'], env=env, cwd=fuzz_dir)
 
 def run_test_realm(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
@@ -164,9 +185,10 @@ def run_test_realm(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
     cmd(['make', '-C', test_dir, 'DEBUG=0', 'SHARED_LOWLEVEL=0', 'USE_CUDA=0', 'USE_GASNET=0', 'clean'], env=env)
     cmd(['make', '-C', test_dir, 'DEBUG=0', 'SHARED_LOWLEVEL=0', 'USE_CUDA=0', 'USE_GASNET=0', 'run_all'], env=env)
 
-    perf_dir = os.path.join(root_dir, 'test/performance/realm')
-    cmd(['make', '-C', perf_dir, 'DEBUG=0', 'SHARED_LOWLEVEL=0', 'clean_all'], env=env)
-    cmd(['make', '-C', perf_dir, 'DEBUG=0', 'SHARED_LOWLEVEL=0', 'run_all'], env=env)
+    # Commenting these out because Sean says not to run them in general test
+    #perf_dir = os.path.join(root_dir, 'test/performance/realm')
+    #cmd(['make', '-C', perf_dir, 'DEBUG=0', 'SHARED_LOWLEVEL=0', 'clean_all'], env=env)
+    #cmd(['make', '-C', perf_dir, 'DEBUG=0', 'SHARED_LOWLEVEL=0', 'run_all'], env=env)
 
 def run_test_external(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
     flags = ['-logfile', 'out_%.log']
@@ -201,7 +223,8 @@ def run_test_external(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
     # SNAP
     # Contact: Mike Bauer <mbauer@nvidia.com>
     snap_dir = os.path.join(tmp_dir, 'snap')
-    cmd(['git', 'clone', 'https://github.com/StanfordLegion/Legion-SNAP.git', snap_dir])
+    # TODO: Merge deppart branch into master after this makes it to stable Legion branch
+    cmd(['git', 'clone', '-b', 'deppart', 'https://github.com/StanfordLegion/Legion-SNAP.git', snap_dir])
     # This can't handle flags before application arguments, so place
     # them after.
     snap = [[os.path.join(snap_dir, 'src/snap'),
@@ -348,15 +371,15 @@ def run_test_perf(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
     # FIXME: PENNANT can't handle the -logfile flag coming first, so just skip it.
     run_regent(regent_perf_tests, [], [runner, regent_path], root_dir, regent_env, thread_count)
 
-    # FIXME: This is breaking because the payload is too large.
     # Render the final charts.
-    # subprocess.check_call(
-    #     [os.path.join(root_dir, 'tools', 'perf_chart.py'),
-    #      'https://github.com/StanfordLegion/perf-data.git'],
-    #     env=env)
+    subprocess.check_call(
+        [os.path.join(root_dir, 'tools', 'perf_chart.py'),
+         'git@github.com:StanfordLegion/perf-data.git',
+         'git@github.com:StanfordLegion/perf-data.git'],
+        env=env)
 
 def check_test_legion_cxx(root_dir):
-    print('Checking that tests that SHOULD tested are ACTUALLY tested...')
+    print('Checking that tests that SHOULD be tested are ACTUALLY tested...')
     print()
 
     # These are the directories we SHOULD have coverage for.
@@ -371,7 +394,8 @@ def check_test_legion_cxx(root_dir):
 
     # These are the tests we ACTUALLY have coverage for.
     tests = legion_cxx_tests + legion_gasnet_cxx_tests + \
-            legion_openmp_cxx_tests + legion_hdf_cxx_tests
+            legion_openmp_cxx_tests + legion_python_cxx_tests + \
+            legion_hdf_cxx_tests
     actual_tests = set()
     for test_file, test_flags in tests:
         actual_tests.add(os.path.dirname(test_file))
@@ -410,10 +434,7 @@ def build_cmake(root_dir, tmp_dir, env, thread_count, test_legion_cxx, test_perf
              'ON' if env['USE_HDF'] == '1' else 'OFF')] +
         (['-DCMAKE_CXX_FLAGS=%s' % env['CC_FLAGS']]
           if 'CC_FLAGS' in env else []) +
-        (['-DLegion_BUILD_TUTORIAL=ON',
-          '-DLegion_BUILD_EXAMPLES=ON',
-          '-DLegion_BUILD_TESTS=ON',
-         ] if test_legion_cxx or test_perf else []) +
+        (['-DLegion_BUILD_ALL=ON'] if test_legion_cxx or test_perf else []) +
         [root_dir],
         env=env, cwd=build_dir)
     cmd(['make', '-C', build_dir, '-j', str(thread_count)], env=env)
@@ -467,8 +488,8 @@ class Stage(object):
 def report_mode(debug, launcher,
                 test_regent, test_legion_cxx, test_fuzzer, test_realm,
                 test_external, test_private, test_perf, use_gasnet,
-                use_cuda, use_openmp, use_llvm, use_hdf, use_spy, use_gcov,
-                use_cmake, use_rdir):
+                use_cuda, use_openmp, use_python, use_llvm, use_hdf, use_spy,
+                use_gcov, use_cmake, use_rdir):
     print()
     print('#'*60)
     print('### Test Suite Configuration')
@@ -489,6 +510,7 @@ def report_mode(debug, launcher,
     print('###   * GASNet:     %s' % use_gasnet)
     print('###   * CUDA:       %s' % use_cuda)
     print('###   * OpenMP:     %s' % use_openmp)
+    print('###   * Python:     %s' % use_python)
     print('###   * LLVM:       %s' % use_llvm)
     print('###   * HDF5:       %s' % use_hdf)
     print('###   * Spy:        %s' % use_spy)
@@ -531,6 +553,7 @@ def run_tests(test_modules=None,
     use_gasnet = feature_enabled('gasnet', False)
     use_cuda = feature_enabled('cuda', False)
     use_openmp = feature_enabled('openmp', False)
+    use_python = feature_enabled('python', False)
     use_llvm = feature_enabled('llvm', False)
     use_hdf = feature_enabled('hdf', False)
     use_spy = feature_enabled('spy', False)
@@ -556,6 +579,7 @@ def run_tests(test_modules=None,
         ('USE_CUDA', '1' if use_cuda else '0'),
         ('USE_OPENMP', '1' if use_openmp else '0'),
         ('TEST_OPENMP', '1' if use_openmp else '0'),
+        ('USE_PYTHON', '1' if use_python else '0'),
         ('USE_LLVM', '1' if use_llvm else '0'),
         ('USE_HDF', '1' if use_hdf else '0'),
         ('TEST_HDF', '1' if use_hdf else '0'),
@@ -580,8 +604,8 @@ def run_tests(test_modules=None,
     report_mode(debug, launcher,
                 test_regent, test_legion_cxx, test_fuzzer, test_realm,
                 test_external, test_private, test_perf, use_gasnet,
-                use_cuda, use_openmp, use_llvm, use_hdf, use_spy, use_gcov,
-                use_cmake, use_rdir)
+                use_cuda, use_openmp, use_python, use_llvm, use_hdf, use_spy,
+                use_gcov, use_cmake, use_rdir)
 
     tmp_dir = tempfile.mkdtemp(dir=root_dir)
     if verbose:
@@ -612,6 +636,8 @@ def run_tests(test_modules=None,
                     run_test_legion_gasnet_cxx(launcher, root_dir, tmp_dir, bin_dir, env, thread_count)
                 if use_openmp:
                     run_test_legion_openmp_cxx(launcher, root_dir, tmp_dir, bin_dir, env, thread_count)
+                if use_python:
+                    run_test_legion_python_cxx(launcher, root_dir, tmp_dir, bin_dir, env, thread_count)
                 if use_hdf:
                     run_test_legion_hdf_cxx(launcher, root_dir, tmp_dir, bin_dir, env, thread_count)
         if test_fuzzer:
@@ -660,8 +686,8 @@ def driver():
         help='Disable debug mode (equivalent to DEBUG=0).')
     parser.add_argument(
         '--use', dest='use_features', action='append',
-        choices=['gasnet', 'cuda', 'openmp', 'llvm', 'hdf', 'spy', 'gcov',
-                 'cmake', 'rdir'],
+        choices=['gasnet', 'cuda', 'openmp', 'python', 'llvm', 'hdf', 'spy',
+                 'gcov', 'cmake', 'rdir'],
         default=None,
         help='Build Legion with features (also via USE_*).')
     parser.add_argument(

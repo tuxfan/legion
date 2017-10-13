@@ -38,11 +38,28 @@
 #include <llvm/Bitcode/ReaderWriter.h>
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
 #include <llvm/Support/MemoryBuffer.h>
-#include <llvm/ExecutionEngine/JIT.h>
+
+#define LLVM_VERSION (10 * LLVM_VERSION_MAJOR) + LLVM_VERSION_MINOR
+#if REALM_LLVM_VERSION != LLVM_VERSION
+  #error mismatch between REALM_LLVM_VERSION and LLVM header files!
+#endif
+// JIT for 3.5, MCJIT for 3.6 - 3.9
+#if LLVM_VERSION == 35
+  #define USE_JIT
+  #include <llvm/ExecutionEngine/JIT.h>
+  #include "llvm/PassManager.h"
+#elif LLVM_VERSION >= 36 && LLVM_VERSION <= 39
+  #define USE_UNIQUE_PTRS
+  #define USE_MCJIT
+  #include <memory>
+  #include <llvm/ExecutionEngine/MCJIT.h>
+#else
+  #error unsupported (or at least untested) LLVM version!
+#endif
+
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/raw_os_ostream.h"
 #include "llvm/Support/FormattedStream.h"
-#include "llvm/PassManager.h"
 
 #ifdef DEBUG_MEMORY_MANAGEMENT
 #include "llvm/ExecutionEngine/SectionMemoryManager.h"
@@ -104,6 +121,10 @@ namespace Realm {
       // generative native target
       {
 	llvm::InitializeNativeTarget();
+#if LLVM_VERSION >= 36
+	llvm::InitializeNativeTargetAsmParser();
+	llvm::InitializeNativeTargetAsmPrinter();
+#endif
 
 	std::string triple = llvm::sys::getDefaultTargetTriple();
 	log_llvmjit.debug() << "default target triple = " << triple;
@@ -116,12 +137,14 @@ namespace Realm {
 	}
 
 	// TODO - allow configuration options to steer these
-	llvm::Reloc::Model reloc_model = llvm::Reloc::Default;
+	llvm::Reloc::Model reloc_model = llvm::Reloc::Static;
 	llvm::CodeModel::Model code_model = llvm::CodeModel::Large;
 	llvm::CodeGenOpt::Level opt_level = llvm::CodeGenOpt::Aggressive;
 
 	llvm::TargetOptions options;
+#if LLVM_VERSION <= 36
 	options.NoFramePointerElim = true;
+#endif
 
 	llvm::TargetMachine *host_cpu_machine = target->createTargetMachine(triple, "", 
 									    0/*HostHasAVX()*/ ? "+avx" : "", 
@@ -137,15 +160,23 @@ namespace Realm {
 	  llvm::Module *m = new llvm::Module("eebuilder", *context);
 	  m->setTargetTriple(triple);
 	  m->setDataLayout("e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:64-v128:128:128-n16:32:64");
+#ifdef USE_UNIQUE_PTRS
+	  // the extra parens matter here for some reason...
+	  llvm::EngineBuilder eb((std::unique_ptr<llvm::Module>(m)));
+#else
 	  llvm::EngineBuilder eb(m);
+#endif
 
 	  std::string err;
   
 	  eb
 	    .setErrorStr(&err)
 	    .setEngineKind(llvm::EngineKind::JIT)
+#ifdef USE_JIT
 	    .setAllocateGVsWithCode(false)
-	    .setUseMCJIT(true);
+	    .setUseMCJIT(true)
+#endif
+	    ;
 #ifdef DEBUG_MEMORY_MANAGEMENT
 	  eb.setMCJITMemoryManager(new MemoryManagerWrap);
 #endif
@@ -181,8 +212,16 @@ namespace Realm {
       char *nullterm = new char[ir.size() + 1];
       memcpy(nullterm, ir.base(), ir.size());
       nullterm[ir.size()] = 0;
+#ifdef USE_UNIQUE_PTRS
+      llvm::MemoryBuffer *mb = llvm::MemoryBuffer::getMemBuffer(nullterm).release();
+#else
       llvm::MemoryBuffer *mb = llvm::MemoryBuffer::getMemBuffer(nullterm);
+#endif
+#if LLVM_VERSION >= 36
+      llvm::Module *m = llvm::parseIR(mb->getMemBufferRef(), sm, *context).release();
+#else
       llvm::Module *m = llvm::ParseIR(mb, sm, *context);
+#endif
       if(!m) {
 	std::string errstr;
 	llvm::raw_string_ostream s(errstr);
@@ -199,7 +238,11 @@ namespace Realm {
 	assert(0);
       }
 
+#ifdef USE_UNIQUE_PTRS
+      host_exec_engine->addModule(std::unique_ptr<llvm::Module>(m));
+#else
       host_exec_engine->addModule(m);
+#endif
 
       // this actually triggers the JIT, allocating space for code and data
       void *fnptr = host_exec_engine->getPointerToFunction(func);

@@ -38,7 +38,7 @@ namespace Legion {
      * of all operations that can be performed in a Legion
      * program.
      */
-    class Operation : public ReferenceMutator {
+    class Operation : public ReferenceMutator, public ProfilingResponseHandler {
     public:
       enum OpKind {
         MAP_OP_KIND,
@@ -122,6 +122,7 @@ namespace Legion {
         static const LgTaskID TASK_ID = LG_DEFERRED_ENQUEUE_OP_ID;
       public:
         Operation *proxy_this;
+        LgPriority priority;
       };
       struct DeferredResolutionArgs :
         public LgTaskArgs<DeferredResolutionArgs> {
@@ -336,7 +337,7 @@ namespace Legion {
       virtual void add_copy_profiling_request(
                                         Realm::ProfilingRequestSet &reqeusts);
       // Report a profiling result for this operation
-      virtual void report_profiling_response(
+      virtual void handle_profiling_response(
                                   const Realm::ProfilingResponse &result);
     protected:
       void filter_copy_request_kinds(MapperManager *mapper,
@@ -362,7 +363,8 @@ namespace Legion {
       // indicate mapping, execution, resolution, completion, and commit
       //
       // Add this to the list of ready operations
-      void enqueue_ready_operation(RtEvent wait_on = RtEvent::NO_RT_EVENT);
+      void enqueue_ready_operation(RtEvent wait_on = RtEvent::NO_RT_EVENT,
+                            LgPriority priority = LG_THROUGHPUT_PRIORITY);
       // Indicate that we are done mapping this operation
       void complete_mapping(RtEvent wait_on = RtEvent::NO_RT_EVENT); 
       // Indicate when this operation has finished executing
@@ -737,7 +739,7 @@ namespace Legion {
                                InstanceSet &mapped_instances);
       virtual void add_copy_profiling_request(
                             Realm::ProfilingRequestSet &reqeusts);
-      virtual void report_profiling_response(
+      virtual void handle_profiling_response(
                       const Realm::ProfilingResponse &response);
     protected:
       bool remap_region;
@@ -750,7 +752,7 @@ namespace Legion {
       std::map<PhysicalManager*,std::pair<unsigned,bool> > acquired_instances;
       std::map<Reservation,bool> atomic_locks;
       std::set<RtEvent> map_applied_conditions;
-      std::set<ApEvent> restrict_postconditions;
+      std::set<ApEvent> mapped_preconditions;
     protected:
       MapperManager *mapper;
     protected:
@@ -834,7 +836,7 @@ namespace Legion {
         { current_index = idx; current_src = is_src; }
       virtual void add_copy_profiling_request(
                                       Realm::ProfilingRequestSet &reqeusts);
-      virtual void report_profiling_response(
+      virtual void handle_profiling_response(
                                 const Realm::ProfilingResponse &response);
     public:
       std::vector<RegionTreePath> src_privilege_paths;
@@ -879,6 +881,7 @@ namespace Legion {
     public:
       void initialize(TaskContext *ctx,
                       const IndexCopyLauncher &launcher,
+                      IndexSpace launch_space,
                       bool check_privileges);
     public:
       virtual void activate(void);
@@ -897,6 +900,8 @@ namespace Legion {
 #endif
     public:
       virtual const ProjectionInfo* get_projection_info(unsigned idx, bool src);
+    public:
+      IndexSpace                    launch_space;
     public:
       std::vector<ProjectionInfo>   src_projection_infos;
       std::vector<ProjectionInfo>   dst_projection_infos;
@@ -1071,7 +1076,8 @@ namespace Legion {
       virtual OpKind get_operation_kind(void) const;
     public:
       virtual void trigger_dependence_analysis(void);
-      virtual void trigger_mapping(void);
+      virtual void trigger_mapping(void); 
+      virtual void trigger_complete(void);
       virtual unsigned find_parent_index(unsigned idx);
     protected:
       DeletionKind kind;
@@ -1270,6 +1276,7 @@ namespace Legion {
       public:
         InterCloseOp *proxy_this;
         RegionTreeNode *child_node;
+        InnerContext *context;
       };
     public:
       InterCloseOp(Runtime *runtime);
@@ -1283,11 +1290,12 @@ namespace Legion {
                       int close_idx, const VersionInfo &version_info,
                       const FieldMask &close_mask, Operation *create_op);
       ProjectionInfo& initialize_disjoint_close(const FieldMask &disjoint_mask,
-                                                const Domain &launch_domain);
+                                                IndexSpace launch_space);
       DisjointCloseInfo* find_disjoint_close_child(unsigned index,
                                                    RegionTreeNode *child);
       void perform_disjoint_close(RegionTreeNode *child_to_close, 
                                   DisjointCloseInfo &close_info,
+                                  InnerContext *context,
                                   std::set<RtEvent> &ready_events);
     public:
       virtual void activate(void);
@@ -1312,7 +1320,7 @@ namespace Legion {
       void invoke_mapper(const InstanceSet &valid_instances);
       virtual void add_copy_profiling_request(
                                           Realm::ProfilingRequestSet &reqeusts);
-      virtual void report_profiling_response(
+      virtual void handle_profiling_response(
                                     const Realm::ProfilingResponse &response);
     public:
       static void handle_disjoint_close(const void *args);
@@ -1413,7 +1421,7 @@ namespace Legion {
     protected:
       virtual void add_copy_profiling_request(
                                           Realm::ProfilingRequestSet &reqeusts);
-      virtual void report_profiling_response(
+      virtual void handle_profiling_response(
                                     const Realm::ProfilingResponse &response);
     protected:
       unsigned parent_idx;
@@ -1513,7 +1521,7 @@ namespace Legion {
       void invoke_mapper(void);
       virtual void add_copy_profiling_request(
                                           Realm::ProfilingRequestSet &reqeusts);
-      virtual void report_profiling_response(
+      virtual void handle_profiling_response(
                                     const Realm::ProfilingResponse &response);
     protected:
       RegionRequirement requirement;
@@ -1592,7 +1600,7 @@ namespace Legion {
       void invoke_mapper(void);
       virtual void add_copy_profiling_request(
                                           Realm::ProfilingRequestSet &reqeusts);
-      virtual void report_profiling_response(
+      virtual void handle_profiling_response(
                                     const Realm::ProfilingResponse &response);
     protected:
       RegionRequirement requirement;
@@ -2006,12 +2014,21 @@ namespace Legion {
     public:
       static const AllocationType alloc_type = PENDING_PARTITION_OP_ALLOC;
     protected:
+      enum PendingPartitionKind
+      {
+        EQUAL_PARTITION = 0,
+        UNION_PARTITION,
+        INTERSECTION_PARTITION,
+        DIFFERENCE_PARTITION,
+        RESTRICTED_PARTITION,
+      };
       // Track pending partition operations as thunks
       class PendingPartitionThunk {
       public:
         virtual ~PendingPartitionThunk(void) { }
       public:
-        virtual ApEvent perform(RegionTreeForest *forest) = 0;
+        virtual ApEvent perform(PendingPartitionOp *op,
+                                RegionTreeForest *forest) = 0;
         virtual void perform_logging(PendingPartitionOp* op) = 0;
       };
       class EqualPartitionThunk : public PendingPartitionThunk {
@@ -2020,26 +2037,12 @@ namespace Legion {
           : pid(id), granularity(g) { }
         virtual ~EqualPartitionThunk(void) { }
       public:
-        virtual ApEvent perform(RegionTreeForest *forest)
-        { return forest->create_equal_partition(pid, granularity); }
+        virtual ApEvent perform(PendingPartitionOp *op,
+                                RegionTreeForest *forest)
+        { return forest->create_equal_partition(op, pid, granularity); }
         virtual void perform_logging(PendingPartitionOp* op);
       protected:
         IndexPartition pid;
-        size_t granularity;
-      };
-      class WeightedPartitionThunk : public PendingPartitionThunk {
-      public:
-        WeightedPartitionThunk(IndexPartition id, size_t g, 
-                               const std::map<DomainPoint,int> &w)
-          : pid(id), weights(w), granularity(g) { }
-        virtual ~WeightedPartitionThunk(void) { }
-      public:
-        virtual ApEvent perform(RegionTreeForest *forest)
-        { return forest->create_weighted_partition(pid, granularity, weights); }
-        virtual void perform_logging(PendingPartitionOp* op);
-      protected:
-        IndexPartition pid;
-        std::map<DomainPoint,int> weights;
         size_t granularity;
       };
       class UnionPartitionThunk : public PendingPartitionThunk {
@@ -2049,8 +2052,9 @@ namespace Legion {
           : pid(id), handle1(h1), handle2(h2) { }
         virtual ~UnionPartitionThunk(void) { }
       public:
-        virtual ApEvent perform(RegionTreeForest *forest)
-        { return forest->create_partition_by_union(pid, handle1, handle2); }
+        virtual ApEvent perform(PendingPartitionOp *op,
+                                RegionTreeForest *forest)
+        { return forest->create_partition_by_union(op, pid, handle1, handle2); }
         virtual void perform_logging(PendingPartitionOp* op);
       protected:
         IndexPartition pid;
@@ -2064,8 +2068,9 @@ namespace Legion {
           : pid(id), handle1(h1), handle2(h2) { }
         virtual ~IntersectionPartitionThunk(void) { }
       public:
-        virtual ApEvent perform(RegionTreeForest *forest)
-        { return forest->create_partition_by_intersection(pid, handle1, 
+        virtual ApEvent perform(PendingPartitionOp *op,
+                                RegionTreeForest *forest)
+        { return forest->create_partition_by_intersection(op, pid, handle1,
                                                           handle2); }
         virtual void perform_logging(PendingPartitionOp* op);
       protected:
@@ -2080,8 +2085,9 @@ namespace Legion {
           : pid(id), handle1(h1), handle2(h2) { }
         virtual ~DifferencePartitionThunk(void) { }
       public:
-        virtual ApEvent perform(RegionTreeForest *forest)
-        { return forest->create_partition_by_difference(pid, handle1, 
+        virtual ApEvent perform(PendingPartitionOp *op,
+                                RegionTreeForest *forest)
+        { return forest->create_partition_by_difference(op, pid, handle1,
                                                         handle2); }
         virtual void perform_logging(PendingPartitionOp* op);
       protected:
@@ -2089,21 +2095,40 @@ namespace Legion {
         IndexPartition handle1;
         IndexPartition handle2;
       };
+      class RestrictedPartitionThunk : public PendingPartitionThunk {
+      public:
+        RestrictedPartitionThunk(IndexPartition id, const void *tran,
+                  size_t tran_size, const void *ext, size_t ext_size)
+          : pid(id), transform(malloc(tran_size)), extent(malloc(ext_size))
+        { memcpy(transform, tran, tran_size); memcpy(extent, ext, ext_size); }
+        virtual ~RestrictedPartitionThunk(void)
+          { free(transform); free(extent); }
+      public:
+        virtual ApEvent perform(PendingPartitionOp *op,
+                                RegionTreeForest *forest)
+        { return forest->create_partition_by_restriction(pid, 
+                                              transform, extent); }
+        virtual void perform_logging(PendingPartitionOp *op);
+      protected:
+        IndexPartition pid;
+        void *const transform;
+        void *const extent;
+      };
       class CrossProductThunk : public PendingPartitionThunk {
       public:
-        CrossProductThunk(IndexPartition b, IndexPartition s,
-                          std::map<DomainPoint,IndexPartition> &h)
-          : base(b), source(s), handles(h) { }
+        CrossProductThunk(IndexPartition b, IndexPartition s, LegionColor c)
+          : base(b), source(s), part_color(c) { }
         virtual ~CrossProductThunk(void) { }
       public:
-        virtual ApEvent perform(RegionTreeForest *forest)
-        { return forest->create_cross_product_partitions(base, source, 
-                                                         handles); }
+        virtual ApEvent perform(PendingPartitionOp *op,
+                                RegionTreeForest *forest)
+        { return forest->create_cross_product_partitions(op, base, source, 
+                                                         part_color); }
         virtual void perform_logging(PendingPartitionOp* op);
       protected:
         IndexPartition base;
         IndexPartition source;
-        std::map<DomainPoint,IndexPartition> handles;
+        LegionColor part_color;
       };
       class ComputePendingSpace : public PendingPartitionThunk {
       public:
@@ -2114,11 +2139,13 @@ namespace Legion {
           : is_union(is), is_partition(true), target(t), handle(h) { }
         virtual ~ComputePendingSpace(void) { }
       public:
-        virtual ApEvent perform(RegionTreeForest *forest)
+        virtual ApEvent perform(PendingPartitionOp *op,
+                                RegionTreeForest *forest)
         { if (is_partition)
-            return forest->compute_pending_space(target, handle, is_union);
+            return forest->compute_pending_space(op, target, handle, is_union);
           else
-            return forest->compute_pending_space(target, handles, is_union); }
+            return forest->compute_pending_space(op, target, 
+                                                 handles, is_union); }
         virtual void perform_logging(PendingPartitionOp* op);
       protected:
         bool is_union, is_partition;
@@ -2133,8 +2160,9 @@ namespace Legion {
           : target(t), initial(i), handles(h) { }
         virtual ~ComputePendingDifference(void) { }
       public:
-        virtual ApEvent perform(RegionTreeForest *forest)
-        { return forest->compute_pending_space(target, initial, handles); }
+        virtual ApEvent perform(PendingPartitionOp *op,
+                                RegionTreeForest *forest)
+        { return forest->compute_pending_space(op, target, initial, handles); }
         virtual void perform_logging(PendingPartitionOp* op);
       protected:
         IndexSpace target, initial;
@@ -2149,9 +2177,6 @@ namespace Legion {
     public:
       void initialize_equal_partition(TaskContext *ctx,
                                       IndexPartition pid, size_t granularity);
-      void initialize_weighted_partition(TaskContext *ctx,
-                                         IndexPartition pid, size_t granularity,
-                                      const std::map<DomainPoint,int> &weights);
       void initialize_union_partition(TaskContext *ctx,
                                       IndexPartition pid, 
                                       IndexPartition handle1,
@@ -2164,9 +2189,14 @@ namespace Legion {
                                            IndexPartition pid, 
                                            IndexPartition handle1,
                                            IndexPartition handle2);
-      void initialize_cross_product(TaskContext *ctx,
-                                    IndexPartition base, IndexPartition source,
-                                std::map<DomainPoint,IndexPartition> &handles);
+      void initialize_restricted_partition(TaskContext *ctx,
+                                           IndexPartition pid,
+                                           const void *transform,
+                                           size_t transform_size,
+                                           const void *extent,
+                                           size_t extent_size);
+      void initialize_cross_product(TaskContext *ctx, IndexPartition base, 
+                                    IndexPartition source, LegionColor color);
       void initialize_index_space_union(TaskContext *ctx, IndexSpace target, 
                                         const std::vector<IndexSpace> &handles);
       void initialize_index_space_union(TaskContext *ctx, IndexSpace target, 
@@ -2182,8 +2212,8 @@ namespace Legion {
                                              IndexSpace initial,
                                         const std::vector<IndexSpace> &handles);
       void perform_logging();
-      inline ApEvent get_handle_ready(void) const { return handle_ready; }
     public:
+      virtual void trigger_ready(void);
       virtual void trigger_mapping(void);
       virtual bool is_partition_op(void) const { return true; } 
     public:
@@ -2192,7 +2222,6 @@ namespace Legion {
       virtual const char* get_logging_name(void) const;
       virtual OpKind get_operation_kind(void) const;
     protected:
-      ApUserEvent handle_ready;
       PendingPartitionThunk *thunk;
     };
 
@@ -2202,15 +2231,105 @@ namespace Legion {
      * which are dependent on mapping a region in order to compute
      * the resulting partition.
      */
-    class DependentPartitionOp : public Operation,
+    class DependentPartitionOp : public Partition, public Operation,
                                  public LegionHeapify<DependentPartitionOp> {
     public:
       static const AllocationType alloc_type = DEPENDENT_PARTITION_OP_ALLOC;
-    public:
-      enum PartOpKind {
-        BY_FIELD,
-        BY_IMAGE,
-        BY_PREIMAGE,
+    protected:
+      // Track dependent partition operations as thunks
+      class DepPartThunk {
+      public:
+        virtual ~DepPartThunk(void) { }
+      public:
+        virtual ApEvent perform(DependentPartitionOp *op,
+            RegionTreeForest *forest, ApEvent instances_ready,
+            const std::vector<FieldDataDescriptor> &instances) = 0;
+        virtual PartitionKind get_kind(void) const = 0;
+        virtual IndexPartition get_partition(void) const = 0;
+      };
+      class ByFieldThunk : public DepPartThunk {
+      public:
+        ByFieldThunk(IndexPartition p)
+          : pid(p) { }
+      public:
+        virtual ApEvent perform(DependentPartitionOp *op,
+            RegionTreeForest *forest, ApEvent instances_ready,
+            const std::vector<FieldDataDescriptor> &instances);
+        virtual PartitionKind get_kind(void) const { return BY_FIELD; }
+        virtual IndexPartition get_partition(void) const { return pid; }
+      protected:
+        IndexPartition pid;
+      };
+      class ByImageThunk : public DepPartThunk {
+      public:
+        ByImageThunk(IndexPartition p, IndexPartition proj)
+          : pid(p), projection(proj) { }
+      public:
+        virtual ApEvent perform(DependentPartitionOp *op,
+            RegionTreeForest *forest, ApEvent instances_ready,
+            const std::vector<FieldDataDescriptor> &instances);
+        virtual PartitionKind get_kind(void) const { return BY_IMAGE; }
+        virtual IndexPartition get_partition(void) const { return pid; }
+      protected:
+        IndexPartition pid;
+        IndexPartition projection;
+      };
+      class ByImageRangeThunk : public DepPartThunk {
+      public:
+        ByImageRangeThunk(IndexPartition p, IndexPartition proj)
+          : pid(p), projection(proj) { }
+      public:
+        virtual ApEvent perform(DependentPartitionOp *op,
+            RegionTreeForest *forest, ApEvent instances_ready,
+            const std::vector<FieldDataDescriptor> &instances);
+        virtual PartitionKind get_kind(void) const { return BY_IMAGE_RANGE; }
+        virtual IndexPartition get_partition(void) const { return pid; }
+      protected:
+        IndexPartition pid;
+        IndexPartition projection;
+      };
+      class ByPreimageThunk : public DepPartThunk {
+      public:
+        ByPreimageThunk(IndexPartition p, IndexPartition proj)
+          : pid(p), projection(proj) { }
+      public:
+        virtual ApEvent perform(DependentPartitionOp *op,
+            RegionTreeForest *forest, ApEvent instances_ready,
+            const std::vector<FieldDataDescriptor> &instances);
+        virtual PartitionKind get_kind(void) const { return BY_PREIMAGE; }
+        virtual IndexPartition get_partition(void) const { return pid; }
+      protected:
+        IndexPartition pid;
+        IndexPartition projection;
+      };
+      class ByPreimageRangeThunk : public DepPartThunk {
+      public:
+        ByPreimageRangeThunk(IndexPartition p, IndexPartition proj)
+          : pid(p), projection(proj) { }
+      public:
+        virtual ApEvent perform(DependentPartitionOp *op,
+            RegionTreeForest *forest, ApEvent instances_ready,
+            const std::vector<FieldDataDescriptor> &instances);
+        virtual PartitionKind get_kind(void) const { return BY_PREIMAGE_RANGE; }
+        virtual IndexPartition get_partition(void) const { return pid; }
+      protected:
+        IndexPartition pid;
+        IndexPartition projection;
+      };
+      class AssociationThunk : public DepPartThunk {
+      public:
+        AssociationThunk(IndexSpace d, IndexSpace r)
+          : domain(d), range(r) { }
+      public:
+        virtual ApEvent perform(DependentPartitionOp *op,
+            RegionTreeForest *forest, ApEvent instances_ready,
+            const std::vector<FieldDataDescriptor> &instances);
+        virtual PartitionKind get_kind(void) const { return BY_ASSOCIATION; }
+        virtual IndexPartition get_partition(void) const
+          { return IndexPartition::NO_PART; }
+      protected:
+        IndexSpace domain;
+        IndexSpace range;
       };
     public:
       DependentPartitionOp(Runtime *rt);
@@ -2221,25 +2340,44 @@ namespace Legion {
     public:
       void initialize_by_field(TaskContext *ctx, IndexPartition pid,
                                LogicalRegion handle, LogicalRegion parent,
-                               const Domain &color_space, FieldID fid); 
+                               FieldID fid, MapperID id, MappingTagID tag); 
       void initialize_by_image(TaskContext *ctx, IndexPartition pid,
                                LogicalPartition projection,
                                LogicalRegion parent, FieldID fid,
-                               const Domain &color_space);
+                               MapperID id, MappingTagID tag);
+      void initialize_by_image_range(TaskContext *ctx, IndexPartition pid,
+                               LogicalPartition projection,
+                               LogicalRegion parent, FieldID fid,
+                               MapperID id, MappingTagID tag);
       void initialize_by_preimage(TaskContext *ctx, IndexPartition pid,
                                IndexPartition projection, LogicalRegion handle,
                                LogicalRegion parent, FieldID fid,
-                               const Domain &color_space);
+                               MapperID id, MappingTagID tag);
+      void initialize_by_preimage_range(TaskContext *ctx, IndexPartition pid,
+                               IndexPartition projection, LogicalRegion handle,
+                               LogicalRegion parent, FieldID fid,
+                               MapperID id, MappingTagID tag);
+      void initialize_by_association(TaskContext *ctx, LogicalRegion domain,
+                               LogicalRegion domain_parent, FieldID fid,
+                               IndexSpace range, MapperID id, MappingTagID tag);
+      void perform_logging(void) const;
+      void log_requirement(void) const;
       const RegionRequirement& get_requirement(void) const;
-      inline ApEvent get_handle_ready(void) const { return handle_ready; }
     public:
       virtual bool has_prepipeline_stage(void) const { return true; }
       virtual void trigger_prepipeline_stage(void);
       virtual void trigger_dependence_analysis(void);
       virtual void trigger_ready(void);
       virtual void trigger_mapping(void);
+      virtual ApEvent trigger_thunk(IndexSpace handle,
+                                    const InstanceSet &mapped_instances);
       virtual unsigned find_parent_index(unsigned idx);
       virtual bool is_partition_op(void) const { return true; }
+    public:
+      virtual PartitionKind get_partition_kind(void) const;
+      virtual UniqueID get_unique_id(void) const;
+      virtual unsigned get_context_index(void) const;
+      virtual int get_depth(void) const;
     public:
       virtual void activate(void);
       virtual void deactivate(void);
@@ -2247,21 +2385,91 @@ namespace Legion {
       virtual OpKind get_operation_kind(void) const;
       virtual size_t get_region_count(void) const;
       virtual void trigger_commit(void);
+    public:
+      virtual void select_sources(const InstanceRef &target,
+                                  const InstanceSet &sources,
+                                  std::vector<unsigned> &ranking);
+      virtual std::map<PhysicalManager*,std::pair<unsigned,bool> >*
+                   get_acquired_instances_ref(void);
       virtual void record_reference_mutation_effect(RtEvent event);
+      virtual PhysicalManager* select_temporary_instance(PhysicalManager *dst,
+                              unsigned index, const FieldMask &needed_fields);
+      virtual void record_restrict_postcondition(ApEvent postcondition);
+      virtual void add_copy_profiling_request(
+                                        Realm::ProfilingRequestSet &reqeusts);
+      // Report a profiling result for this operation
+      virtual void handle_profiling_response(
+                                  const Realm::ProfilingResponse &result);
     protected:
       void compute_parent_index(void);
-    protected:
-      ApUserEvent handle_ready;
-      PartOpKind partition_kind;
-      RegionRequirement requirement;
+      void select_partition_projection(void);
+      void invoke_mapper(const InstanceSet &valid_instances,
+                               InstanceSet &mapped_instances);
+      void activate_dependent_op(void);
+      void deactivate_dependent_op(void);
+    public:
+      void handle_point_commit(RtEvent point_committed);
+    public:
+      ProjectionInfo projection_info;
       VersionInfo version_info;
       RestrictInfo restrict_info;
-      IndexPartition partition_handle;
-      Domain color_space;
-      IndexPartition projection; /* for pre-image only*/
       RegionTreePath privilege_path;
       unsigned parent_req_index;
+      std::map<PhysicalManager*,std::pair<unsigned,bool> > acquired_instances;
       std::set<RtEvent> map_applied_conditions;
+      std::set<ApEvent> restricted_postconditions;
+      DepPartThunk *thunk;
+    protected:
+      MapperManager *mapper;
+    protected:
+      // For index versions of this operation
+      IndexSpace                        launch_space;
+      std::vector<FieldDataDescriptor>  instances;
+      std::set<ApEvent>                 index_preconditions;
+      std::vector<PointDepPartOp*>      points; 
+      unsigned                          points_committed;
+      bool                              commit_request;
+      std::set<RtEvent>                 commit_preconditions;
+#ifdef LEGION_SPY
+      // Special helper event to make things look right for Legion Spy
+      ApUserEvent                       intermediate_index_event;
+#endif
+    protected:
+      std::vector<ProfilingMeasurementID> profiling_requests;
+      int                     outstanding_profiling_requests;
+      RtUserEvent                         profiling_reported;
+    };
+
+    /**
+     * \class PointDepPartOp
+     * This is a point class for mapping a particular 
+     * subregion of a partition for a dependent partitioning
+     * operation.
+     */
+    class PointDepPartOp : public DependentPartitionOp, public ProjectionPoint {
+    public:
+      PointDepPartOp(Runtime *rt);
+      PointDepPartOp(const PointDepPartOp &rhs);
+      virtual ~PointDepPartOp(void);
+    public:
+      PointDepPartOp& operator=(const PointDepPartOp &rhs);
+    public:
+      void initialize(DependentPartitionOp *owner, const DomainPoint &point);
+      void launch(const std::set<RtEvent> &preconditions);
+    public:
+      virtual void activate(void);
+      virtual void deactivate(void);
+      virtual void trigger_prepipeline_stage(void);
+      virtual void trigger_dependence_analysis(void);
+      virtual ApEvent trigger_thunk(IndexSpace handle,
+                                    const InstanceSet &mapped_instances);
+      virtual void trigger_commit(void);
+    public:
+      // From ProjectionPoint
+      virtual const DomainPoint& get_domain_point(void) const;
+      virtual void set_projection_result(unsigned idx, LogicalRegion result);
+    public:
+      DependentPartitionOp *owner;
     };
 
     /**
@@ -2345,6 +2553,7 @@ namespace Legion {
     public:
       void initialize(TaskContext *ctx,
                       const IndexFillLauncher &launcher,
+                      IndexSpace launch_space,
                       bool check_privileges);
     public:
       virtual void activate(void);
@@ -2364,6 +2573,7 @@ namespace Legion {
       virtual const ProjectionInfo* get_projection_info(void);
     public:
       ProjectionInfo                projection_info;
+      IndexSpace                    launch_space;
     protected:
       std::vector<PointFillOp*>     points;
       unsigned                      points_committed;
@@ -2439,7 +2649,8 @@ namespace Legion {
       virtual void trigger_commit(void);
       virtual void record_reference_mutation_effect(RtEvent event);
     public:
-      PhysicalInstance create_instance(const Domain &dom,
+      PhysicalInstance create_instance(IndexSpaceNode *node,
+	const std::vector<FieldID> &field_set,
         const std::vector<size_t> &field_sizes, LayoutConstraintSet &cons);
     protected:
       void check_privilege(void);

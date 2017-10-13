@@ -67,8 +67,9 @@ extern "C" {
   NEW_OPAQUE_TYPE(legion_release_launcher_t);
   NEW_OPAQUE_TYPE(legion_must_epoch_launcher_t);
   NEW_OPAQUE_TYPE(legion_physical_region_t);
-  NEW_OPAQUE_TYPE(legion_accessor_generic_t);
-  NEW_OPAQUE_TYPE(legion_accessor_array_t);
+  NEW_OPAQUE_TYPE(legion_accessor_array_1d_t);
+  NEW_OPAQUE_TYPE(legion_accessor_array_2d_t);
+  NEW_OPAQUE_TYPE(legion_accessor_array_3d_t);
   NEW_OPAQUE_TYPE(legion_index_iterator_t);
   NEW_OPAQUE_TYPE(legion_task_t);
   NEW_OPAQUE_TYPE(legion_inline_t);
@@ -152,6 +153,7 @@ extern "C" {
   typedef struct legion_index_space_t {
     legion_index_space_id_t id;
     legion_index_tree_id_t tid;
+    legion_type_tag_t type_tag;
   } legion_index_space_t;
 
   /**
@@ -160,15 +162,8 @@ extern "C" {
   typedef struct legion_index_partition_t {
     legion_index_partition_id_t id;
     legion_index_tree_id_t tid;
+    legion_type_tag_t type_tag;
   } legion_index_partition_t;
-
-  /**
-   * @see Legion::IndexAllocator
-   */
-  typedef struct legion_index_allocator_t {
-    legion_index_space_t index_space;
-    legion_index_space_allocator_t allocator;
-  } legion_index_allocator_t;
 
   /**
    * @see Legion::FieldSpace
@@ -203,9 +198,6 @@ extern "C" {
     size_t arglen;
   } legion_task_argument_t;
 
-  /**
-   * @see LegionRuntime::Accessor::ByteOffset
-   */
   typedef struct legion_byte_offset_t {
     int offset;
   } legion_byte_offset_t;
@@ -402,6 +394,21 @@ extern "C" {
    */
   legion_rect_3d_t
   legion_domain_get_rect_3d(legion_domain_t d);
+
+  bool
+  legion_domain_is_dense(legion_domain_t d);
+
+  // These are the same as above but will ignore 
+  // the existence of any sparsity map, whereas the 
+  // ones above will fail if a sparsity map exists
+  legion_rect_1d_t
+  legion_domain_get_bounds_1d(legion_domain_t d);
+
+  legion_rect_2d_t
+  legion_domain_get_bounds_2d(legion_domain_t d);
+
+  legion_rect_3d_t
+  legion_domain_get_bounds_3d(legion_domain_t d);
 
   /**
    * @see Legion::Domain::get_volume()
@@ -720,6 +727,28 @@ extern "C" {
                                    legion_domain_t domain);
 
   /**
+   * @return Caller takes ownership of return value.
+   *
+   * @see Legion::Runtime::union_index_spaces
+   */
+  legion_index_space_t
+  legion_index_space_union(legion_runtime_t runtime,
+                           legion_context_t ctx,
+                           const legion_index_space_t *spaces,
+                           size_t num_spaces);
+
+  /**
+   * @return Caller takes ownership of return value.
+   *
+   * @see Legion::Runtime::intersect_index_spaces
+   */
+  legion_index_space_t
+  legion_index_space_intersection(legion_runtime_t runtime,
+                                  legion_context_t ctx,
+                                  const legion_index_space_t *spaces,
+                                  size_t num_spaces);
+
+  /**
    * @see Legion::Runtime::has_multiple_domains().
    */
   bool
@@ -905,10 +934,9 @@ extern "C" {
   legion_index_partition_create_equal(legion_runtime_t runtime,
                                       legion_context_t ctx,
                                       legion_index_space_t parent,
-                                      legion_domain_t color_space,
+                                      legion_index_space_t color_space,
                                       size_t granularity,
-                                      int color /* = AUTO_GENERATE_ID */,
-                                      bool allocable /* = false */);
+                                      int color /* = AUTO_GENERATE_ID */);
 
   /**
    * @return Caller takes ownership of return value.
@@ -922,9 +950,9 @@ extern "C" {
     legion_index_space_t parent,
     legion_index_partition_t handle1,
     legion_index_partition_t handle2,
+    legion_index_space_t color_space,
     legion_partition_kind_t part_kind /* = COMPUTE_KIND */,
-    int color /* = AUTO_GENERATE_ID */,
-    bool allocable /* = false */);
+    int color /* = AUTO_GENERATE_ID */);
 
   /**
    * @return Caller takes ownership of return value.
@@ -938,9 +966,9 @@ extern "C" {
     legion_index_space_t parent,
     legion_index_partition_t handle1,
     legion_index_partition_t handle2,
+    legion_index_space_t color_space,
     legion_partition_kind_t part_kind /* = COMPUTE_KIND */,
-    int color /* = AUTO_GENERATE_ID */,
-    bool allocable /* = false */);
+    int color /* = AUTO_GENERATE_ID */);
 
   /**
    * @return Caller takes ownership of return value.
@@ -954,9 +982,9 @@ extern "C" {
     legion_index_space_t parent,
     legion_index_partition_t handle1,
     legion_index_partition_t handle2,
+    legion_index_space_t color_space,
     legion_partition_kind_t part_kind /* = COMPUTE_KIND */,
-    int color /* = AUTO_GENERATE_ID */,
-    bool allocable /* = false */);
+    int color /* = AUTO_GENERATE_ID */);
 
   /**
    * @return Caller takes ownership of return value.
@@ -969,9 +997,8 @@ extern "C" {
                                          legion_logical_region_t handle,
                                          legion_logical_region_t parent,
                                          legion_field_id_t fid,
-                                         legion_domain_t color_space,
-                                         int color /* = AUTO_GENERATE_ID */,
-                                         bool allocable /* = false */);
+                                         legion_index_space_t color_space,
+                                         int color /* = AUTO_GENERATE_ID */);
 
   /**
    * @return Caller takes ownership of return value.
@@ -986,10 +1013,9 @@ extern "C" {
     legion_logical_partition_t projection,
     legion_logical_region_t parent,
     legion_field_id_t fid,
-    legion_domain_t color_space,
+    legion_index_space_t color_space,
     legion_partition_kind_t part_kind /* = COMPUTE_KIND */,
-    int color /* = AUTO_GENERATE_ID */,
-    bool allocable /* = false */);
+    int color /* = AUTO_GENERATE_ID */);
 
   /**
    * @return Caller takes ownership of return value.
@@ -1004,10 +1030,9 @@ extern "C" {
     legion_logical_region_t handle,
     legion_logical_region_t parent,
     legion_field_id_t fid,
-    legion_domain_t color_space,
+    legion_index_space_t color_space,
     legion_partition_kind_t part_kind /* = COMPUTE_KIND */,
-    int color /* = AUTO_GENERATE_ID */,
-    bool allocable /* = false */);
+    int color /* = AUTO_GENERATE_ID */);
 
   /**
    * @see LegionRuntime::HighLevel::Runtime::is_index_partition_disjoint()
@@ -1054,9 +1079,9 @@ extern "C" {
     legion_domain_point_t color);
 
   /**
-   * @see Legion::Runtime::get_index_partition_color_space()
+   * @see Legion::Runtime::get_index_partition_color_space_name()
    */
-  legion_domain_t
+  legion_index_space_t
   legion_index_partition_get_color_space(legion_runtime_t runtime,
                                          legion_index_partition_t handle);
 
@@ -1481,39 +1506,6 @@ extern "C" {
   // -----------------------------------------------------------------------
   // Allocator and Argument Map Operations
   // -----------------------------------------------------------------------
-
-  /**
-   * @return Caller takes ownership of return value.
-   *
-   * @see Legion::Runtime::create_index_allocator()
-   */
-  legion_index_allocator_t
-  legion_index_allocator_create(legion_runtime_t runtime,
-                                legion_context_t ctx,
-                                legion_index_space_t handle);
-
-  /**
-   * @param handle Caller must have ownership of parameter `handle`.
-   *
-   * @see Legion::IndexAllocator::~IndexAllocator()
-   */
-  void
-  legion_index_allocator_destroy(legion_index_allocator_t handle);
-
-  /**
-   * @see Legion::IndexAllocator::alloc()
-   */
-  legion_ptr_t
-  legion_index_allocator_alloc(legion_index_allocator_t allocator,
-                               size_t num_elements /* = 1 */);
-
-  /**
-   * @see Legion::IndexAllocator::free()
-   */
-  void
-  legion_index_allocator_free(legion_index_allocator_t allocator,
-                              legion_ptr_t ptr,
-                              size_t num_elements /* = 1 */);
 
   /**
    * @return Caller takes ownership of return value.
@@ -2562,6 +2554,22 @@ extern "C" {
                            legion_trace_id_t tid);
 
   // -----------------------------------------------------------------------
+  // Tunable Variables
+  // -----------------------------------------------------------------------
+
+  /**
+   * @return Caller takes ownership of return value.
+   *
+   * @see Legion::Runtime::select_tunable_value()
+   */
+  legion_future_t
+  legion_runtime_select_tunable_value(legion_runtime_t runtime,
+				      legion_context_t ctx,
+				      legion_tunable_id_t tid,
+				      legion_mapper_id_t mapper /* = 0 */,
+				      legion_mapping_tag_id_t tag /* = 0 */);
+
+  // -----------------------------------------------------------------------
   // Miscellaneous Operations
   // -----------------------------------------------------------------------
 
@@ -2627,8 +2635,18 @@ extern "C" {
    *
    * @see Legion::PhysicalRegion::get_field_accessor()
    */
-  legion_accessor_generic_t
-  legion_physical_region_get_field_accessor_generic(
+  legion_accessor_array_1d_t
+  legion_physical_region_get_field_accessor_array_1d(
+    legion_physical_region_t handle,
+    legion_field_id_t fid);
+  
+  /**
+   * @return Caller takes ownership of return value.
+   *
+   * @see Legion::PhysicalRegion::get_field_accessor()
+   */
+  legion_accessor_array_2d_t
+  legion_physical_region_get_field_accessor_array_2d(
     legion_physical_region_t handle,
     legion_field_id_t fid);
 
@@ -2637,128 +2655,105 @@ extern "C" {
    *
    * @see Legion::PhysicalRegion::get_field_accessor()
    */
-  legion_accessor_array_t
-  legion_physical_region_get_field_accessor_array(
+  legion_accessor_array_3d_t
+  legion_physical_region_get_field_accessor_array_3d(
     legion_physical_region_t handle,
     legion_field_id_t fid);
 
-  /**
-   * @param handle Caller must have ownership of parameter `handle`.
-   */
-  void
-  legion_accessor_generic_destroy(legion_accessor_generic_t handle);
+  void *
+  legion_accessor_array_1d_raw_rect_ptr(legion_accessor_array_1d_t handle,
+                                        legion_rect_1d_t rect,
+                                        legion_rect_1d_t *subrect,
+                                        legion_byte_offset_t *offsets);
 
-  /**
-   * @see LegionRuntime::Accessor::Generic::Untyped::read_untyped()
-   */
-  void
-  legion_accessor_generic_read(legion_accessor_generic_t handle,
-                               legion_ptr_t ptr,
-                               void *dst,
-                               size_t bytes);
+  void *
+  legion_accessor_array_2d_raw_rect_ptr(legion_accessor_array_2d_t handle,
+                                        legion_rect_2d_t rect,
+                                        legion_rect_2d_t *subrect,
+                                        legion_byte_offset_t *offsets);
 
-  /**
-   * @see LegionRuntime::Accessor::Generic::Untyped::write_untyped()
-   */
+  void *
+  legion_accessor_array_3d_raw_rect_ptr(legion_accessor_array_3d_t handle,
+                                        legion_rect_3d_t rect,
+                                        legion_rect_3d_t *subrect,
+                                        legion_byte_offset_t *offsets);
+
+  // Read
   void
-  legion_accessor_generic_write(legion_accessor_generic_t handle,
+  legion_accessor_array_1d_read(legion_accessor_array_1d_t handle,
                                 legion_ptr_t ptr,
-                                const void *src,
-                                size_t bytes);
+                                void *dst, size_t bytes);
 
-  /**
-   * @see LegionRuntime::Accessor::Generic::Untyped::read_untyped()
-   */
   void
-  legion_accessor_generic_read_domain_point(legion_accessor_generic_t handle,
-                                            legion_domain_point_t dp,
-                                            void *dst,
-                                            size_t bytes);
+  legion_accessor_array_1d_read_point(legion_accessor_array_1d_t handle,
+                                      legion_point_1d_t point,
+                                      void *dst, size_t bytes);
 
-  /**
-   * @see LegionRuntime::Accessor::Generic::Untyped::write_untyped()
-   */
   void
-  legion_accessor_generic_write_domain_point(legion_accessor_generic_t handle,
-                                             legion_domain_point_t dp,
-                                             const void *src,
-                                             size_t bytes);
+  legion_accessor_array_2d_read_point(legion_accessor_array_2d_t handle,
+                                      legion_point_2d_t point,
+                                      void *dst, size_t bytes);
+  
+  void
+  legion_accessor_array_3d_read_point(legion_accessor_array_3d_t handle,
+                                      legion_point_3d_t point,
+                                      void *dst, size_t bytes);
 
-  /**
-   * @see LegionRuntime::Accessor::Generic::Untyped::raw_span_ptr()
-   */
+  // Write
+  void
+  legion_accessor_array_1d_write(legion_accessor_array_1d_t handle,
+                                 legion_ptr_t ptr,
+                                 const void *src, size_t bytes);
+
+  void
+  legion_accessor_array_1d_write_point(legion_accessor_array_1d_t handle,
+                                       legion_point_1d_t point,
+                                       const void *src, size_t bytes);
+
+  void
+  legion_accessor_array_2d_write_point(legion_accessor_array_2d_t handle,
+                                       legion_point_2d_t point,
+                                       const void *src, size_t bytes);
+
+  void
+  legion_accessor_array_3d_write_point(legion_accessor_array_3d_t handle,
+                                       legion_point_3d_t point,
+                                       const void *src, size_t bytes);
+
+  // Ref
   void *
-  legion_accessor_generic_raw_span_ptr(legion_accessor_generic_t handle,
-                                       legion_ptr_t ptr,
-                                       size_t req_count,
-                                       size_t *act_count,
-                                       legion_byte_offset_t *stride);
+  legion_accessor_array_1d_ref(legion_accessor_array_1d_t handle,
+                               legion_ptr_t ptr);
 
-  /**
-   * @see LegionRuntime::Accessor::Generic::Untyped::raw_rect_ptr()
-   */
   void *
-  legion_accessor_generic_raw_rect_ptr_1d(legion_accessor_generic_t handle,
-                                          legion_rect_1d_t rect,
-                                          legion_rect_1d_t *subrect,
-                                          legion_byte_offset_t *offsets);
+  legion_accessor_array_1d_ref_point(legion_accessor_array_1d_t handle,
+                                     legion_point_1d_t point);
 
-  /**
-   * @see LegionRuntime::Accessor::Generic::Untyped::raw_rect_ptr()
-   */
   void *
-  legion_accessor_generic_raw_rect_ptr_2d(legion_accessor_generic_t handle,
-                                          legion_rect_2d_t rect,
-                                          legion_rect_2d_t *subrect,
-                                          legion_byte_offset_t *offsets);
+  legion_accessor_array_2d_ref_point(legion_accessor_array_2d_t handle,
+                                     legion_point_2d_t point);
 
-  /**
-   * @see LegionRuntime::Accessor::Generic::Untyped::raw_rect_ptr()
-   */
   void *
-  legion_accessor_generic_raw_rect_ptr_3d(legion_accessor_generic_t handle,
-                                          legion_rect_3d_t rect,
-                                          legion_rect_3d_t *subrect,
-                                          legion_byte_offset_t *offsets);
-
-  /**
-   * @see LegionRuntime::Accessor::Generic::Untyped::get_soa_parameters()
-   */
-  bool
-  legion_accessor_generic_get_soa_parameters(legion_accessor_generic_t handle,
-                                             void **base,
-                                             size_t *stride);
+  legion_accessor_array_3d_ref_point(legion_accessor_array_3d_t handle,
+                                     legion_point_3d_t point);
 
   /**
    * @param handle Caller must have ownership of parameter `handle`.
    */
   void
-  legion_accessor_array_destroy(legion_accessor_array_t handle);
+  legion_accessor_array_1d_destroy(legion_accessor_array_1d_t handle);
 
   /**
-   * @see LegionRuntime::Accessor::SOA::Untyped::elem_ptr()
+   * @param handle Caller must have ownership of parameter `handle`.
    */
   void
-  legion_accessor_array_read(legion_accessor_array_t handle,
-                             legion_ptr_t ptr,
-                             void *dst,
-                             size_t bytes);
+  legion_accessor_array_2d_destroy(legion_accessor_array_2d_t handle);
 
   /**
-   * @see LegionRuntime::Accessor::SOA::Untyped::elem_ptr()
+   * @param handle Caller must have ownership of parameter `handle`.
    */
   void
-  legion_accessor_array_write(legion_accessor_array_t handle,
-                              legion_ptr_t ptr,
-                              const void *src,
-                              size_t bytes);
-
-  /**
-   * @see LegionRuntime::Accessor::SOA::Untyped::elem_ptr()
-   */
-  void *
-  legion_accessor_array_ref(legion_accessor_array_t handle,
-                            legion_ptr_t ptr);
+  legion_accessor_array_3d_destroy(legion_accessor_array_3d_t handle);
 
   /**
    * @return Caller takes ownership of return value.
@@ -3310,6 +3305,38 @@ extern "C" {
     size_t userlen);
 
   /**
+   * @see Legion::Runtime::register_task_variant()
+   */
+  legion_task_id_t
+  legion_runtime_register_task_variant_python_source(
+    legion_runtime_t runtime,
+    legion_task_id_t id /* = AUTO_GENERATE_ID */,
+    const char *task_name /* = NULL*/,
+    bool global,
+    legion_execution_constraint_set_t execution_constraints,
+    legion_task_layout_constraint_set_t layout_constraints,
+    legion_task_config_options_t options,
+    const char *module_name,
+    const char *function_name,
+    const void *userdata,
+    size_t userlen);
+
+  /**
+   * @see Legion::Runtime::preregister_task_variant()
+   */
+  legion_task_id_t
+  legion_runtime_preregister_task_variant_python_source(
+    legion_task_id_t id /* = AUTO_GENERATE_ID */,
+    const char *task_name /* = NULL*/,
+    legion_execution_constraint_set_t execution_constraints,
+    legion_task_layout_constraint_set_t layout_constraints,
+    legion_task_config_options_t options,
+    const char *module_name,
+    const char *function_name,
+    const void *userdata,
+    size_t userlen);
+
+  /**
    * @see Legion::LegionTaskWrapper::legion_task_preamble()
    */
   void
@@ -3351,6 +3378,12 @@ extern "C" {
    */
   unsigned long long
   legion_get_current_time_in_micros(void);
+
+  /**
+   * @see LegionRuntime::TimeStamp::get_current_time_in_nanos()
+   */
+  unsigned long long
+  legion_get_current_time_in_nanos(void);
 
   // -----------------------------------------------------------------------
   // Machine Operations
@@ -3886,6 +3919,30 @@ extern "C" {
       legion_physical_instance_t *result,
       bool acquire,
       bool tight_region_bounds);
+
+
+  /**
+   * @param handle Caller must have ownership of parameter `handle`.
+   *
+   * @see Legion::Mapping::MapperRuntime::acquire_instance()
+   */
+  bool
+  legion_mapper_runtime_acquire_instance(
+      legion_mapper_runtime_t runtime,
+      legion_mapper_context_t ctx,
+      legion_physical_instance_t instance);
+
+  /**
+   * @param handle Caller must have ownership of parameter `handle`.
+   *
+   * @see Legion::Mapping::MapperRuntime::acquire_instances()
+   */
+  bool
+  legion_mapper_runtime_acquire_instances(
+      legion_mapper_runtime_t runtime,
+      legion_mapper_context_t ctx,
+      legion_physical_instance_t *instances,
+      size_t instances_size);
 
 #ifdef __cplusplus
 }

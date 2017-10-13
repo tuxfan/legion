@@ -19,6 +19,10 @@
 #ifndef REALM_CONFIG_H
 #define REALM_CONFIG_H
 
+#ifdef REALM_USE_CMAKE
+#include "realm_defines.h"
+#endif
+
 // if set, uses ucontext.h for user level thread switching, otherwise falls
 //  back to POSIX threads
 #if !defined(REALM_USE_NATIVE_THREADS) && !defined(__MACH__)
@@ -39,6 +43,13 @@
 
 // can Realm use exceptions to propagate errors back to the profiling interace?
 #define REALM_USE_EXCEPTIONS
+
+// Define a prefix for annotating functions for CUDA compilation
+#ifdef __CUDACC__
+#define __CUDA_HD__ __host__ __device__
+#else
+#define __CUDA_HD__
+#endif
 
 // the Realm operation table is needed if you want to be able to cancel operations
 #ifndef REALM_NO_USE_OPERATION_TABLE

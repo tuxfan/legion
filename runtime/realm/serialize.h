@@ -75,13 +75,18 @@ public:
   class inner { public: inner(void) {} };
 public:
   template <typename T>
-  struct test { static const bool value = sizeof(inner(),*(T*)0) != sizeof(char); };
+  struct test { static const bool value = sizeof(inner(),*reinterpret_cast<T*>(0)) != sizeof(char); };
 };
 template <typename T>
 char operator,(const is_copy_serializable::inner&, const T&);
 
 #define TYPE_IS_SERIALIZABLE(T) \
   void *operator,(const is_copy_serializable::inner&, const T&);
+
+#define TEMPLATE_TYPE_IS_SERIALIZABLE(P,T)				\
+  template <P> void *operator,(const is_copy_serializable::inner&, const T&);
+#define TEMPLATE_TYPE_IS_SERIALIZABLE2(P1,P2,T1,T2)			\
+  template <P1,P2> void *operator,(const is_copy_serializable::inner&, const T1,T2&);
 
 namespace Realm {
   namespace Serialization {

@@ -37,3 +37,7 @@ endif()
 if(Legion_USE_CUDA)
   add_subdirectory(thrust_interop)
 endif()
+
+if(Legion_USE_Python)
+  add_subdirectory(python_interop)
+endif()

@@ -13,6 +13,11 @@
  * limitations under the License.
  */
 
+// include this _before_ anything below to deal with weird ordering 
+//  constraints w.r.t. Legion's other definitions
+// (it will actually turn around and include this file when it's ready)
+#include <legion/legion_types.h>
+
 #ifndef RUNTIME_ACCESSOR_H
 #define RUNTIME_ACCESSOR_H
 
@@ -23,6 +28,8 @@
 #endif
 
 #include "arrays.h"
+#include <realm/instance.h>
+#include <legion/legion_domain.h>
 
 #ifndef __GNUC__
 #include "atomics.h" // for __sync_fetch_and_add
@@ -30,6 +37,9 @@
 
 // for fprintf
 #include <stdio.h>
+
+// for off_t
+#include <sys/types.h>
 
 // Imported ptr_t definition from old common.h
 struct ptr_t
@@ -137,12 +147,6 @@ public:
   static inline ptr_t nil(void) { ptr_t p; p.value = -1LL; return p; }
 };
 
-namespace Realm {
-  class DomainPoint;
-  class Domain;
-}
-
-
 namespace LegionRuntime {
 #ifdef PRIVILEGE_CHECKS
   enum AccessorPrivilege {
@@ -204,7 +208,9 @@ namespace LegionRuntime {
       };
     };
 
+#ifndef REGION_ACCESSOR_ALREADY_PROTOTYPED
     template <typename AT, typename ET = void, typename PT = ET> struct RegionAccessor;
+#endif
 
     template <typename AT> struct RegionAccessor<AT, void, void> : public AT::Untyped {
       CUDAPREFIX
@@ -234,7 +240,7 @@ namespace LegionRuntime {
       //  information for debug
 
       extern void (*check_bounds_ptr)(void *region, ptr_t ptr);
-      extern void (*check_bounds_dpoint)(void *region, const Realm::DomainPoint &dp);
+      extern void (*check_bounds_dpoint)(void *region, const Legion::DomainPoint &dp);
 
       // single entry point calls the right one (if present) using overloading
       inline void check_bounds(void *region, ptr_t ptr)
@@ -243,7 +249,7 @@ namespace LegionRuntime {
 	  (check_bounds_ptr)(region, ptr);
       }
 
-      inline void check_bounds(void *region, const Realm::DomainPoint &dp)
+      inline void check_bounds(void *region, const Legion::DomainPoint &dp)
       {
 	if(check_bounds_dpoint)
 	  (check_bounds_dpoint)(region, dp);
@@ -322,13 +328,26 @@ namespace LegionRuntime {
       struct Generic {
 	struct Untyped {
           CUDAPREFIX
-	  Untyped() : internal(0), field_offset(0) {}
+	  Untyped() 
+	    : inst(Realm::RegionInstance::NO_INST)
+	    , field_id(0)
+#if defined(PRIVILEGE_CHECKS) || defined(BOUNDS_CHECKS) 
+	    , region(0)
+#endif
+	  {}
+
           CUDAPREFIX
-	  Untyped(void *_internal, off_t _field_offset = 0) : internal(_internal), field_offset(_field_offset) {}
+	  Untyped(Realm::RegionInstance _inst, Realm::FieldID _field_id = 0)
+	    : inst(_inst)
+	    , field_id(_field_id)
+#if defined(PRIVILEGE_CHECKS) || defined(BOUNDS_CHECKS) 
+	    , region(0)
+#endif
+	  {}
 
 	  template <typename ET>
 	  RegionAccessor<Generic, ET, ET> typeify(void) const {
-	    RegionAccessor<Generic, ET, ET> result(Typed<ET, ET>(internal, field_offset));
+	    RegionAccessor<Generic, ET, ET> result(Typed<ET, ET>(inst, field_id));
 #if defined(PRIVILEGE_CHECKS) || defined(BOUNDS_CHECKS)
             result.set_region(region);
 #endif
@@ -348,42 +367,266 @@ namespace LegionRuntime {
 #endif
           }
 #endif
-	  void read_untyped(ptr_t ptr, void *dst, size_t bytes, off_t offset = 0) const;
-	  void write_untyped(ptr_t ptr, const void *src, size_t bytes, off_t offset = 0) const;
-
-	  void read_untyped(const Realm::DomainPoint& dp, void *dst, size_t bytes, off_t offset = 0) const;
-	  void write_untyped(const Realm::DomainPoint& dp, const void *src, size_t bytes, off_t offset = 0) const;
-
-	  void report_fault(ptr_t ptr, size_t bytes, off_t offset = 0) const;
-	  void report_fault(const Realm::DomainPoint& dp, size_t bytes, off_t offset = 0) const;
-
-	  RegionAccessor<Generic, void, void> get_untyped_field_accessor(off_t _field_offset, size_t _field_size)
+	  void read_untyped(ptr_t ptr, void *dst, size_t bytes, off_t offset = 0) const
 	  {
-	    return RegionAccessor<Generic, void, void>(Untyped(internal, field_offset + _field_offset));
+	    typedef Realm::GenericAccessor<char, 1, Arrays::coord_t> AT;
+	    assert(AT::is_compatible(inst, field_id));
+	    AT acc(inst, field_id);
+	    size_t start = acc.get_offset(Realm::Point<1, Arrays::coord_t>(ptr.value));
+	    inst.read_untyped(start + offset, dst, bytes);
+	  }
+	  
+	  void write_untyped(ptr_t ptr, const void *src, size_t bytes, off_t offset = 0) const
+	  {
+	    typedef Realm::GenericAccessor<char, 1, Arrays::coord_t> AT;
+	    assert(AT::is_compatible(inst, field_id));
+	    AT acc(inst, field_id);
+	    size_t start = acc.get_offset(Realm::Point<1, Arrays::coord_t>(ptr.value));
+	    inst.write_untyped(start + offset, src, bytes);
 	  }
 
-	  void *raw_span_ptr(ptr_t ptr, size_t req_count, size_t& act_count, ByteOffset& stride) const;
+	  void read_untyped(const Legion::DomainPoint& dp, void *dst, size_t bytes, off_t offset = 0) const
+          {
+	    size_t start = 0;
+	    switch(dp.get_dim()) {
+	    case 0: {
+	      typedef Realm::GenericAccessor<char, 1, Arrays::coord_t> AT;
+	      assert(AT::is_compatible(inst, field_id));
+	      AT acc(inst, field_id);
+	      start = acc.get_offset(Realm::Point<1, Arrays::coord_t>(dp.get_index()));
+	      break;
+	    }
+	    case 1: {
+	      typedef Realm::GenericAccessor<char, 1, Arrays::coord_t> AT;
+	      assert(AT::is_compatible(inst, field_id));
+	      AT acc(inst, field_id);
+	      Arrays::Point<1> p = dp.get_point<1>();
+	      start = acc.get_offset(Realm::Point<1, Arrays::coord_t>(p[0]));
+	      break;
+	    }
+	    case 2: {
+	      typedef Realm::GenericAccessor<char, 2, Arrays::coord_t> AT;
+	      assert(AT::is_compatible(inst, field_id));
+	      AT acc(inst, field_id);
+	      Arrays::Point<2> p = dp.get_point<2>();
+	      start = acc.get_offset(Realm::Point<2, Arrays::coord_t>(p[0], p[1]));
+	      break;
+	    }
+	    case 3: {
+	      typedef Realm::GenericAccessor<char, 3, Arrays::coord_t> AT;
+	      assert(AT::is_compatible(inst, field_id));
+	      AT acc(inst, field_id);
+	      Arrays::Point<3> p = dp.get_point<3>();
+	      start = acc.get_offset(Realm::Point<3, Arrays::coord_t>(p[0], p[1], p[2]));
+	      break;
+	    }
+	    default: assert(0);
+	    }
+	    inst.read_untyped(start + offset, dst, bytes);
+	  }
+
+	  void write_untyped(const Legion::DomainPoint& dp, const void *src, size_t bytes, off_t offset = 0) const
+	  {
+	    size_t start = 0;
+	    switch(dp.get_dim()) {
+	    case 0: {
+	      typedef Realm::GenericAccessor<char, 1, Arrays::coord_t> AT;
+	      assert(AT::is_compatible(inst, field_id));
+	      AT acc(inst, field_id);
+	      start = acc.get_offset(Realm::Point<1, Arrays::coord_t>(dp.get_index()));
+	      break;
+	    }
+	    case 1: {
+	      typedef Realm::GenericAccessor<char, 1, Arrays::coord_t> AT;
+	      assert(AT::is_compatible(inst, field_id));
+	      AT acc(inst, field_id);
+	      Arrays::Point<1> p = dp.get_point<1>();
+	      start = acc.get_offset(Realm::Point<1, Arrays::coord_t>(p[0]));
+	      break;
+	    }
+	    case 2: {
+	      typedef Realm::GenericAccessor<char, 2, Arrays::coord_t> AT;
+	      assert(AT::is_compatible(inst, field_id));
+	      AT acc(inst, field_id);
+	      Arrays::Point<2> p = dp.get_point<2>();
+	      start = acc.get_offset(Realm::Point<2, Arrays::coord_t>(p[0], p[1]));
+	      break;
+	    }
+	    case 3: {
+	      typedef Realm::GenericAccessor<char, 3, Arrays::coord_t> AT;
+	      assert(AT::is_compatible(inst, field_id));
+	      AT acc(inst, field_id);
+	      Arrays::Point<3> p = dp.get_point<3>();
+	      start = acc.get_offset(Realm::Point<3, Arrays::coord_t>(p[0], p[1], p[2]));
+	      break;
+	    }
+	    default: assert(0);
+	    }
+	    inst.write_untyped(start + offset, src, bytes);
+	  }
+
+	  void report_fault(ptr_t ptr, size_t bytes, off_t offset = 0) const;
+	  void report_fault(const Legion::DomainPoint& dp, size_t bytes, off_t offset = 0) const;
+
+	  RegionAccessor<Generic, void, void> get_untyped_field_accessor(off_t _field_id, size_t _field_size)
+	  {
+	    return RegionAccessor<Generic, void, void>(Untyped(inst, _field_id));
+	  }
+
+	  void *raw_span_ptr(ptr_t ptr, size_t req_count, size_t& act_count, ByteOffset& stride) const
+	  {
+	    typedef Realm::AffineAccessor<char, 1, Arrays::coord_t> AT;
+	    Realm::Rect<1, Arrays::coord_t> r;
+	    r.lo.x = ptr.value;
+	    r.hi.x = ptr.value + req_count - 1;
+	    assert(AT::is_compatible(inst, field_id, r));
+	    AT acc(inst, field_id, r);
+	    char *dst = acc.ptr(r.lo);
+	    act_count = req_count;
+	    stride = ByteOffset(off_t(acc.strides[0]));
+	    return dst;
+	  }
 
 	  // for whole instance - fails if not completely affine
 	  template <int DIM>
-	  void *raw_rect_ptr(ByteOffset *offsets) const;
+	  void *raw_rect_ptr(ByteOffset *offsets) const
+	  {
+	    switch(DIM) {
+	    case 1: {
+	      typedef Realm::AffineAccessor<char, 1, Arrays::coord_t> AT;
+	      assert(AT::is_compatible(inst, field_id));
+	      AT acc(inst, field_id);
+	      char *dst = acc.ptr(Realm::Point<1, Arrays::coord_t>(0));
+	      offsets[0] = ByteOffset(off_t(acc.strides[0]));
+	      return dst;
+	    }
+	    case 2: {
+	      typedef Realm::AffineAccessor<char, 2, Arrays::coord_t> AT;
+	      assert(AT::is_compatible(inst, field_id));
+	      AT acc(inst, field_id);
+	      char *dst = acc.ptr(Realm::Point<2, Arrays::coord_t>(0, 0));
+	      offsets[0] = ByteOffset(off_t(acc.strides[0]));
+	      offsets[1] = ByteOffset(off_t(acc.strides[1]));
+	      return dst;
+	    }
+	    case 3: {
+	      typedef Realm::AffineAccessor<char, 3, Arrays::coord_t> AT;
+	      assert(AT::is_compatible(inst, field_id));
+	      AT acc(inst, field_id);
+	      char *dst = acc.ptr(Realm::Point<3, Arrays::coord_t>(0, 0, 0));
+	      offsets[0] = ByteOffset(off_t(acc.strides[0]));
+	      offsets[1] = ByteOffset(off_t(acc.strides[1]));
+	      offsets[2] = ByteOffset(off_t(acc.strides[2]));
+	      return dst;
+	    }
+	    default: assert(0);
+	    }
+	    return 0;
+	  }
 
 	  template <int DIM>
-	  void *raw_rect_ptr(const LegionRuntime::Arrays::Rect<DIM>& r, LegionRuntime::Arrays::Rect<DIM> &subrect, ByteOffset *offsets) const;
+	  void *raw_rect_ptr(const LegionRuntime::Arrays::Rect<DIM>& r, LegionRuntime::Arrays::Rect<DIM> &subrect, ByteOffset *offsets) const
+	  {
+	    switch(DIM) {
+	    case 1: {
+	      typedef Realm::AffineAccessor<char, 1, Arrays::coord_t> AT;
+	      Realm::Rect<1, Arrays::coord_t> rr;
+	      rr.lo = Realm::Point<1, Arrays::coord_t>(r.lo.x[0]);
+	      rr.hi = Realm::Point<1, Arrays::coord_t>(r.hi.x[0]);
+	      assert(AT::is_compatible(inst, field_id, rr));
+	      AT acc(inst, field_id, rr);
+	      char *dst = acc.ptr(rr.lo);
+	      offsets[0] = ByteOffset(off_t(acc.strides[0]));
+	      subrect = r;
+	      return dst;
+	    }
+	    case 2: {
+	      typedef Realm::AffineAccessor<char, 2, Arrays::coord_t> AT;
+	      Realm::Rect<2, Arrays::coord_t> rr;
+	      rr.lo = Realm::Point<2, Arrays::coord_t>(r.lo.x[0], r.lo.x[1]);
+	      rr.hi = Realm::Point<2, Arrays::coord_t>(r.hi.x[0], r.hi.x[1]);
+	      assert(AT::is_compatible(inst, field_id, rr));
+	      AT acc(inst, field_id, rr);
+	      char *dst = acc.ptr(rr.lo);
+	      offsets[0] = ByteOffset(off_t(acc.strides[0]));
+	      offsets[1] = ByteOffset(off_t(acc.strides[1]));
+	      subrect = r;
+	      return dst;
+	    }
+	    case 3: {
+	      typedef Realm::AffineAccessor<char, 3, Arrays::coord_t> AT;
+	      Realm::Rect<3, Arrays::coord_t> rr;
+	      rr.lo = Realm::Point<3, Arrays::coord_t>(r.lo.x[0], r.lo.x[1], r.lo.x[2]);
+	      rr.hi = Realm::Point<3, Arrays::coord_t>(r.hi.x[0], r.hi.x[1], r.hi.x[2]);
+	      assert(AT::is_compatible(inst, field_id, rr));
+	      AT acc(inst, field_id, rr);
+	      char *dst = acc.ptr(rr.lo);
+	      offsets[0] = ByteOffset(off_t(acc.strides[0]));
+	      offsets[1] = ByteOffset(off_t(acc.strides[1]));
+	      offsets[2] = ByteOffset(off_t(acc.strides[2]));
+	      subrect = r;
+	      return dst;
+	    }
+	    default: assert(0);
+	    }
+	    return 0;
+	  }
 
 	  template <int DIM>
 	  void *raw_rect_ptr(const LegionRuntime::Arrays::Rect<DIM>& r, LegionRuntime::Arrays::Rect<DIM> &subrect, ByteOffset *offsets,
-			     const std::vector<off_t> &field_offsets, ByteOffset &field_stride) const;
+			     const std::vector<off_t> &field_offsets, ByteOffset &field_stride) const
+	  {
+	    if(field_offsets.empty()) return 0;
+	    void *ptr = RegionAccessor<Generic, void, void>(Generic::Untyped(inst, field_offsets[0])).raw_rect_ptr<DIM>(r, subrect, offsets);
+	    if(field_offsets.size() == 1) {
+	      field_stride.offset = 0;
+	    } else {
+	      for(size_t i = 1; i < field_offsets.size(); i++) {
+		Arrays::Rect<DIM> subrect2;
+		ByteOffset offsets2[DIM];
+		void *ptr2 = RegionAccessor<Generic, void, void>(Generic::Untyped(inst, field_offsets[i])).raw_rect_ptr<DIM>(r, subrect2, offsets2);
+		assert(ptr2 != 0);
+		assert(subrect2 == subrect);
+		for(int j = 0; j < DIM; j++)
+		  assert(offsets2[j] == offsets[j]);
+		ByteOffset stride(ptr2, ptr);
+		if(i == 1) {
+		  field_stride = stride;
+		} else {
+		  assert(stride.offset == (field_stride.offset * i));
+		}
+	      }
+	    }
+	    return ptr;
+	  }
 
 	  template <int DIM>
-	  void *raw_dense_ptr(const LegionRuntime::Arrays::Rect<DIM>& r, LegionRuntime::Arrays::Rect<DIM> &subrect, ByteOffset &elem_stride) const;
+	  void *raw_dense_ptr(const LegionRuntime::Arrays::Rect<DIM>& r, LegionRuntime::Arrays::Rect<DIM> &subrect, ByteOffset &elem_stride) const
+	  {
+	    ByteOffset strides[DIM];
+	    void *ptr = raw_rect_ptr<DIM>(r, subrect, strides);
+	    elem_stride = strides[0];
+	    for(int i = 1; i < DIM; i++)
+	      assert(strides[i].offset == (strides[i - 1].offset *
+					   (subrect.hi.x[i] - subrect.lo.x[i] + 1)));
+	    return ptr;
+	  }
 
 	  template <int DIM>
 	  void *raw_dense_ptr(const LegionRuntime::Arrays::Rect<DIM>& r, LegionRuntime::Arrays::Rect<DIM> &subrect, ByteOffset &elem_stride,
-			      const std::vector<off_t> &field_offsets, ByteOffset &field_stride) const;
+			      const std::vector<off_t> &field_offsets, ByteOffset &field_stride) const
+	  {
+	    ByteOffset strides[DIM];
+	    void *ptr = raw_dense_ptr<DIM>(r, subrect, strides, field_offsets, field_stride);
+	    elem_stride = strides[0];
+	    for(int i = 1; i < DIM; i++)
+	      assert(strides[i].offset == (strides[i - 1].offset *
+					   (subrect.hi.x[i] - subrect.lo.x[i] + 1)));
+	    return ptr;
+	  }
 
-	  void *internal;
-	  off_t field_offset;
+	  Realm::RegionInstance inst;
+	  Realm::FieldID field_id;
 #if defined(PRIVILEGE_CHECKS) || defined(BOUNDS_CHECKS) 
         protected:
           void *region;
@@ -397,12 +640,44 @@ namespace LegionRuntime {
           inline void set_privileges_untyped(AccessorPrivilege p) { priv = p; }
 #endif
 	public:
-	  bool get_aos_parameters(void *& base, size_t& stride) const;
-	  bool get_soa_parameters(void *& base, size_t& stride) const;
+	  bool get_aos_parameters(void *& base, size_t& stride) const
+	  {
+	    return false;
+	  }
+
+	  bool get_soa_parameters(void *& base, size_t& stride) const
+	  {
+	    ByteOffset offset;
+	    base = raw_rect_ptr<1>(&offset);
+	    if(!base) return false;
+	    if(stride == 0) {
+	      stride = offset.offset;
+	    } else {
+	      if(stride != (size_t)offset.offset)
+		return false;
+	    }
+	    return true;
+	  }
+
 	  bool get_hybrid_soa_parameters(void *& base, size_t& stride,
-					 size_t& block_size, size_t& block_stride) const;
-	  bool get_redfold_parameters(void *& base) const;
-	  bool get_redlist_parameters(void *& base, ptr_t *& next_ptr) const;
+					 size_t& block_size, size_t& block_stride) const
+	  {
+	    return false;
+	  }
+
+	  bool get_redfold_parameters(void *& base) const
+	  {
+	    // this has always assumed that the stride is ok
+	    ByteOffset offset;
+	    base = raw_rect_ptr<1>(&offset);
+	    if(!base) return false;
+	    return true;
+	  }
+
+	  bool get_redlist_parameters(void *& base, ptr_t *& next_ptr) const
+	  {
+	    return false;
+	  }
 	};
 
 	// empty class that will have stuff put in it later if T is a struct
@@ -413,9 +688,11 @@ namespace LegionRuntime {
           CUDAPREFIX
 	  Typed() : Untyped() {}
           CUDAPREFIX
-	  Typed(void *_internal, off_t _field_offset = 0) : Untyped(_internal, _field_offset) {}
+	  Typed(Realm::RegionInstance _inst, Realm::FieldID _field_id = 0)
+	    : Untyped(_inst, _field_id)
+	  {}
 
-          bool valid(void) const { return internal != 0; }
+          bool valid(void) const { return inst.exists(); }
 
 #if defined(PRIVILEGE_CHECKS) || defined(BOUNDS_CHECKS)
           inline void set_region(void *r) { region = r; }
@@ -474,7 +751,7 @@ namespace LegionRuntime {
 	    Untyped::report_fault(ptr, sizeof(T));
 	  }
 
-	  void report_fault(const Realm::DomainPoint& dp) const
+	  void report_fault(const Legion::DomainPoint& dp) const
 	  {
 	    Untyped::report_fault(dp, sizeof(T));
 	  }
@@ -727,8 +1004,8 @@ namespace LegionRuntime {
 #endif
 	    return(base + (ptr.value * Stride<STRIDE>::value));
 	  }
-	  //char *elem_ptr(const Realm::DomainPoint& dp) const;
-	  //char *elem_ptr_linear(const Realm::Domain& d, Realm::Domain& subrect, ByteOffset *offsets);
+	  //char *elem_ptr(const Legion::DomainPoint& dp) const;
+	  //char *elem_ptr_linear(const Legion::Domain& d, Legion::Domain& subrect, ByteOffset *offsets);
 
 	  char *base;
 #if defined(PRIVILEGE_CHECKS) || defined(BOUNDS_CHECKS)
@@ -818,8 +1095,8 @@ namespace LegionRuntime {
 	    REDOP::template apply<false>(*(T *)Untyped::elem_ptr(ptr), newval);
 	  }
 
-	  //T *elem_ptr(const Realm::DomainPoint& dp) const { return (T*)(Untyped::elem_ptr(dp)); }
-	  //T *elem_ptr_linear(const Realm::Domain& d, Realm::Domain& subrect, ByteOffset *offsets)
+	  //T *elem_ptr(const Legion::DomainPoint& dp) const { return (T*)(Untyped::elem_ptr(dp)); }
+	  //T *elem_ptr_linear(const Legion::Domain& d, Legion::Domain& subrect, ByteOffset *offsets)
 	  //{ return (T*)(Untyped::elem_ptr_linear(d, subrect, offsets)); }
 	};
       };

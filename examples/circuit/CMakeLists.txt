@@ -25,9 +25,11 @@ endif()
 set(CPU_SOURCES
   circuit.h         circuit.cc
                     circuit_cpu.cc
+                    circuit_init.cc
   circuit_mapper.h  circuit_mapper.cc
 )
 if(Legion_USE_CUDA)
+  set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -Wno-deprecated-gpu-targets)
   set(GPU_SOURCES circuit_gpu.cu)
   cuda_add_executable(circuit ${CPU_SOURCES} ${GPU_SOURCES})
 else()
