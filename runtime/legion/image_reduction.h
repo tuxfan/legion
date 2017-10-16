@@ -24,6 +24,7 @@
 #include "legion_visualization.h"
 
 #include "usec_timer.h"
+#include "accessor.h"
 
 #ifdef __APPLE__
 #include <OpenGL/OpenGL.h>

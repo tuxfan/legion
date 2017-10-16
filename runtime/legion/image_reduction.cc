@@ -106,7 +106,7 @@ namespace Legion {
     
     
     // this function should be called prior to starting the Legion runtime if you
-    // plan to use commutative reductions
+    // plan to use noncommutative reductions
     // its purpose is to copy the domain bounds to all nodes
     
     void ImageReduction::preregisterSimulationBounds(SimulationBoundsCoordinate *bounds, int numBounds) {
@@ -178,8 +178,20 @@ namespace Legion {
     
     
     void ImageReduction::createImage(LogicalRegion &region, Domain &domain) {
-      Rect<image_region_dimensions> imageBounds(mImageSize.origin(), mImageSize.upperBound() - Point<image_region_dimensions>::ONES());
-      domain = Domain::from_rect<image_region_dimensions>(imageBounds);
+      Point<image_region_dimensions> p0;
+      p0 = mImageSize.origin();
+      Point <image_region_dimensions> p1;
+      p1 = mImageSize.upperBound();
+      Point <image_region_dimensions> p2(1);
+      p2 = Point<image_region_dimensions>(1);
+      p2 = mImageSize.upperBound() - Point<image_region_dimensions>(1);
+      Point <image_region_dimensions> p3;
+      p3 = Point<image_region_dimensions>::ONES();
+      Point <image_region_dimensions> p4;
+      p4 = p1 - p3;
+      Rect<image_region_dimensions> r(p0, p2);
+      Rect<image_region_dimensions> imageBounds(mImageSize.origin(), mImageSize.upperBound() - Point<image_region_dimensions>(1));
+      domain = Domain(imageBounds);
       IndexSpace pixels = mRuntime->create_index_space(mContext, domain);
       FieldSpace fields = imageFields();
       region = mRuntime->create_logical_region(mContext, pixels, fields);
@@ -187,23 +199,29 @@ namespace Legion {
     
     
     void ImageReduction::partitionImageByDepth(LogicalRegion image, Domain &domain, LogicalPartition &partition) {
-      Blockify<image_region_dimensions> coloring(mImageSize.layerSize());
+      IndexSpaceT<image_region_dimensions> parent(image.get_index_space());
+      Point<image_region_dimensions> blockingFactor = mImageSize.layerSize();
+      IndexPartition coloring = mRuntime->create_partition_by_blockify(mContext, parent, blockingFactor);
+      //Blockify<image_region_dimensions> coloring(mImageSize.layerSize());
       IndexPartition imageDepthIndexPartition = mRuntime->create_index_partition(mContext, image.get_index_space(), coloring);
       partition = mRuntime->get_logical_partition(mContext, image, imageDepthIndexPartition);
       mRuntime->attach_name(partition, "image depth partition");
-      Rect<image_region_dimensions> depthBounds(mImageSize.origin(), mImageSize.numLayers() - Point<image_region_dimensions>::ONES());
-      domain = Domain::from_rect<image_region_dimensions>(depthBounds);
+      Rect<image_region_dimensions> depthBounds(mImageSize.origin(), mImageSize.numLayers() - Point<image_region_dimensions>(1));
+      domain = Domain(depthBounds);
     }
     
     
     void ImageReduction::partitionImageByFragment(LogicalRegion image, Domain &domain, LogicalPartition &partition) {
-      Blockify<image_region_dimensions> coloring(mImageSize.fragmentSize());
+      IndexSpaceT<image_region_dimensions> parent(image.get_index_space());
+      Point<image_region_dimensions> blockingFactor = mImageSize.fragmentSize();
+      IndexPartition coloring = mRuntime->create_partition_by_blockify(mContext, parent, blockingFactor);
+      //Blockify<image_region_dimensions> coloring(mImageSize.fragmentSize());
       IndexPartition imageFragmentIndexPartition = mRuntime->create_index_partition(mContext, image.get_index_space(), coloring);
       mRuntime->attach_name(imageFragmentIndexPartition, "image fragment index");
       partition = mRuntime->get_logical_partition(mContext, image, imageFragmentIndexPartition);
       mRuntime->attach_name(partition, "image fragment partition");
-      Rect<image_region_dimensions> fragmentBounds(mImageSize.origin(), mImageSize.numFragments() - Point<image_region_dimensions>::ONES());
-      domain = Domain::from_rect<image_region_dimensions>(fragmentBounds);
+      Rect<image_region_dimensions> fragmentBounds(mImageSize.origin(), mImageSize.numFragments() - Point<image_region_dimensions>(1));
+      domain = Domain(fragmentBounds);
     }
     
     
@@ -286,11 +304,11 @@ namespace Legion {
       int numNodes = imageSize.numImageLayers;
       
       // set the node ID
-      Domain indexSpaceDomain = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
-      Rect<image_region_dimensions> imageBounds = indexSpaceDomain.get_rect<image_region_dimensions>();
+      Domain indexSpaceDomain = runtime->get_index_space_domain(regions[0].get_logical_region().get_index_space());
+      Rect<image_region_dimensions> imageBounds = indexSpaceDomain;
       
       // get your node ID from the Z coordinate of your region
-      int nodeID = imageBounds.lo.x[2];//TODO abstract the use of [2] throughout this code
+      int nodeID = imageBounds.lo[2];//TODO abstract the use of [2] throughout this code
       storeMyNodeID(nodeID, numNodes);
       
       // projection functors
@@ -314,14 +332,14 @@ namespace Legion {
         mHierarchicalTreeDomain = new std::vector<Domain>();
       }
       
-      Point<image_region_dimensions> numFragments = imageSize.numFragments() - Point<image_region_dimensions>::ONES();
+      Point<image_region_dimensions> numFragments = imageSize.numFragments() - Point<image_region_dimensions>(1);
       int numLeaves = 1;
       
       for(int level = 0; level < numTreeLevels; ++level) {
         if((unsigned)level >= mHierarchicalTreeDomain->size()) {
-          numFragments.x[2] = numLeaves - 1;
+          numFragments[2] = numLeaves - 1;
           Rect<image_region_dimensions> launchBounds(Point<image_region_dimensions>::ZEROES(), numFragments);
-          Domain domain = Domain::from_rect<image_region_dimensions>(launchBounds);
+          Domain domain = Domain(launchBounds);
           mHierarchicalTreeDomain->push_back(domain);
         }
         numLeaves *= 2;
@@ -347,9 +365,10 @@ namespace Legion {
                                                  PhysicalRegion region,
                                                  ByteOffset offset[image_region_dimensions]) {
       acc = region.get_field_accessor(fieldID).typeify<PixelField>();
-      Rect<image_region_dimensions> tempBounds;
-      field = acc.raw_rect_ptr<image_region_dimensions>(imageBounds, tempBounds, offset);
-      assert(imageBounds == tempBounds);
+      LegionRuntime::Arrays::Rect<image_region_dimensions> tempBounds;
+      LegionRuntime::Arrays::Rect<image_region_dimensions> bounds = LegionRuntime::Arrays::Rect<image_region_dimensions>(Domain(imageBounds));
+      field = acc.raw_rect_ptr<image_region_dimensions>(bounds, tempBounds, offset);
+      assert(bounds == tempBounds);
     }
     
     
@@ -366,7 +385,7 @@ namespace Legion {
                                                      Context context) {
       
       Domain indexSpaceDomain = runtime->get_index_space_domain(context, region.get_logical_region().get_index_space());
-      Rect<image_region_dimensions> imageBounds = indexSpaceDomain.get_rect<image_region_dimensions>();
+      Rect<image_region_dimensions> imageBounds = indexSpaceDomain;
       
       RegionAccessor<AccessorType::Generic, PixelField> acc_r, acc_g, acc_b, acc_a, acc_z, acc_userdata;
       
@@ -745,7 +764,7 @@ namespace Legion {
     Future ImageReduction::display(int t) {
       DisplayArguments args = { mImageSize, t };
       TaskLauncher taskLauncher(mDisplayTaskID, TaskArgument(&args, sizeof(args)));
-      DomainPoint origin = DomainPoint::from_point<image_region_dimensions>(Point<image_region_dimensions>::ZEROES());
+      DomainPoint origin = DomainPoint(Point<image_region_dimensions>::ZEROES());
       LogicalRegion displayPlane = mRuntime->get_logical_subregion_by_color(mDepthPartition, origin);
       RegionRequirement req(displayPlane, READ_ONLY, EXCLUSIVE, mSourceImage);
       addImageFieldsToRequirement(req);

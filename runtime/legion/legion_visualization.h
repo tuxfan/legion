@@ -19,8 +19,6 @@
 
 #include "legion.h"
 
-using namespace LegionRuntime::Arrays;
-
 namespace Legion {
     namespace Visualization {
         
@@ -34,28 +32,28 @@ namespace Legion {
             
             int pixelsPerLayer() const{ return width * height; }
           
-            Point<image_region_dimensions> origin() const{ return Point<image_region_dimensions>::ZEROES(); }
+          Point<image_region_dimensions> origin() const{ return Point<image_region_dimensions>::ZEROES(); }
             Point<image_region_dimensions> upperBound() const{
                 Point<image_region_dimensions> result;
-                result.x[0] = width;
-                result.x[1] = height;
-                result.x[2] = numImageLayers;
+                result[0] = width;
+                result[1] = height;
+                result[2] = numImageLayers;
                 return result;
             }
             
             // launch by depth plane, each depth point is one image
             Point<image_region_dimensions> layerSize() const{
                 Point<image_region_dimensions> result;
-                result.x[0] = width;
-                result.x[1] = height;
-                result.x[2] = 1;
+                result[0] = width;
+                result[1] = height;
+                result[2] = 1;
                 return result;
             }
             Point<image_region_dimensions> numLayers() const{
                 Point<image_region_dimensions> result;
-                result.x[0] = 1;
-                result.x[1] = 1;
-                result.x[2] = numImageLayers;
+                result[0] = 1;
+                result[1] = 1;
+                result[2] = numImageLayers;
                 return result;
             }
             
@@ -64,36 +62,36 @@ namespace Legion {
                 Point<image_region_dimensions> result;
                 if(numFragmentsPerLayer > height) {
                     assert((width * height) % numFragmentsPerLayer == 0);
-                    result.x[0] = (width * height) / numFragmentsPerLayer;
-                    result.x[1] = 1;
-                    result.x[2] = 1;
+                    result[0] = (width * height) / numFragmentsPerLayer;
+                    result[1] = 1;
+                    result[2] = 1;
                 } else {
-                    result.x[0] = width;
+                    result[0] = width;
                     assert(height % numFragmentsPerLayer == 0);
-                    result.x[1] = height / numFragmentsPerLayer;
-                    result.x[2] = 1;
+                    result[1] = height / numFragmentsPerLayer;
+                    result[2] = 1;
                 }
                 return result;
             }
             Point<image_region_dimensions> numFragments() const{
                 Point<image_region_dimensions> result;
                 Point<image_region_dimensions> size = fragmentSize();
-                result.x[0] = width / size.x[0];
-                result.x[1] = height / size.x[1];
-                result.x[2] = numImageLayers;
+                result[0] = width / size[0];
+                result[1] = height / size[1];
+                result[2] = numImageLayers;
                 return result;
             }
                         
             Point<image_region_dimensions> incrementFragment(Point<image_region_dimensions> point) const {
-                point.x[0] += 1;
-                if(point.x[0] >= numFragments().x[0]) {
-                    point.x[0] = 0;
-                    point.x[1] += 1;
-                    if(point.x[1] >= numFragments().x[1]) {
-                        point.x[1] = 0;
-                        point.x[2] += 1;
-                        if(point.x[2] >= numFragments().x[2]) {
-                            point.x[2] = 0;
+                point[0] += 1;
+                if(point[0] >= numFragments()[0]) {
+                    point[0] = 0;
+                    point[1] += 1;
+                    if(point[1] >= numFragments()[1]) {
+                        point[1] = 0;
+                        point[2] += 1;
+                        if(point[2] >= numFragments()[2]) {
+                            point[2] = 0;
                         }
                     }
                 }
@@ -104,7 +102,7 @@ namespace Legion {
                 Point<image_region_dimensions> size = fragmentSize();
                 int result = 1;
                 for(int i = 0; i < image_region_dimensions; ++i) {
-                    result *= size.x[i];
+                    result *= size[i];
                 }
                 return result;
             }
@@ -113,7 +111,7 @@ namespace Legion {
             char buffer[512];
             sprintf(buffer, "(%dx%d) x %d layers, %d fragments per layer (%lldx%lldx%lld)",
                     width, height, numImageLayers, numFragmentsPerLayer,
-                    fragmentSize().x[0], fragmentSize().x[1], fragmentSize().x[2]);
+                    fragmentSize()[0], fragmentSize()[1], fragmentSize()[2]);
             return std::string(buffer);
           }
           
