@@ -366,7 +366,7 @@ namespace Legion {
                                                  ByteOffset offset[image_region_dimensions]) {
       acc = region.get_field_accessor(fieldID).typeify<PixelField>();
       LegionRuntime::Arrays::Rect<image_region_dimensions> tempBounds;
-      LegionRuntime::Arrays::Rect<image_region_dimensions> bounds = LegionRuntime::Arrays::Rect<image_region_dimensions>(Domain(imageBounds));
+      LegionRuntime::Arrays::Rect<image_region_dimensions> bounds = Domain(imageBounds);
       field = acc.raw_rect_ptr<image_region_dimensions>(bounds, tempBounds, offset);
       assert(bounds == tempBounds);
     }
