@@ -152,8 +152,8 @@ namespace Legion {
     
     
     int ProfReduction::numTreeLevels(ProfSize profSize) {
-      int numTreeLevels = log2f(profSize.numImageLayers);
-      if(powf(2.0f, numTreeLevels) < profSize.numImageLayers) {
+      int numTreeLevels = log2f(profSize.numNodes);
+      if(powf(2.0f, numTreeLevels) < profSize.numNodes) {
         numTreeLevels++;
       }
       return numTreeLevels;
@@ -179,7 +179,7 @@ namespace Legion {
         mCompositeProjectionFunctor = new std::vector<CompositeProjectionFunctor*>();
         
         int numLevels = numTreeLevels(profSize);
-        int multiplier = profSize.numImageLayers;
+        int multiplier = profSize.numNodes;
         for(int level = 0; level < numLevels; ++level) {
           
           ProjectionID id0 = level2FunctorID(level, 0);
@@ -212,7 +212,7 @@ namespace Legion {
 #endif
       
       ProfSize profSize = ((ProfSize*)task->args)[0];
-      int numNodes = profSize.numImageLayers;
+      int numNodes = profSize.numNodes;
       
       // set the node ID
       Domain indexSpaceDomain = runtime->get_index_space_domain(regions[0].get_logical_region().get_index_space());
@@ -339,6 +339,7 @@ namespace Legion {
       PhysicalRegion fragment1 = regions[1];
       
       // here do the compositing
+      // call create_image_field_pointers to get access to the data
       
     }
     

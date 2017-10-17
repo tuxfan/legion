@@ -65,7 +65,7 @@ static void paintRegion(ProfSize profSize,
       z += stride[ProfReduction::FID_FIELD_Z][0];
       userdata += stride[ProfReduction::FID_FIELD_USERDATA][0];
       zValue = (zValue + 1);
-      zValue = (zValue >= profSize.numImageLayers) ? 0 : zValue;
+      zValue = (zValue >= profSize.numNodes) ? 0 : zValue;
     }
   }
 }
@@ -81,7 +81,7 @@ void render_task(const Task *task,
   
   ProfReduction::ProfileField *r, *g, *b, *a, *z, *userdata;
   ProfReduction::Stride stride;
-  int layer = task->get_unique_id() % profSize.numImageLayers;
+  int layer = task->get_unique_id() % profSize.numNodes;
   ProfReduction::create_image_field_pointers(profSize, image, r, g, b, a, z, userdata, stride, runtime, ctx);
   paintRegion(profSize, r, g, b, a, z, userdata, stride, layer);
   render.stop();
@@ -108,7 +108,7 @@ void top_level_task(const Task *task,
 #endif
   
   std::cout << "ProfSize (" << profSize.width << "," << profSize.height
-  << ") x " << profSize.numImageLayers << " layers " << profSize.numFragmentsPerLayer << " frags/layer" << std::endl;
+  << ") x " << profSize.numNodes << " layers " << profSize.numFragmentsPerLayer << " frags/layer" << std::endl;
   
   ProfReduction profReduction(profSize, ctx, runtime);
   {
@@ -123,10 +123,6 @@ void top_level_task(const Task *task,
     for(int t = 0; t < numTimeSteps; ++t) {
       
       frame.start();
-      simulateTimeStep(t);
-      FutureMap renderFutures = profReduction.launch_task_by_nodeID(RENDER_TASK_ID);
-      renderFutures.wait_all_results();
-      
       reduce.start();
       FutureMap reduceFutures = profReduction.reduce_associative_commutative();
       reduceFutures.wait_all_results();
