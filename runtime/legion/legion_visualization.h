@@ -20,7 +20,7 @@
 #include "legion.h"
 
 namespace Legion {
-    namespace Visualization {
+    namespace Profile {
         
         static const int image_region_dimensions = 3;//(width x height) x layerID
         
@@ -115,12 +115,12 @@ namespace Legion {
             return std::string(buffer);
           }
           
-        } ImageSize;
+        } ProfSize;
       
     }
 }
 
-#include "image_reduction.h"
+#include "prof_reduction.h"
 
 
 #endif /* legion_visualization_h */

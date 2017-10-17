@@ -15,15 +15,15 @@
 #------------------------------------------------------------------------------#
 
 cmake_minimum_required(VERSION 3.1)
-project(LegionExample_visualization)
+project(LegionExample_prof_reduction)
 
 # Only search if were building stand-alone and not as part of Legion
 if(NOT Legion_SOURCE_DIR)
   find_package(Legion REQUIRED)
 endif()
 
-add_executable(visualization visualization.cc)
-target_link_libraries(visualization Legion::Legion)
+add_executable(prof_reduction prof_reduction.cc)
+target_link_libraries(prof_reduction Legion::Legion)
 if(Legion_ENABLE_TESTING)
-  add_test(NAME visualization COMMAND $<TARGET_FILE:visualization> -ll:cpu 4 -ll:csize 2048) 
+  add_test(NAME prof_reduction COMMAND $<TARGET_FILE:prof_reduction> -ll:cpu 4 -ll:csize 2048) 
 endif()

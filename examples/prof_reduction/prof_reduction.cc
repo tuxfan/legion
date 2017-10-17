@@ -23,7 +23,7 @@
 
 
 using namespace Legion;
-using namespace Legion::Visualization;
+using namespace Legion::Profile;
 
 
 enum TaskIDs {
@@ -39,33 +39,33 @@ static void simulateTimeStep(int t) {
 
 
 
-static void paintRegion(ImageSize imageSize,
-                        ImageReduction::PixelField *r,
-                        ImageReduction::PixelField *g,
-                        ImageReduction::PixelField *b,
-                        ImageReduction::PixelField *a,
-                        ImageReduction::PixelField *z,
-                        ImageReduction::PixelField *userdata,
-                        ImageReduction::Stride stride,
+static void paintRegion(ProfSize profSize,
+                        ProfReduction::ProfileField *r,
+                        ProfReduction::ProfileField *g,
+                        ProfReduction::ProfileField *b,
+                        ProfReduction::ProfileField *a,
+                        ProfReduction::ProfileField *z,
+                        ProfReduction::ProfileField *userdata,
+                        ProfReduction::Stride stride,
                         int layer) {
   
-  ImageReduction::PixelField zValue = layer;
-  for(int row = 0; row < imageSize.height; ++row) {
-    for(int column = 0; column < imageSize.width; ++column) {
+  ProfReduction::ProfileField zValue = layer;
+  for(int row = 0; row < profSize.height; ++row) {
+    for(int column = 0; column < profSize.width; ++column) {
       *r = layer;
       *g = layer;
       *b = layer;
       *a = layer;
       *z = layer;
       *userdata = layer;
-      r += stride[ImageReduction::FID_FIELD_R][0];
-      g += stride[ImageReduction::FID_FIELD_G][0];
-      b += stride[ImageReduction::FID_FIELD_B][0];
-      a += stride[ImageReduction::FID_FIELD_A][0];
-      z += stride[ImageReduction::FID_FIELD_Z][0];
-      userdata += stride[ImageReduction::FID_FIELD_USERDATA][0];
+      r += stride[ProfReduction::FID_FIELD_R][0];
+      g += stride[ProfReduction::FID_FIELD_G][0];
+      b += stride[ProfReduction::FID_FIELD_B][0];
+      a += stride[ProfReduction::FID_FIELD_A][0];
+      z += stride[ProfReduction::FID_FIELD_Z][0];
+      userdata += stride[ProfReduction::FID_FIELD_USERDATA][0];
       zValue = (zValue + 1);
-      zValue = (zValue >= imageSize.numImageLayers) ? 0 : zValue;
+      zValue = (zValue >= profSize.numImageLayers) ? 0 : zValue;
     }
   }
 }
@@ -74,16 +74,16 @@ void render_task(const Task *task,
                  const std::vector<PhysicalRegion> &regions,
                  Context ctx, HighLevelRuntime *runtime) {
   
-  UsecTimer render(Legion::Visualization::ImageReduction::describe_task(task) + ":");
+  UsecTimer render(Legion::Profile::ProfReduction::describe_task(task) + ":");
   render.start();
   PhysicalRegion image = regions[0];
-  ImageSize imageSize = ((ImageSize *)task->args)[0];
+  ProfSize profSize = ((ProfSize *)task->args)[0];
   
-  ImageReduction::PixelField *r, *g, *b, *a, *z, *userdata;
-  ImageReduction::Stride stride;
-  int layer = task->get_unique_id() % imageSize.numImageLayers;
-  ImageReduction::create_image_field_pointers(imageSize, image, r, g, b, a, z, userdata, stride, runtime, ctx);
-  paintRegion(imageSize, r, g, b, a, z, userdata, stride, layer);
+  ProfReduction::ProfileField *r, *g, *b, *a, *z, *userdata;
+  ProfReduction::Stride stride;
+  int layer = task->get_unique_id() % profSize.numImageLayers;
+  ProfReduction::create_image_field_pointers(profSize, image, r, g, b, a, z, userdata, stride, runtime, ctx);
+  paintRegion(profSize, r, g, b, a, z, userdata, stride, layer);
   render.stop();
   cout << render.to_string() << endl;
 }
@@ -96,7 +96,7 @@ void top_level_task(const Task *task,
   
 
 #ifdef IMAGE_SIZE
-  ImageSize imageSize = (ImageSize){ IMAGE_SIZE };
+  ProfSize profSize = (ProfSize){ IMAGE_SIZE };
   
 #else
   const int width = 3840;
@@ -104,16 +104,13 @@ void top_level_task(const Task *task,
   const int numSimulationTasks = 4;
   const int numFragmentsPerLayer = 8;
   
-  ImageSize imageSize = (ImageSize){ width, height, numSimulationTasks, numFragmentsPerLayer };
+  ProfSize profSize = (ProfSize){ width, height, numSimulationTasks, numFragmentsPerLayer };
 #endif
   
-  std::cout << "ImageSize (" << imageSize.width << "," << imageSize.height
-  << ") x " << imageSize.numImageLayers << " layers " << imageSize.numFragmentsPerLayer << " frags/layer" << std::endl;
+  std::cout << "ProfSize (" << profSize.width << "," << profSize.height
+  << ") x " << profSize.numImageLayers << " layers " << profSize.numFragmentsPerLayer << " frags/layer" << std::endl;
   
-  ImageReduction imageReduction(imageSize, ctx, runtime);
-  imageReduction.set_blend_func(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  imageReduction.set_blend_equation(GL_FUNC_ADD);
-  
+  ProfReduction profReduction(profSize, ctx, runtime);
   {
     UsecTimer overall("overall time:");
     overall.start();
@@ -127,16 +124,14 @@ void top_level_task(const Task *task,
       
       frame.start();
       simulateTimeStep(t);
-      FutureMap renderFutures = imageReduction.launch_task_by_depth(RENDER_TASK_ID);
+      FutureMap renderFutures = profReduction.launch_task_by_nodeID(RENDER_TASK_ID);
       renderFutures.wait_all_results();
       
       reduce.start();
-      FutureMap reduceFutures = imageReduction.reduce_associative_commutative();
+      FutureMap reduceFutures = profReduction.reduce_associative_commutative();
       reduceFutures.wait_all_results();
       reduce.stop();
       
-      displayFuture = imageReduction.display(t);
-      displayFuture.wait();
       frame.stop();
     }
     
@@ -155,14 +150,11 @@ void top_level_task(const Task *task,
 
 int main(const int argc, char *argv[]) {
   
-  Legion::Visualization::ImageReduction::initialize();
+  Legion::Profile::ProfReduction::initialize();
   HighLevelRuntime::set_top_level_task_id(TOP_LEVEL_TASK_ID);
   HighLevelRuntime::register_legion_task<top_level_task>(TOP_LEVEL_TASK_ID,
                                                          Processor::LOC_PROC, true/*single*/, false/*index*/,
                                                          AUTO_GENERATE_ID, TaskConfigOptions(false/*leaf*/), "topLevelTask");
-  HighLevelRuntime::register_legion_task<render_task>(RENDER_TASK_ID,
-                                                      Processor::LOC_PROC, false/*single*/, true/*index*/,
-                                                      AUTO_GENERATE_ID, TaskConfigOptions(true/*leaf*/), "renderTask");
-  
+    
   return HighLevelRuntime::start(argc, argv);
 }

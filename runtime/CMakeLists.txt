@@ -265,8 +265,8 @@ list(APPEND LEGION_SRC
   legion/region_tree.h                    legion/region_tree.cc
   legion/runtime.h                        legion/runtime.cc
   legion/legion_visualization.h
-  legion/image_reduction.h     legion/image_reduction.cc
-  legion/image_reduction_composite.h     legion/image_reduction_composite.cc
+  legion/prof_reduction.h     legion/prof_reduction.cc
+  legion/prof_reduction_composite.h     legion/prof_reduction_composite.cc
   legion/usec_timer.h
 )
 
