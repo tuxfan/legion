@@ -199,8 +199,8 @@ namespace Legion {
       ImageReduction::create_image_field_pointers(imageSize, image, r, g, b, a, z, userdata, stride, runtime, ctx);
       
       Domain indexSpaceDomain = runtime->get_index_space_domain(ctx, image.get_logical_region().get_index_space());
-      Rect<image_region_dimensions> imageBounds = indexSpaceDomain.get_rect<image_region_dimensions>();
-      int taskID = imageBounds.lo.x[2];
+      LegionRuntime::Arrays::Rect<image_region_dimensions> imageBounds = indexSpaceDomain.get_rect<image_region_dimensions>();
+      int taskID = imageBounds.lo[2];
       paintRegion(imageSize, r, g, b, a, z, userdata, stride, taskID);
       render.stop();
       cout << render.to_string() << endl;
@@ -270,7 +270,7 @@ namespace Legion {
     static int verifyAccumulatorMatchesResult(ImageReduction &imageReduction, Image expected, ImageSize imageSize) {
       int totalSize = imageSize.pixelsPerLayer() * ImageReduction::numPixelFields * sizeof(ImageReduction::PixelField);
       FutureMap futures = imageReduction.launch_task_by_depth(VERIFY_COMPOSITED_IMAGE_DATA_TASK_ID, expected, totalSize, true);
-      DomainPoint origin = DomainPoint::from_point<image_region_dimensions>(Point<image_region_dimensions>::ZEROES());
+      DomainPoint origin = Point<image_region_dimensions>::ZEROES();
       int failures = futures[origin].get<int>();
       return failures;
     }

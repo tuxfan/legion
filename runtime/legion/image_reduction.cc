@@ -201,9 +201,7 @@ namespace Legion {
     void ImageReduction::partitionImageByDepth(LogicalRegion image, Domain &domain, LogicalPartition &partition) {
       IndexSpaceT<image_region_dimensions> parent(image.get_index_space());
       Point<image_region_dimensions> blockingFactor = mImageSize.layerSize();
-      IndexPartition coloring = mRuntime->create_partition_by_blockify(mContext, parent, blockingFactor);
-      //Blockify<image_region_dimensions> coloring(mImageSize.layerSize());
-      IndexPartition imageDepthIndexPartition = mRuntime->create_index_partition(mContext, image.get_index_space(), coloring);
+      IndexPartition imageDepthIndexPartition = mRuntime->create_partition_by_blockify(mContext, parent, blockingFactor);
       partition = mRuntime->get_logical_partition(mContext, image, imageDepthIndexPartition);
       mRuntime->attach_name(partition, "image depth partition");
       Rect<image_region_dimensions> depthBounds(mImageSize.origin(), mImageSize.numLayers() - Point<image_region_dimensions>(1));
@@ -214,9 +212,7 @@ namespace Legion {
     void ImageReduction::partitionImageByFragment(LogicalRegion image, Domain &domain, LogicalPartition &partition) {
       IndexSpaceT<image_region_dimensions> parent(image.get_index_space());
       Point<image_region_dimensions> blockingFactor = mImageSize.fragmentSize();
-      IndexPartition coloring = mRuntime->create_partition_by_blockify(mContext, parent, blockingFactor);
-      //Blockify<image_region_dimensions> coloring(mImageSize.fragmentSize());
-      IndexPartition imageFragmentIndexPartition = mRuntime->create_index_partition(mContext, image.get_index_space(), coloring);
+      IndexPartition imageFragmentIndexPartition = mRuntime->create_partition_by_blockify(mContext, parent, blockingFactor);
       mRuntime->attach_name(imageFragmentIndexPartition, "image fragment index");
       partition = mRuntime->get_logical_partition(mContext, image, imageFragmentIndexPartition);
       mRuntime->attach_name(partition, "image fragment partition");
@@ -226,7 +222,7 @@ namespace Legion {
     
     
     ///////////////
-    //FIXME awkwardness about running multithreaded bersus multinode can this be removed
+    //FIXME awkwardness about running multithreaded versus multinode can this be removed
     
     void ImageReduction::storeMyNodeID(int nodeID, int numNodes) {
       if(mNodeID == NULL) {
@@ -366,8 +362,6 @@ namespace Legion {
                                                  ByteOffset offset[image_region_dimensions]) {
       acc = region.get_field_accessor(fieldID).typeify<PixelField>();
       LegionRuntime::Arrays::Rect<image_region_dimensions> tempBounds;
-      //const LegionRuntime::Arrays::Rect<image_region_dimensions> bounds(Domain(imageBounds));
-      //LegionRuntime::Arrays::Rect<image_region_dimensions> bounds = Domain(imageBounds);
       LegionRuntime::Arrays::Rect<image_region_dimensions> bounds = Domain(imageBounds).get_rect<image_region_dimensions>();
       field = acc.raw_rect_ptr<image_region_dimensions>(bounds, tempBounds, offset);
       assert(bounds == tempBounds);
