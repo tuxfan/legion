@@ -36,7 +36,7 @@ namespace Legion {
     std::vector<Domain> *ProfReduction::mHierarchicalTreeDomain = NULL;
     TaskID ProfReduction::mInitialTaskID;
     TaskID ProfReduction::mCompositeTaskID;
-    
+    DECLARE A STATIC ARRAY FOR THE SELECTED NODE IDS HERE
     
     ProfReduction::ProfReduction(ProfSize profSize, Context context, HighLevelRuntime *runtime) {
       mProfSize = profSize;

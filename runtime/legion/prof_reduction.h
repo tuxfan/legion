@@ -268,6 +268,8 @@ namespace Legion {
       static std::vector<Domain> *mHierarchicalTreeDomain;
       static TaskID mInitialTaskID;
       static TaskID mCompositeTaskID;
+      DECLARE A STATIC ARRAY FOR THE SELECTED NODE IDS HERE
+
     };
     
   }
