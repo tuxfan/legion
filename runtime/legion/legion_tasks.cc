@@ -4184,7 +4184,7 @@ namespace Legion {
                       input.domain.get_volume(), 
                       get_task_name(), get_unique_id())
 #endif
-      //analyze_structured_slices();
+      analyze_structured_slices();
       if (output.verify_correctness)
       {
         std::vector<IndexSpace> slice_spaces(slices.size());
@@ -4314,6 +4314,13 @@ namespace Legion {
       for(std::list<SliceTask*>::const_iterator it1 = slices.begin();
           it1 != slices.end(); ++it1)
       {
+        SliceTask *slice = *it1;
+        runtime->forest->find_launch_space_domain(slice->internal_space,
+          slice->internal_domain);
+      }
+      for(std::list<SliceTask*>::const_iterator it1 = slices.begin();
+          it1 != slices.end(); ++it1)
+      {
         std::set<RtEvent> slice_dependency_events;
         SliceTask *slice = *it1;
         switch (dim)
@@ -4323,8 +4330,8 @@ namespace Legion {
             break;
           case 2:
           {
-            LegionRuntime::Arrays::Rect<2> rect =
-                slice->internal_domain.get_rect<2>();
+            LegionRuntime::Arrays::Rect<2> rect = slice->internal_domain.
+                get_rect<2>();
             DomainPoint p1 = DomainPoint::from_point<2>(rect.lo);
             DomainPoint p2 = DomainPoint::from_point<2>(
                 LegionRuntime::Arrays::make_point(rect.lo[0], rect.hi[1]));
