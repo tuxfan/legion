@@ -20,6 +20,16 @@
 
 #include <iostream>
 
+// we use bit-field structures below, and the order of them isn't guaranteed to
+//  match the system endianness (which itself has no standard way to be
+//  detected, so define our own REALM_REVERSE_ID_FIELDS which can be further
+//  tweaked as needed
+#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__)
+  #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    #define REALM_REVERSE_ID_FIELDS
+  #endif
+#endif
+
 namespace Realm {
 
     class ID {
@@ -40,89 +50,169 @@ namespace Realm {
       // PROCESSOR:   tag:8 = 0x1d, owner_node:16,   (unused):28, proc_idx: 12
       // PROCGROUP:   tag:8 = 0x1c, owner_node:16,   creator_node:16, pgroup_idx: 24
       // IDXSPACE:    tag:4 = 0x5,  owner_node:16,   creator_node:16, idxspace_idx: 28
+      // SPARSITY:    tag:4 = 0x4,  owner_node:16,   creator_node:16, sparsity_idx: 28
       // ALLOCATOR:   tag:8 = 0x1b, owner_node:16,   creator_node:16, allocator_idx: 24
 
       static const int NODE_FIELD_WIDTH = 16;
       static const unsigned MAX_NODE_ID = (1U << NODE_FIELD_WIDTH) - 2; // reserve all 1's for special cases
 
       struct FMT_Event {
+#ifdef REALM_REVERSE_ID_FIELDS
+	IDType type_tag : 1;
+	IDType creator_node : NODE_FIELD_WIDTH;
+	IDType gen_event_idx : 27;
+	IDType generation : 20;
+#else
 	IDType generation : 20;
 	IDType gen_event_idx : 27;
 	IDType creator_node : NODE_FIELD_WIDTH;
 	IDType type_tag : 1;
+#endif
 	static const IDType TAG_VALUE = 1;
       };
 
       struct FMT_Barrier {
+#ifdef REALM_REVERSE_ID_FIELDS
+	IDType type_tag : 4;
+	IDType creator_node : 16;
+	IDType barrier_idx : 24;
+	IDType generation : 20;  // MUST MATCH FMT_Event::generation size
+#else
 	IDType generation : 20;  // MUST MATCH FMT_Event::generation size
 	IDType barrier_idx : 24;
 	IDType creator_node : 16;
 	IDType type_tag : 4;
+#endif
 	static const IDType TAG_VALUE = 0x7;
       };
 
       struct FMT_Reservation {
+#ifdef REALM_REVERSE_ID_FIELDS
+	IDType type_tag : 8;
+	IDType creator_node : 16;
+	IDType unused : 8;
+	IDType rsrv_idx : 32;
+#else
 	IDType rsrv_idx : 32;
 	IDType unused : 8;
 	IDType creator_node : 16;
 	IDType type_tag : 8;
+#endif
 	static const IDType TAG_VALUE = 0x1f;
       };
 
       struct FMT_Memory {
+#ifdef REALM_REVERSE_ID_FIELDS
+	IDType type_tag : 8;
+	IDType owner_node : 16;
+	IDType unused : 28;
+	IDType mem_idx : 12;
+#else
 	IDType mem_idx : 12;
 	IDType unused : 28;
 	IDType owner_node : 16;
 	IDType type_tag : 8;
+#endif
 	static const IDType TAG_VALUE = 0x1e;
       };
 
       struct FMT_IB_Memory {
+#ifdef REALM_REVERSE_ID_FIELDS
+        IDType type_tag : 8;
+        IDType owner_node : 16;
+        IDType unused : 28;
+        IDType mem_idx : 12;
+#else
         IDType mem_idx : 12;
         IDType unused : 28;
         IDType owner_node : 16;
         IDType type_tag : 8;
+#endif
         static const IDType TAG_VALUE = 0x1a;
       };
 
       struct FMT_Instance {
+#ifdef REALM_REVERSE_ID_FIELDS
+	IDType type_tag : 4;
+	IDType owner_node : 16;
+	IDType creator_node : 16;
+	IDType mem_idx : 12;
+	IDType inst_idx : 16;
+#else
 	IDType inst_idx : 16;
 	IDType mem_idx : 12;
 	IDType creator_node : 16;
 	IDType owner_node : 16;
 	IDType type_tag : 4;
+#endif
 	static const IDType TAG_VALUE = 0x6;
       };
 
       struct FMT_Processor {
+#ifdef REALM_REVERSE_ID_FIELDS
+	IDType type_tag : 8;
+	IDType owner_node : 16;
+	IDType unused : 28;
+	IDType proc_idx : 12;
+#else
 	IDType proc_idx : 12;
 	IDType unused : 28;
 	IDType owner_node : 16;
 	IDType type_tag : 8;
+#endif
 	static const IDType TAG_VALUE = 0x1d;
       };
 
       struct FMT_ProcGroup {
+#ifdef REALM_REVERSE_ID_FIELDS
+	IDType type_tag : 8;
+	IDType owner_node : 16;
+	IDType creator_node : 16;
+	IDType pgroup_idx : 24;
+#else
 	IDType pgroup_idx : 24;
 	IDType creator_node : 16;
 	IDType owner_node : 16;
 	IDType type_tag : 8;
+#endif
 	static const IDType TAG_VALUE = 0x1c;
       };
 
       struct FMT_IdxSpace {
+#ifdef REALM_REVERSE_ID_FIELDS
+	IDType type_tag : 4;
+	IDType owner_node : 16;
+	IDType creator_node : 16;
+	IDType idxspace_idx : 28;
+#else
 	IDType idxspace_idx : 28;
 	IDType creator_node : 16;
 	IDType owner_node : 16;
 	IDType type_tag : 4;
+#endif
 	static const IDType TAG_VALUE = 0x5;
       };
 
+      struct FMT_Sparsity {
+	IDType sparsity_idx : 28;
+	IDType creator_node : 16;
+	IDType owner_node : 16;
+	IDType type_tag : 4;
+	static const IDType TAG_VALUE = 0x4;
+      };
+
       struct FMT_Allocator {
+#ifdef REALM_REVERSE_ID_FIELDS
+	IDType type_tag : 8;
+	IDType owner_node : 16;
+	IDType creator_node : 16;
+	IDType allocator_idx : 24;
+#else
 	IDType allocator_idx : 24;
 	IDType creator_node : 16;
 	IDType owner_node : 16;
 	IDType type_tag : 8;
+#endif
 	static const IDType TAG_VALUE = 0x1b;
       };
 
@@ -135,6 +225,7 @@ namespace Realm {
       static ID make_processor(unsigned owner_node, unsigned proc_idx);
       static ID make_procgroup(unsigned owner_node, unsigned creator_node, unsigned pgroup_idx);
       static ID make_idxspace(unsigned owner_node, unsigned creator_node, unsigned idxspace_idx);
+      static ID make_sparsity(unsigned owner_node, unsigned creator_node, unsigned sparsity_idx);
       static ID make_allocator(unsigned owner_node, unsigned creator_node, unsigned allocator_idx);
 
       bool is_null(void) const;
@@ -147,6 +238,7 @@ namespace Realm {
       bool is_processor(void) const;
       bool is_procgroup(void) const;
       bool is_idxspace(void) const;
+      bool is_sparsity(void) const;
       bool is_allocator(void) const;
 
       enum ID_Types {
@@ -161,7 +253,7 @@ namespace Realm {
 	ID_PROCESSOR,
 	ID_PROCGROUP,
 	ID_INDEXSPACE,
-	ID_UNUSED_11,
+	ID_SPARSITY,
 	ID_ALLOCATOR,
 	ID_UNUSED_13,
 	ID_INSTANCE,
@@ -180,6 +272,7 @@ namespace Realm {
       ID(T thing_to_get_id_from);
 
       bool operator==(const ID& rhs) const;
+      bool operator!=(const ID& rhs) const;
 
       template <class T>
       T convert(void) const;
@@ -195,6 +288,7 @@ namespace Realm {
 	FMT_Processor proc;
 	FMT_ProcGroup pgroup;
 	FMT_IdxSpace idxspace;
+	FMT_Sparsity sparsity;
 	FMT_Allocator allocator;
       };
 
@@ -203,7 +297,7 @@ namespace Realm {
 
 }; // namespace Realm
 
-#include "id.inl"
+#include "realm/id.inl"
 
 #endif // ifndef REALM_ID_H
 

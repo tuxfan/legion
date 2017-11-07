@@ -25,13 +25,16 @@ import "regent"
 local ccircuit
 do
   local root_dir = arg[0]:match(".*/") or "./"
-  local runtime_dir = root_dir .. "../../runtime/"
+  local runtime_dir = os.getenv('LG_RT_DIR') .. "/"
   local legion_dir = runtime_dir .. "legion/"
   local mapper_dir = runtime_dir .. "mappers/"
   local realm_dir = runtime_dir .. "realm/"
   local circuit_cc = root_dir .. "circuit.cc"
   local circuit_so
-  if os.getenv('SAVEOBJ') == '1' then
+  if os.getenv('OBJNAME') then
+    local out_dir = os.getenv('OBJNAME'):match('.*/') or './'
+    circuit_so = out_dir .. "libcircuit.so"
+  elseif os.getenv('SAVEOBJ') == '1' then
     circuit_so = root_dir .. "libcircuit.so"
   else
     circuit_so = os.tmpname() .. ".so" -- root_dir .. "circuit.so"
@@ -509,7 +512,7 @@ do
   end
   var dt : float = DELTAT
   var recip_dt : float = 1.0 / dt
-  __demand(__vectorize)
+  --__demand(__vectorize)
   for w in rw do
     var temp_v : float[WIRE_SEGMENTS + 1]
     var temp_i : float[WIRE_SEGMENTS]
@@ -763,9 +766,6 @@ task toplevel()
   var all_nodes = region(ispace(ptr, num_circuit_nodes), node)
   var all_wires = region(ispace(ptr, num_circuit_wires), wire(wild, wild, wild))
 
-  new(ptr(node, all_nodes), num_circuit_nodes)
-  new(ptr(wire(wild, wild, wild), all_wires), num_circuit_wires)
-
   -- report mesh size in bytes
   do
     var node_size = [ terralib.sizeof(node) ]
@@ -788,7 +788,6 @@ task toplevel()
   var rp_wires = partition(equal, all_wires, launch_domain)
 
   var ghost_ranges = region(ispace(ptr, num_pieces), ghost_range)
-  new(ptr(ghost_range, ghost_ranges), num_pieces)
   var rp_ghost_ranges = partition(equal, ghost_ranges, launch_domain)
 
   for j = 0, 1 do
@@ -802,7 +801,6 @@ task toplevel()
   var rp_ghost = create_ghost_partition(conf, all_shared, ghost_ranges)
 
   --var last_shared = region(ispace(ptr, num_pieces * num_pieces), int)
-  --new(ptr(int, last_shared), num_pieces * num_pieces)
 
   --var rp_nodes = partition(equal, all_nodes, launch_domain)
   --var rp_wires = partition(equal, all_wires, launch_domain)
@@ -920,7 +918,8 @@ end
 
 if os.getenv('SAVEOBJ') == '1' then
   local root_dir = arg[0]:match(".*/") or "./"
-  local link_flags = terralib.newlist({"-L" .. root_dir, "-lcircuit", "-lm"})
+  local out_dir = (os.getenv('OBJNAME') and os.getenv('OBJNAME'):match('.*/')) or root_dir
+  local link_flags = terralib.newlist({"-L" .. out_dir, "-lcircuit", "-lm"})
   if os.getenv('CRAYPE_VERSION') then
     local new_flags = terralib.newlist({"-Wl,-Bdynamic"})
     new_flags:insertall(link_flags)
@@ -935,7 +934,12 @@ if os.getenv('SAVEOBJ') == '1' then
     link_flags = new_flags
   end
 
-  regentlib.saveobj(toplevel, "circuit", "executable", ccircuit.register_mappers, link_flags)
+  if os.getenv('STANDALONE') == '1' then
+    os.execute('cp ' .. os.getenv('LG_RT_DIR') .. '/../bindings/terra/liblegion_terra.so ' .. out_dir)
+  end
+
+  local exe = os.getenv('OBJNAME') or "circuit"
+  regentlib.saveobj(toplevel, exe, "executable", ccircuit.register_mappers, link_flags)
 else
   regentlib.start(toplevel, ccircuit.register_mappers)
 end

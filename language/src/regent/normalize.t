@@ -534,7 +534,12 @@ local function update_alias(expr, updates)
 end
 
 function normalize.stat_assignment_or_reduce(cx, node)
-  if #node.lhs == 1 then return node
+  if #node.lhs == 1 then
+    assert(#node.rhs == 1)
+    return node {
+      lhs = node.lhs[1],
+      rhs = node.rhs[1],
+    }
   else
     local updates = terralib.newlist()
     local needs_temporary = terralib.newlist()
@@ -553,9 +558,9 @@ function normalize.stat_assignment_or_reduce(cx, node)
     for idx = 1, #needs_temporary do
       local symbol = temporaries[needs_temporary[idx]]
       flattened:insert(ast.typed.stat.Var {
-        symbols = terralib.newlist {symbol},
-        types = terralib.newlist {symbol:gettype()},
-        values = terralib.newlist {node.rhs[needs_temporary[idx]]},
+        symbol = symbol,
+        type = symbol:gettype(),
+        value = node.rhs[needs_temporary[idx]],
         annotations = node.annotations,
         span = node.span,
       })
@@ -564,30 +569,24 @@ function normalize.stat_assignment_or_reduce(cx, node)
     for idx = 1, #node.lhs do
       if temporaries[idx] then
         flattened:insert(node {
-          lhs = terralib.newlist {node.lhs[idx]},
-          rhs = terralib.newlist {
-            ast.typed.expr.ID {
-              value = temporaries[idx],
-              expr_type = std.rawref(&temporaries[idx]:gettype()),
-              span = node.span,
-              annotations = node.annotations,
-            }
+          lhs = node.lhs[idx],
+          rhs = ast.typed.expr.ID {
+            value = temporaries[idx],
+            expr_type = std.rawref(&temporaries[idx]:gettype()),
+            span = node.span,
+            annotations = node.annotations,
           },
         })
       else
         flattened:insert(node {
-          lhs = terralib.newlist {node.lhs[idx]},
-          rhs = terralib.newlist {node.rhs[idx]},
+          lhs = node.lhs[idx],
+          rhs = node.rhs[idx],
         })
       end
     end
 
     return flattened
   end
-end
-
-for k, v in pairs(ast_util) do
-  _G[k] = v
 end
 
 --
@@ -605,54 +604,60 @@ end
 local capi = std.c
 
 local function desugar_image_by_task(cx, node)
-  local parent = node.values[1].parent.value
+  local parent = node.value.parent.value
   local parent_type = parent:gettype()
-  local partition = node.values[1].partition
+  local partition = node.value.partition
   local partition_type = std.as_read(partition.expr_type)
-  local image_partition_type = node.types[1]
+  local image_partition_type = node.type
 
   local stats = terralib.newlist()
 
   local coloring_symbol =
     regentlib.newsymbol(capi.legion_domain_point_coloring_t)
-  local coloring_expr = mk_expr_id(coloring_symbol)
+  local coloring_expr = ast_util.mk_expr_id(coloring_symbol)
   stats:insert(
-    mk_stat_var(coloring_symbol, nil,
-                mk_expr_call(capi.legion_domain_point_coloring_create)))
+    ast_util.mk_stat_var(
+      coloring_symbol, nil,
+      ast_util.mk_expr_call(capi.legion_domain_point_coloring_create)))
 
   local colors_symbol = regentlib.newsymbol(partition_type:colors())
   local color_symbol =
     regentlib.newsymbol(partition_type:colors().index_type(colors_symbol))
-  local colors_expr = mk_expr_colors_access(partition)
+  local colors_expr = ast_util.mk_expr_colors_access(partition)
   local subregion_type = partition_type:subregion_dynamic()
   std.add_constraint(cx, subregion_type, partition_type, std.subregion, false)
 
-  local subregion_expr = mk_expr_index_access(partition,
-                                              mk_expr_id(color_symbol),
-                                              subregion_type)
+  local subregion_expr =
+    ast_util.mk_expr_index_access(partition,
+                                  ast_util.mk_expr_id(color_symbol),
+                                  subregion_type)
   local rect_expr =
-    mk_expr_call(node.values[1].task.value,
-                 mk_expr_bounds_access(subregion_expr))
+    ast_util.mk_expr_call(node.value.task.value,
+                          ast_util.mk_expr_bounds_access(subregion_expr))
   local loop_body =
-    mk_stat_expr(
-      mk_expr_call(capi.legion_domain_point_coloring_color_domain,
-                   terralib.newlist { coloring_expr,
-                                      mk_expr_id(color_symbol),
-                                      rect_expr }))
+    ast_util.mk_stat_expr(
+      ast_util.mk_expr_call(capi.legion_domain_point_coloring_color_domain,
+                            terralib.newlist { coloring_expr,
+                                               ast_util.mk_expr_id(color_symbol),
+                                               rect_expr }))
 
-  stats:insert(mk_stat_var(colors_symbol, nil, colors_expr))
+  stats:insert(ast_util.mk_stat_var(colors_symbol, nil, colors_expr))
   stats:insert(
-    mk_stat_for_list(color_symbol, mk_expr_id(colors_symbol), mk_block(loop_body)))
+    ast_util.mk_stat_for_list(color_symbol,
+                              ast_util.mk_expr_id(colors_symbol),
+                              ast_util.mk_block(loop_body)))
 
-  stats:insert(mk_stat_var(node.symbols[1], image_partition_type,
-                           mk_expr_partition(image_partition_type,
-                                             mk_expr_id(colors_symbol),
-                                             coloring_expr)))
+  stats:insert(
+    ast_util.mk_stat_var(node.symbol, image_partition_type,
+                         ast_util.mk_expr_partition(image_partition_type,
+                                                    ast_util.mk_expr_id(colors_symbol),
+                                                    coloring_expr)))
   std.add_constraint(cx, image_partition_type, parent_type, std.subregion, false)
 
   stats:insert(
-    mk_stat_expr(mk_expr_call(capi.legion_domain_point_coloring_destroy,
-                              coloring_expr)))
+    ast_util.mk_stat_expr(
+      ast_util.mk_expr_call(capi.legion_domain_point_coloring_destroy,
+                            coloring_expr)))
 
   return stats
 end
@@ -675,8 +680,8 @@ function normalize.stat(cx)
       }
     elseif node:is(ast.specialized.stat.Var) then
       return normalize.stat_var(node)
-    elseif node:is(ast.typed.stat.Var) and #node.values > 0 and
-           node.values[1]:is(ast.typed.expr.ImageByTask) then
+    elseif node:is(ast.typed.stat.Var) and node.value and
+           node.value:is(ast.typed.expr.ImageByTask) then
       return desugar_image_by_task(cx, node)
     else
       return continuation(node, true)

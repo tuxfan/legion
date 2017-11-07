@@ -17,14 +17,14 @@
 #ifndef __LEGION_UTILITIES_H__
 #define __LEGION_UTILITIES_H__
 
-#include <cassert>
-#include <cstdlib>
-#include <cstring>
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include "legion_types.h"
+#include "legion/legion_types.h"
 #include "legion.h"
-#include "legion_profiling.h"
-#include "legion_allocation.h"
+#include "legion/legion_profiling.h"
+#include "legion/legion_allocation.h"
 
 // Apple can go screw itself
 #ifndef __MACH__
@@ -261,96 +261,6 @@ namespace Legion {
     };
 
     /////////////////////////////////////////////////////////////
-    // ColorPoint 
-    /////////////////////////////////////////////////////////////
-    class ColorPoint {
-    public:
-      ColorPoint(void)
-        : valid(false) { }
-      // Make these constructors explicit so we know when
-      // we are converting between things
-      explicit ColorPoint(Color c)
-        : point(DomainPoint::from_point<1>(LegionRuntime::Arrays::Point<1>((c)))), valid(true) { }
-      explicit ColorPoint(const DomainPoint &p)
-        : point(p), valid(true) { }
-    public:
-      inline bool is_valid(void) const { return valid; }
-      inline int get_index(void) const
-      {
-#ifdef DEBUG_LEGION
-        assert(valid);
-#endif
-        // This will help with the conversion for now
-        if (point.get_dim() == 1)
-          return point.point_data[0];
-        else
-          return point.get_index();
-      }
-      inline int get_dim(void) const
-      {
-#ifdef DEBUG_LEGION
-        assert(valid);
-#endif
-        return point.get_dim();
-      }
-      inline bool is_null(void) const
-      {
-#ifdef DEBUG_LEGION
-        assert(valid);
-#endif
-        return point.is_null();
-      }
-    public:
-      inline bool operator==(const ColorPoint &rhs) const
-      {
-        if (valid != rhs.valid)
-          return false;
-        if (valid)
-          return point == rhs.point;
-        return true; // both not vaid so they are equal
-      }
-      inline bool operator!=(const ColorPoint &rhs) const
-      {
-        return !((*this) == rhs);
-      }
-      inline bool operator<(const ColorPoint &rhs) const
-      {
-        if (valid < rhs.valid)
-          return true;
-        if (valid > rhs.valid)
-          return false;
-        if (valid)
-          return (point < rhs.point);
-        else // both not valid so equal
-          return false;
-      }
-    public:
-      inline int operator[](unsigned index) const
-      {
-#ifdef DEBUG_LEGION
-        assert(valid);
-        assert(index < unsigned(point.get_dim()));
-#endif
-        return point.point_data[index];
-      }
-    public:
-      inline const DomainPoint& get_point(void) const
-      {
-#ifdef DEBUG_LEGION
-        assert(valid);
-#endif
-        return point;
-      }
-      inline void clear(void) { valid = false; }
-    public:
-      inline void serialize(Serializer &rez) const;
-      inline void deserialize(Deserializer &derez);
-    private:
-      DomainPoint point;
-      bool valid;
-    }; 
-
-    /////////////////////////////////////////////////////////////
     // Serializer 
     /////////////////////////////////////////////////////////////
     class Serializer {
@@ -396,7 +306,6 @@ namespace Legion {
 #endif
       template<typename IT, typename DT, bool BIDIR>
       inline void serialize(const IntegerSet<IT,DT,BIDIR> &index_set);
-      inline void serialize(const ColorPoint &point);
       inline void serialize(const Domain &domain);
       inline void serialize(const DomainPoint &dp);
       inline void serialize(const void *src, size_t bytes);
@@ -469,7 +378,6 @@ namespace Legion {
 #endif
       template<typename IT, typename DT, bool BIDIR>
       inline void deserialize(IntegerSet<IT,DT,BIDIR> &index_set);
-      inline void deserialize(ColorPoint &color);
       inline void deserialize(Domain &domain);
       inline void deserialize(DomainPoint &dp);
       inline void deserialize(void *dst, size_t bytes);
@@ -716,7 +624,12 @@ namespace Legion {
     // SSE Bit Mask  
     /////////////////////////////////////////////////////////////
     template<unsigned int MAX>
-    class SSEBitMask : public Internal::LegionHeapify<SSEBitMask<MAX> > {
+#if __cplusplus >= 201103L
+    class alignas(16) SSEBitMask 
+#else
+    class SSEBitMask // alignment handled below
+#endif
+      : public Internal::LegionHeapify<SSEBitMask<MAX> > {
     public:
       explicit SSEBitMask(uint64_t init = 0);
       SSEBitMask(const SSEBitMask &rhs);
@@ -781,13 +694,22 @@ namespace Legion {
     public:
       static const unsigned ELEMENT_SIZE = 64;
       static const unsigned ELEMENTS = MAX/ELEMENT_SIZE;
+#if __cplusplus >= 201103L
+    }; // alignment handled above
+#else
     } __attribute__((aligned(16)));
+#endif
 
     /////////////////////////////////////////////////////////////
     // SSE Two-Level Bit Mask  
     /////////////////////////////////////////////////////////////
     template<unsigned int MAX>
-    class SSETLBitMask : public Internal::LegionHeapify<SSETLBitMask<MAX> > {
+#if __cplusplus >= 201103L
+    class alignas(16) SSETLBitMask
+#else
+    class SSETLBitMask 
+#endif
+      : public Internal::LegionHeapify<SSETLBitMask<MAX> > {
     public:
       explicit SSETLBitMask(uint64_t init = 0);
       SSETLBitMask(const SSETLBitMask &rhs);
@@ -854,7 +776,11 @@ namespace Legion {
     public:
       static const unsigned ELEMENT_SIZE = 64;
       static const unsigned ELEMENTS = MAX/ELEMENT_SIZE;
+#if __cplusplus >= 201103L
+    };
+#else
     } __attribute__((aligned(16)));
+#endif
 #endif // __SSE2__
 
 #ifdef __AVX__
@@ -862,7 +788,12 @@ namespace Legion {
     // AVX Bit Mask  
     /////////////////////////////////////////////////////////////
     template<unsigned int MAX>
-    class AVXBitMask : public Internal::LegionHeapify<AVXBitMask<MAX> > {
+#if __cplusplus >= 201103L
+    class alignas(32) AVXBitMask 
+#else
+    class AVXBitMask // alignment handled below
+#endif
+      : public Internal::LegionHeapify<AVXBitMask<MAX> > {
     public:
       explicit AVXBitMask(uint64_t init = 0);
       AVXBitMask(const AVXBitMask &rhs);
@@ -930,13 +861,22 @@ namespace Legion {
     public:
       static const unsigned ELEMENT_SIZE = 64;
       static const unsigned ELEMENTS = MAX/ELEMENT_SIZE;
+#if __cplusplus >= 201103L
+    }; // alignment handled above
+#else
     } __attribute__((aligned(32)));
+#endif
     
     /////////////////////////////////////////////////////////////
     // AVX Two-Level Bit Mask  
     /////////////////////////////////////////////////////////////
     template<unsigned int MAX>
-    class AVXTLBitMask : public Internal::LegionHeapify<AVXTLBitMask<MAX> > {
+#if __cplusplus >= 201103L
+    class alignas(32) AVXTLBitMask
+#else
+    class AVXTLBitMask // alignment handled below
+#endif
+      : public Internal::LegionHeapify<AVXTLBitMask<MAX> > {
     public:
       explicit AVXTLBitMask(uint64_t init = 0);
       AVXTLBitMask(const AVXTLBitMask &rhs);
@@ -1007,7 +947,11 @@ namespace Legion {
     public:
       static const unsigned ELEMENT_SIZE = 64;
       static const unsigned ELEMENTS = MAX/ELEMENT_SIZE;
+#if __cplusplus >= 201103L
+    }; // alignment handled above
+#else
     } __attribute__((aligned(32)));
+#endif
 #endif // __AVX__
 
     template<typename BITMASK, unsigned int MAX, unsigned int WORDS>
@@ -1144,7 +1088,7 @@ namespace Legion {
     protected:
       inline void set_edge(unsigned src, unsigned dst);
       inline unsigned get_src(unsigned dst);
-      inline unsigned get_dst(unsigned src);;
+      inline unsigned get_dst(unsigned src);
     protected:
       void compress_representation(void);
       void test_identity(void);
@@ -1167,7 +1111,8 @@ namespace Legion {
       // implementations but in general it should be close
       static const size_t STL_SET_NODE_SIZE = 32;
     public:
-      struct DenseSet {
+      // Need to inherit form LegionHeapify for alignment
+      struct DenseSet : public Internal::LegionHeapify<DenseSet> {
       public:
         DT set;
       };
@@ -1461,13 +1406,6 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    inline void Serializer::serialize(const ColorPoint &point)
-    //--------------------------------------------------------------------------
-    {
-      point.serialize(*this);
-    }
-
-    //--------------------------------------------------------------------------
     inline void Serializer::serialize(const Domain &dom)
     //--------------------------------------------------------------------------
     {
@@ -1667,13 +1605,6 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    inline void Deserializer::deserialize(ColorPoint &point)
-    //--------------------------------------------------------------------------
-    {
-      point.deserialize(*this);
-    }
-
-    //--------------------------------------------------------------------------
     inline void Deserializer::deserialize(Domain &dom)
     //--------------------------------------------------------------------------
     {
@@ -1776,32 +1707,6 @@ namespace Legion {
       context_bytes += bytes;
 #endif
       index += bytes;
-    }
-
-    //--------------------------------------------------------------------------
-    inline void ColorPoint::serialize(Serializer &rez) const
-    //--------------------------------------------------------------------------
-    {
-      rez.serialize(valid);
-      if (valid)
-      {
-        rez.serialize(point.dim);
-        for (int idx = 0; idx < point.dim; idx++)
-          rez.serialize(point.point_data[idx]);
-      }
-    }
-
-    //--------------------------------------------------------------------------
-    inline void ColorPoint::deserialize(Deserializer &derez)
-    //--------------------------------------------------------------------------
-    {
-      derez.deserialize(valid);
-      if (valid)
-      {
-        derez.deserialize(point.dim);
-        for (int idx = 0; idx < point.dim; idx++)
-          derez.deserialize(point.point_data[idx]);
-      }
     }
 
     // There is an interesting design decision about how to break up the 32 bit
@@ -4711,11 +4616,15 @@ namespace Legion {
     /*static*/ inline uint64_t SSETLBitMask<MAX>::extract_mask(__m128i value)
     //-------------------------------------------------------------------------
     {
-#ifdef __SSE4_1__
+#if !defined(__LP64__) // handle the case for when we don't have 64-bit support
+      uint64_t left = _mm_cvtsi128_si32(value);
+      left |= uint64_t(_mm_cvtsi128_si32(_mm_shuffle_epi32(value, 1))) << 32;
+      uint64_t right = _mm_cvtsi128_si32(_mm_shuffle_epi32(value, 2));
+      right |= uint64_t(_mm_cvtsi128_si32(_mm_shuffle_epi32(value, 3))) << 32;
+#elif defined(__SSE4_1__) // see if we have sse 4.1
       uint64_t left = _mm_extract_epi64(value, 0);
       uint64_t right = _mm_extract_epi64(value, 1);
-#else
-      // Assume we have sse 2
+#else // Assume we have sse 2
       uint64_t left = _mm_cvtsi128_si64(value);
       uint64_t right = _mm_cvtsi128_si64(_mm_shuffle_epi32(value, 7));
 #endif
@@ -6223,10 +6132,26 @@ namespace Legion {
       __m128i left, right;
       right = _mm256_extractf128_si256(value, 0);
       left = _mm256_extractf128_si256(value, 1);
+#if !defined(__LP64__) // handle 32-bit support
+      uint64_t result = _mm_cvtsi128_si32(right);
+      result |= uint64_t(_mm_cvtsi128_si32(_mm_shuffle_epi32(right,1))) << 32;
+      result |= _mm_cvtsi128_si32(_mm_shuffle_epi32(right,2));
+      result |= int64_t(_mm_cvtsi128_si32(_mm_shuffle_epi32(right,3))) << 32;
+      result |= _mm_cvtsi128_si32(left);
+      result |= uint64_t(_mm_cvtsi128_si32(_mm_shuffle_epi32(left,1))) << 32;
+      result |= _mm_cvtsi128_si32(_mm_shuffle_epi32(left,2));
+      result |= int64_t(_mm_cvtsi128_si32(_mm_shuffle_epi32(left,3))) << 32;
+#elif defined(__SSE4_1__) // case we have sse 4.1
       uint64_t result = _mm_extract_epi64(right, 0);
       result |= _mm_extract_epi64(right, 1);
       result |= _mm_extract_epi64(left, 0);
       result |= _mm_extract_epi64(left, 1);
+#else // Assume we have sse 2
+      uint64_t result = _mm_cvtsi128_si64(right);
+      result |= _mm_cvtsi128_si64(_mm_shuffle_epi32(right, 7));
+      result |= _mm_cvtsi128_si64(left);
+      result |= _mm_cvtsi128_si64(_mm_shuffle_epi32(left, 7));
+#endif
       return result;
     }
 
@@ -8202,7 +8127,7 @@ namespace Legion {
       : sparse(true)
     //-------------------------------------------------------------------------
     {
-      set_ptr.sparse = new typename std::set<IT>();
+      set_ptr.sparse = 0;
     }
 
     //-------------------------------------------------------------------------
@@ -8213,8 +8138,10 @@ namespace Legion {
     {
       if (rhs.sparse)
       {
-        set_ptr.sparse = new typename std::set<IT>();
-        *(set_ptr.sparse) = *(rhs.set_ptr.sparse);
+	if (rhs.set_ptr.sparse && !rhs.set_ptr.sparse->empty())
+	  set_ptr.sparse = new typename std::set<IT>(*rhs.set_ptr.sparse);
+	else
+	  set_ptr.sparse = 0;
       }
       else
       {
@@ -8228,13 +8155,18 @@ namespace Legion {
     IntegerSet<IT,DT,BIDIR>::~IntegerSet(void)
     //-------------------------------------------------------------------------
     {
-#ifdef DEBUG_LEGION
-      assert(set_ptr.sparse != NULL);
-#endif
       if (sparse)
+      {
+	// this may be a null pointer, but delete does the right thing
         delete set_ptr.sparse;
+      }
       else
+      {
+#ifdef DEBUG_LEGION
+	assert(set_ptr.dense != NULL);
+#endif
         delete set_ptr.dense;
+      }
     }
     
     //-------------------------------------------------------------------------
@@ -8248,11 +8180,19 @@ namespace Legion {
         if (!sparse)
         {
           delete set_ptr.dense;
-          set_ptr.sparse = new typename std::set<IT>();
+          set_ptr.sparse = 0;
+	  sparse = true;
         }
-        else
-          set_ptr.sparse->clear();
-        *(set_ptr.sparse) = *(rhs.set_ptr.sparse);
+        else if (set_ptr.sparse)
+	  set_ptr.sparse->clear();
+	// if rhs has any contents, copy them over, creating set if needed
+	if (rhs.set_ptr.sparse && !rhs.set_ptr.sparse->empty())
+	{
+	  if (!set_ptr.sparse)
+	    set_ptr.sparse = new typename std::set<IT>(*rhs.set_ptr.sparse);
+	  else
+	    *(set_ptr.sparse) = *(rhs.set_ptr.sparse);
+	}
       }
       else
       {
@@ -8260,12 +8200,12 @@ namespace Legion {
         {
           delete set_ptr.sparse;
           set_ptr.dense = new DenseSet();
+	  sparse = false;
         }
         else
           set_ptr.dense->set.clear();
         set_ptr.dense->set = rhs.set_ptr.dense->set;
       }
-      sparse = rhs.sparse;
       return *this;
     }
 
@@ -8275,7 +8215,8 @@ namespace Legion {
     //-------------------------------------------------------------------------
     {
       if (sparse)
-        return (set_ptr.sparse->find(index) != set_ptr.sparse->end());
+        return (set_ptr.sparse &&
+		(set_ptr.sparse->find(index) != set_ptr.sparse->end()));
       else
         return set_ptr.dense->set.is_set(index);
     }
@@ -8287,6 +8228,10 @@ namespace Legion {
     {
       if (sparse)
       {
+	// Create set if this is the first addition
+	if (!set_ptr.sparse)
+	  set_ptr.sparse = new typename std::set<IT>;
+
         // Add it and see if it is too big
         set_ptr.sparse->insert(index);
         if (sizeof(DT) < (set_ptr.sparse->size() * 
@@ -8343,7 +8288,8 @@ namespace Legion {
         }
       }
       else
-        set_ptr.sparse->erase(index);
+	if (set_ptr.sparse)
+	  set_ptr.sparse->erase(index);
     }
 
     //-------------------------------------------------------------------------
@@ -8354,7 +8300,7 @@ namespace Legion {
       if (sparse)
       {
 #ifdef DEBUG_LEGION
-        assert(!set_ptr.sparse->empty());
+        assert(set_ptr.sparse && !set_ptr.sparse->empty());
 #endif
         return *(set_ptr.sparse->begin());
       }
@@ -8380,6 +8326,9 @@ namespace Legion {
         return find_first_set();
       if (sparse)
       {
+#ifdef DEBUG_LEGION
+	assert(set_ptr.sparse);
+#endif
         typename std::set<IT>::const_iterator it = set_ptr.sparse->begin();
         while (index > 0)
         {
@@ -8399,10 +8348,13 @@ namespace Legion {
     {
       if (sparse)
       {
-        for (typename std::set<IT>::const_iterator it = 
-              set_ptr.sparse->begin(); it != set_ptr.sparse->end(); it++)
-        {
-          functor.apply(*it);
+	if (set_ptr.sparse)
+	{
+	  for (typename std::set<IT>::const_iterator it = 
+                set_ptr.sparse->begin(); it != set_ptr.sparse->end(); it++)
+          {
+	    functor.apply(*it);
+          }
         }
       }
       else
@@ -8430,12 +8382,17 @@ namespace Legion {
       rez.serialize<bool>(sparse);
       if (sparse)
       {
-        rez.serialize<size_t>(set_ptr.sparse->size());
-        for (typename std::set<IT>::const_iterator it = 
-              set_ptr.sparse->begin(); it != set_ptr.sparse->end(); it++)
-        {
-          rez.serialize(*it);
+	if (set_ptr.sparse)
+	{
+          rez.serialize<size_t>(set_ptr.sparse->size());
+          for (typename std::set<IT>::const_iterator it = 
+                set_ptr.sparse->begin(); it != set_ptr.sparse->end(); it++)
+          {
+            rez.serialize(*it);
+          }
         }
+	else
+          rez.serialize<size_t>(0);
       }
       else
         rez.serialize(set_ptr.dense->set);
@@ -8454,17 +8411,22 @@ namespace Legion {
         if (!sparse)
         {
           delete set_ptr.dense;
-          set_ptr.sparse = new typename std::set<IT>();
+          set_ptr.sparse = 0;
+	  sparse = true;
         }
-        else
-          set_ptr.sparse->clear();
+        else if (set_ptr.sparse)
+	  set_ptr.sparse->clear();
         size_t num_elements;
         derez.deserialize<size_t>(num_elements);
-        for (unsigned idx = 0; idx < num_elements; idx++)
-        {
-          IT element;
-          derez.deserialize(element);
-          set_ptr.sparse->insert(element);
+	if (num_elements > 0) {
+	  if (!set_ptr.sparse)
+	    set_ptr.sparse = new typename std::set<IT>;
+          for (unsigned idx = 0; idx < num_elements; idx++)
+          {
+	    IT element;
+            derez.deserialize(element);
+            set_ptr.sparse->insert(element);
+          }
         }
       }
       else
@@ -8474,12 +8436,12 @@ namespace Legion {
         {
           delete set_ptr.sparse;
           set_ptr.dense = new DenseSet();
+	  sparse = false;
         }
         else
           set_ptr.dense->set.clear();
         derez.deserialize(set_ptr.dense->set);
       }
-      sparse = is_sparse;
     }
 
     //-------------------------------------------------------------------------
@@ -8605,7 +8567,7 @@ namespace Legion {
     //-------------------------------------------------------------------------
     {
       if (sparse)
-        return set_ptr.sparse->empty();
+        return (!set_ptr.sparse || set_ptr.sparse->empty());
       else
         return !(set_ptr.dense->set);
     }
@@ -8616,7 +8578,7 @@ namespace Legion {
     //-------------------------------------------------------------------------
     {
       if (sparse)
-        return set_ptr.sparse->size();
+        return (set_ptr.sparse ? set_ptr.sparse->size() : 0);
       else
         return set_ptr.dense->set.pop_count(set_ptr.dense->set);
     }
@@ -8630,9 +8592,10 @@ namespace Legion {
       if (!sparse)
       {
 	delete set_ptr.dense;
-	set_ptr.sparse = new typename std::set<IT>();
+	set_ptr.sparse = 0;
 	sparse = true;
-      } else
+      } 
+      else if (set_ptr.sparse)
 	set_ptr.sparse->clear();
     }
 

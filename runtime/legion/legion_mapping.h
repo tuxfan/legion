@@ -16,8 +16,8 @@
 #ifndef __LEGION_MAPPING_H__
 #define __LEGION_MAPPING_H__
 
-#include "legion_types.h"
-#include "legion_constraint.h"
+#include "legion/legion_types.h"
+#include "legion/legion_constraint.h"
 #include "legion.h"
 #include "realm/profiling.h"
 
@@ -25,10 +25,6 @@
 
 namespace Legion {
   namespace Mapping { 
-
-    // for compatibility, many applications that customize mappers expect
-    // to have LegionRuntime::Arrays::{Point,Rect}<DIM> available automatically
-    using namespace LegionRuntime::Arrays;
 
     /**
      * \class PhysicalInstance
@@ -53,6 +49,7 @@ namespace Legion {
     public:
       bool operator<(const PhysicalInstance &rhs) const;
       bool operator==(const PhysicalInstance &rhs) const;
+      bool operator!=(const PhysicalInstance &rhs) const;
     public:
       // Get the location of this physical instance
       Memory get_location(void) const;
@@ -188,6 +185,9 @@ namespace Legion {
       //  allocated result - caller should delete it when done
       template <typename T>
       inline T *get_measurement(void) const;
+
+      template <typename T>
+      inline bool get_measurement(T& result) const;
 
     protected:
       FRIEND_ALL_RUNTIME_CLASSES
@@ -387,17 +387,24 @@ namespace Legion {
        */
       struct TaskSlice {
       public:
-        TaskSlice(void) : domain(Domain::NO_DOMAIN), 
-          proc(Processor::NO_PROC), recurse(false), stealable(false) { }
+        TaskSlice(void) : domain_is(IndexSpace::NO_SPACE), 
+          domain(Domain::NO_DOMAIN), proc(Processor::NO_PROC), 
+          recurse(false), stealable(false) { }
         TaskSlice(const Domain &d, Processor p, bool r, bool s)
-          : domain(d), proc(p), recurse(r), stealable(s) { }
+          : domain_is(IndexSpace::NO_SPACE), domain(d), 
+            proc(p), recurse(r), stealable(s) { }
+        TaskSlice(IndexSpace is, Processor p, bool r, bool s)
+          : domain_is(is), domain(Domain::NO_DOMAIN),
+            proc(p), recurse(r), stealable(s) { }
       public:
+        IndexSpace                              domain_is;
         Domain                                  domain;
         Processor                               proc;
         bool                                    recurse;
         bool                                    stealable;
       };
       struct SliceTaskInput {
+        IndexSpace                             domain_is;
         Domain                                 domain;
       };
       struct SliceTaskOutput {
@@ -470,6 +477,7 @@ namespace Legion {
         VariantID                                       chosen_variant; // = 0 
         ProfilingRequest                                task_prof_requests;
         ProfilingRequest                                copy_prof_requests;
+        TaskPriority                                    profiling_priority;
         TaskPriority                                    task_priority;  // = 0
         bool                                            postmap_task; // = false
       };
@@ -672,6 +680,7 @@ namespace Legion {
       struct MapInlineOutput {
         std::vector<PhysicalInstance>           chosen_instances;
         ProfilingRequest                        profiling_requests;
+        TaskPriority                            profiling_priority;
       };
       //------------------------------------------------------------------------
       virtual void map_inline(const MapperContext        ctx,
@@ -778,6 +787,7 @@ namespace Legion {
         std::vector<std::vector<PhysicalInstance> >       src_instances;
         std::vector<std::vector<PhysicalInstance> >       dst_instances;
         ProfilingRequest                                  profiling_requests;
+        TaskPriority                                      profiling_priority;
       };
       //------------------------------------------------------------------------
       virtual void map_copy(const MapperContext      ctx,
@@ -914,6 +924,7 @@ namespace Legion {
       struct MapCloseOutput {
         std::vector<PhysicalInstance>               chosen_instances;
         ProfilingRequest                            profiling_requests;
+        TaskPriority                                profiling_priority;
       };
       //------------------------------------------------------------------------
       virtual void map_close(const MapperContext       ctx,
@@ -1010,6 +1021,7 @@ namespace Legion {
       };
       struct MapAcquireOutput {
         ProfilingRequest                            profiling_requests;
+        TaskPriority                                profiling_priority;
       };
       //------------------------------------------------------------------------
       virtual void map_acquire(const MapperContext         ctx,
@@ -1065,6 +1077,7 @@ namespace Legion {
       };
       struct MapReleaseOutput {
         ProfilingRequest                            profiling_requests;
+        TaskPriority                                profiling_priority;
       };
       //------------------------------------------------------------------------
       virtual void map_release(const MapperContext         ctx,
@@ -1160,6 +1173,146 @@ namespace Legion {
       virtual void report_profiling(const MapperContext         ctx,
                                     const Release&              release,
                                     const ReleaseProfilingInfo& input)  = 0;
+      //------------------------------------------------------------------------
+    public: // Partition Operations
+      /**
+       * ----------------------------------------------------------------------
+       *  Select Partition Projection
+       * ----------------------------------------------------------------------
+       * Partition operations are usually done with respect to a given
+       * logical region. However, for performance reasons the data for
+       * a logical region might be spread across many subregions from a
+       * previous operation (e.g. in the case of create_partition_by_field
+       * where a previous index space launch filled in the field containing
+       * the colors). In these cases , the mapper may want to specify that
+       * the mapping for the projection operation should not be done with
+       * respect to the region being partitioning, but for each fo the
+       * subregions of a complete partition of the logical region. This
+       * mapper call permits the mapper to decide whether to make the 
+       * partition operation an 'index' operation over the color space
+       * of a complete partition, or whether it should just remain a
+       * 'single' operation that maps the logical region directly.
+       * If the mapper picks a complete partition to return for 
+       * 'chosen_partition' then the partition will become an 'index'
+       * operation, but if it return a NO_PART, then the partition
+       * operation will remain a 'single' operation.
+       */
+      struct SelectPartitionProjectionInput {
+        std::vector<LogicalPartition>           open_complete_partitions;
+      };
+      struct SelectPartitionProjectionOutput {
+        LogicalPartition                        chosen_partition;
+      };
+      //------------------------------------------------------------------------
+      virtual void select_partition_projection(const MapperContext  ctx,
+                          const Partition&                          partition,
+                          const SelectPartitionProjectionInput&     input,
+                                SelectPartitionProjectionOutput&    output) = 0;
+      //------------------------------------------------------------------------
+
+      /**
+       * ----------------------------------------------------------------------
+       *  Map Projection 
+       * ----------------------------------------------------------------------
+       * The map partition mapper call is responsible for handling the mapping
+       * of a dependent partition operation to a specific physical region. The
+       * mapper is given a set of valid physical instances in the 
+       * 'valid_instances' field. The mapper has the option of either ranking
+       * specifying a physical instance from the set of valid instances to 
+       * use in the 'chosen_ranking' field , or providing layout constraints 
+       * for creating a physical instance in 'layout_constraints'. The mapper
+       * can also request profiling information for any copies issued by 
+       * filling in the 'profiling_requests' set.
+       */
+      struct MapPartitionInput {
+        std::vector<PhysicalInstance>           valid_instances; 
+      };
+      struct MapPartitionOutput {
+        std::vector<PhysicalInstance>           chosen_instances;
+        ProfilingRequest                        profiling_requests;
+      };
+      //------------------------------------------------------------------------
+      virtual void map_partition(const MapperContext        ctx,
+                                 const Partition&           partition,
+                                 const MapPartitionInput&   input,
+                                       MapPartitionOutput&  output) = 0;
+      //------------------------------------------------------------------------
+
+      /**
+       * ----------------------------------------------------------------------
+       *  Select Partition Sources 
+       * ----------------------------------------------------------------------
+       * The select partition sources mapper call allows the mapper to select a
+       * ranking for source physical instances when generating copies for an
+       * partition operation. The mapper is given the target physical instance 
+       * in the 'target' field and the set of possible source instances in 
+       * 'source_instances'. The mapper speciefies a ranking of physical 
+       * instances for copies to be issued from until all the fields contain 
+       * valid data. The runtime will also issue copies from any instances not 
+       * placed in the ranking in an unspecified order.
+       */
+      struct SelectPartitionSrcInput {
+        PhysicalInstance                        target;
+        std::vector<PhysicalInstance>           source_instances;
+      };
+      struct SelectPartitionSrcOutput {
+        std::deque<PhysicalInstance>            chosen_ranking;
+      };
+      //------------------------------------------------------------------------
+      virtual void select_partition_sources(
+                                    const MapperContext             ctx,
+                                    const Partition&                partition,
+                                    const SelectPartitionSrcInput&  input,
+                                          SelectPartitionSrcOutput& output) = 0;
+      //------------------------------------------------------------------------
+
+      /**
+       * ----------------------------------------------------------------------
+       *  Create Temporary Instance
+       * ----------------------------------------------------------------------
+       * Occasionaly, the runtime may need to create a temporary instance
+       * in order to correctly create the physical instances associated with
+       * a partition. When these scenarios occur (usually infrequently), this
+       * mapper call will be invoked to request that mapper create an 
+       * instance. It is required that the mapper create a new instance and
+       * not re-use an existing instance. Attempts to call 'find_instance' or
+       * 'find_or_create' runtime calls will raise an error. The resulting 
+       * instance must have sufficient space for all the fields. The runtime 
+       * will also provide the actual target instance where the data will be 
+       * ultimately copied. The mapper can use this instance as a guide for 
+       * where the data will ultimately be placed and laid out.
+       */
+      struct CreatePartitionTemporaryInput {
+        PhysicalInstance                        destination_instance;
+      };
+      struct CreatePartitionTemporaryOutput {
+        PhysicalInstance                        temporary_instance;
+      };
+      //------------------------------------------------------------------------
+      virtual void create_partition_temporary_instance(
+                              const MapperContext                   ctx,
+                              const Partition&                      partition,
+                              const CreatePartitionTemporaryInput&  input,
+                                    CreatePartitionTemporaryOutput& output) = 0;
+      //------------------------------------------------------------------------
+
+      // No speculation for dependent partition operations
+
+      /**
+       * ----------------------------------------------------------------------
+       *  Report Profiling 
+       * ----------------------------------------------------------------------
+       * If the mapper requested profiling information on the copies
+       * generated during a dependent partition operation then this mapper
+       * call will be invoked to inform the mapper of the result.
+       */
+      struct PartitionProfilingInfo {
+	ProfilingResponse                       profiling_responses;
+      };
+      //------------------------------------------------------------------------
+      virtual void report_profiling(const MapperContext              ctx,
+                                    const Partition&                 partition,
+                                    const PartitionProfilingInfo&    input) = 0;
       //------------------------------------------------------------------------
     public: // Single Task Context 
       /**
@@ -1606,6 +1759,33 @@ namespace Legion {
             const std::vector<std::vector<PhysicalInstance> > &instances) const;
     public:
       //------------------------------------------------------------------------
+      // Methods for creating index spaces which mappers need to do
+      // in order to be able to properly slice index space operations
+      //------------------------------------------------------------------------
+      IndexSpace create_index_space(MapperContext ctx, Domain bounds) const;
+      // Template version
+      template<int DIM, typename COORD_T>
+      IndexSpaceT<DIM,COORD_T> create_index_space(MapperContext ctx,
+                                            Rect<DIM,COORD_T> bounds) const;
+
+      IndexSpace create_index_space(MapperContext ctx, 
+                                  const std::vector<DomainPoint> &points) const;
+      // Template version
+      template<int DIM, typename COORD_T>
+      IndexSpaceT<DIM,COORD_T> create_index_space(MapperContext ctx,
+                    const std::vector<Point<DIM,COORD_T> > &points) const;
+
+      IndexSpace create_index_space(MapperContext ctx,
+                                    const std::vector<Domain> &rects) const;
+      // Template version
+      template<int DIM, typename COORD_T>
+      IndexSpaceT<DIM,COORD_T> create_index_space(MapperContext ctx,
+                      const std::vector<Rect<DIM,COORD_T> > &rects) const;
+    protected:
+      IndexSpace create_index_space_internal(MapperContext ctx, const Domain &d,
+                  const void *realm_is, TypeTag type_tag) const;
+    public:
+      //------------------------------------------------------------------------
       // Methods for introspecting index space trees 
       // For documentation see methods of the same name in Runtime
       //------------------------------------------------------------------------
@@ -1634,10 +1814,6 @@ namespace Legion {
 
       bool is_index_partition_disjoint(MapperContext ctx, 
                                                  IndexPartition p) const;
-
-      template<unsigned DIM>
-      IndexSpace get_index_subspace(MapperContext ctx, 
-        IndexPartition p, LegionRuntime::Arrays::Point<DIM> &color_point) const;
 
       Color get_index_space_color(MapperContext ctx, 
                                             IndexSpace handle) const;
@@ -1779,12 +1955,12 @@ namespace Legion {
         output.value = output_result;
         output.size = sizeof(T);
       }
-    };
+    }; 
 
   }; // namespace Mapping
 }; // namespace Legion
 
-#include "legion_mapping.inl"
+#include "legion/legion_mapping.inl"
 
 #endif // __LEGION_MAPPING_H__
 

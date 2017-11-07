@@ -16,7 +16,7 @@
 // inlined methods for Realm logging
 
 // nop, but helps IDEs
-#include "logging.h"
+#include "realm/logging.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -179,7 +179,7 @@ namespace Realm {
   {
       const char *legionURL = "http://legion.stanford.edu/messages";
       sprintf(buffer, "\nFor more information see:\n%s/%s_code.html#%s_code_%d\n",
-        legionURL, type, type, (int)messageID);
+	      legionURL, type, type, int(messageID));
       return buffer;
   }
   

@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-#include "replay_mapper.h"
-#include "legion_utilities.h"
+#include "mappers/replay_mapper.h"
+#include "legion/legion_utilities.h"
 
 namespace Legion {
   namespace Mapping {
@@ -623,6 +623,57 @@ namespace Legion {
     void ReplayMapper::report_profiling(const MapperContext         ctx,
                                         const Release&              release,
                                         const ReleaseProfilingInfo& input)
+    //--------------------------------------------------------------------------
+    {
+      // Nothing to do
+    }
+
+    //--------------------------------------------------------------------------
+    void ReplayMapper::select_partition_projection(const MapperContext  ctx,
+                        const Partition&                          partition,
+                        const SelectPartitionProjectionInput&     input,
+                              SelectPartitionProjectionOutput&    output)
+    //--------------------------------------------------------------------------
+    {
+      assert(false); // TODO
+    }
+
+    //--------------------------------------------------------------------------
+    void ReplayMapper::map_partition(const MapperContext        ctx,
+                               const Partition&           partition,
+                               const MapPartitionInput&   input,
+                                     MapPartitionOutput&  output)
+    //--------------------------------------------------------------------------
+    {
+      assert(false); // TODO
+    }
+
+    //--------------------------------------------------------------------------
+    void ReplayMapper::select_partition_sources(
+                                     const MapperContext             ctx,
+                                     const Partition&                partition,
+                                     const SelectPartitionSrcInput&  input,
+                                           SelectPartitionSrcOutput& output)
+    //--------------------------------------------------------------------------
+    {
+      assert(false); // TODO
+    }
+
+    //--------------------------------------------------------------------------
+    void ReplayMapper::create_partition_temporary_instance(
+                            const MapperContext                   ctx,
+                            const Partition&                      partition,
+                            const CreatePartitionTemporaryInput&  input,
+                                  CreatePartitionTemporaryOutput& output)
+    //--------------------------------------------------------------------------
+    {
+      assert(false); // TODO
+    }
+
+    //--------------------------------------------------------------------------
+    void ReplayMapper::report_profiling(const MapperContext              ctx,
+                                  const Partition&                 partition,
+                                  const PartitionProfilingInfo&    input)
     //--------------------------------------------------------------------------
     {
       // Nothing to do

@@ -20,13 +20,12 @@
  * \file legion_types.h
  */
 
-#include <cstdio>
-#include <cstdlib>
-#include <cassert>
-#include <cstring>
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <string.h>
 #include <stdint.h>
-
-#include "limits.h"
+#include <limits.h>
 
 #include <map>
 #include <set>
@@ -35,17 +34,23 @@
 #include <vector>
 #include <typeinfo>
 
-#include "legion_config.h"
-#include "legion_template_help.h"
+#include "legion/legion_config.h"
+#include "legion/legion_template_help.h"
 
 // Make sure we have the appropriate defines in place for including realm
-#define REALM_USE_LEGION_LAYOUT_CONSTRAINTS
+// SJT: too late to define this here...
+//define REALM_USE_LEGION_LAYOUT_CONSTRAINTS
 #include "realm.h"
+#include "realm/dynamic_templates.h"
 
+// this may be set before including legion.h to eliminate deprecation warnings
+//  for just the Legion API
+#ifndef LEGION_DEPRECATED
 #if __cplusplus >= 201402L
 #define LEGION_DEPRECATED(x) [[deprecated(x)]]
 #else
 #define LEGION_DEPRECATED(x)
+#endif
 #endif
 
 namespace BindingLib { class Utility; } // BindingLib namespace
@@ -65,7 +70,6 @@ namespace Legion {
   typedef ::legion_external_resource_t ExternalResource;
   typedef ::legion_timing_measurement_t TimingMeasurement;
   typedef ::legion_dependence_type_t DependenceType;
-  typedef ::legion_index_space_kind_t IndexSpaceKind;
   typedef ::legion_file_mode_t LegionFileMode;
   typedef ::legion_execution_constraint_t ExecutionConstraintKind;
   typedef ::legion_layout_constraint_t LayoutConstraintKind;
@@ -79,10 +83,14 @@ namespace Legion {
   // Forward declarations for user level objects
   // legion.h
   class IndexSpace;
+  template<int DIM, typename T> class IndexSpaceT;
   class IndexPartition;
+  template<int DIM, typename T> class IndexPartitionT;
   class FieldSpace;
   class LogicalRegion;
+  template<int DIM, typename T> class LogicalRegionT;
   class LogicalPartition;
+  template<int DIM, typename T> class LogicalPartitionT;
   class IndexAllocator;
   class FieldAllocator;
   class TaskArgument;
@@ -109,6 +117,10 @@ namespace Legion {
   class FutureMap;
   class Predicate;
   class PhysicalRegion;
+  template<PrivilegeMode,typename,int,typename,typename,bool> 
+    class FieldAccessor;
+  template<typename,int,typename,typename>
+    class UnsafeFieldAccessor;
   class IndexIterator;
   template<typename T> struct ColoredPoints; 
   struct InputArgs;
@@ -121,12 +133,20 @@ namespace Legion {
   class Release;
   class Close;
   class Fill;
+  class Partition;
   class Runtime;
   class MPILegionHandshake;
   // For backwards compatibility
   typedef Runtime HighLevelRuntime;
   // Helper for saving instantiated template functions
   struct SerdezRedopFns;
+  // Some typedefs for making things nicer for users with C++11 support
+#if __cplusplus >= 201103L
+  template<typename FT, int N, typename T = ::legion_coord_t>
+  using GenericAccessor = Realm::GenericAccessor<FT,N,T>;
+  template<typename FT, int N, typename T = ::legion_coord_t>
+  using AffineAccessor = Realm::AffineAccessor<FT,N,T>;
+#endif
 
   // Forward declarations for compiler level objects
   // legion.h
@@ -143,11 +163,15 @@ namespace Legion {
   class TaskResult;
   class CObjectWrapper;
 
+  // legion_domain.h
+  class DomainPoint;
+  class Domain;
+  class IndexSpaceAllocator;
+
   // legion_utilities.h
   struct RegionUsage;
   class AutoLock;
   class ImmovableAutoLock;
-  class ColorPoint;
   class Serializer;
   class Deserializer;
   class LgEvent; // base event type for legion
@@ -241,11 +265,29 @@ namespace Legion {
       SHUTDOWN_TASK_ID        = Realm::Processor::TASK_ID_PROCESSOR_SHUTDOWN,
       LG_TASK_ID              = Realm::Processor::TASK_ID_FIRST_AVAILABLE,
       LG_LEGION_PROFILING_ID  = Realm::Processor::TASK_ID_FIRST_AVAILABLE+1,
-      LG_MAPPER_PROFILING_ID  = Realm::Processor::TASK_ID_FIRST_AVAILABLE+2,
-      LG_LAUNCH_TOP_LEVEL_ID  = Realm::Processor::TASK_ID_FIRST_AVAILABLE+3,
-      LG_MPI_INTEROP_ID       = Realm::Processor::TASK_ID_FIRST_AVAILABLE+4,
-      LG_MPI_SYNC_ID          = Realm::Processor::TASK_ID_FIRST_AVAILABLE+5,
-      TASK_ID_AVAILABLE       = Realm::Processor::TASK_ID_FIRST_AVAILABLE+6,
+      LG_LAUNCH_TOP_LEVEL_ID  = Realm::Processor::TASK_ID_FIRST_AVAILABLE+2,
+      LG_MPI_INTEROP_ID       = Realm::Processor::TASK_ID_FIRST_AVAILABLE+3,
+      LG_STARTUP_SYNC_ID      = Realm::Processor::TASK_ID_FIRST_AVAILABLE+4,
+      TASK_ID_AVAILABLE       = Realm::Processor::TASK_ID_FIRST_AVAILABLE+5,
+    };
+
+    // Realm dependent partitioning kinds
+    enum DepPartOpKind {
+      DEP_PART_UNION = 0, // a single union
+      DEP_PART_UNIONS = 1, // many parallel unions
+      DEP_PART_UNION_REDUCTION = 2, // union reduction to a single space
+      DEP_PART_INTERSECTION = 3, // a single intersection
+      DEP_PART_INTERSECTIONS = 4, // many parallel intersections
+      DEP_PART_INTERSECTION_REDUCTION = 5, // intersection reduction to a space
+      DEP_PART_DIFFERENCE = 6, // a single difference
+      DEP_PART_DIFFERENCES = 7, // many parallel differences
+      DEP_PART_EQUAL = 8, // an equal partition operation
+      DEP_PART_BY_FIELD = 9, // create a partition from a field
+      DEP_PART_BY_IMAGE = 10, // create partition by image
+      DEP_PART_BY_IMAGE_RANGE = 11, // create partition by image range
+      DEP_PART_BY_PREIMAGE = 12, // create partition by preimage
+      DEP_PART_BY_PREIMAGE_RANGE = 13, // create partition by preimage range
+      DEP_PART_ASSOCIATION = 14, // create an association
     };
 
     // Enumeration of Legion runtime tasks
@@ -267,7 +309,6 @@ namespace Legion {
       LG_TRIGGER_OP_ID,
       LG_TRIGGER_TASK_ID,
       LG_DEFERRED_RECYCLE_ID,
-      LG_DEFERRED_SLICE_ID,
       LG_MUST_INDIV_ID,
       LG_MUST_INDEX_ID,
       LG_MUST_MAP_ID,
@@ -284,6 +325,7 @@ namespace Legion {
       LG_SPACE_INDEPENDENCE_TASK_ID,
       LG_PENDING_CHILD_TASK_ID,
       LG_DECREMENT_PENDING_TASK_ID,
+      LG_POST_DECREMENT_TASK_ID,
       LG_SEND_VERSION_STATE_UPDATE_TASK_ID,
       LG_UPDATE_VERSION_STATE_REDUCE_TASK_ID,
       LG_ADD_TO_DEP_QUEUE_TASK_ID,
@@ -319,11 +361,14 @@ namespace Legion {
       LG_DEFER_POINT_MAP_AND_LAUNCH_TASK_ID,
       LG_ADD_VERSIONING_SET_REF_TASK_ID,
       LG_VERSION_STATE_CAPTURE_DIRTY_TASK_ID,
+      LG_VERSION_STATE_PENDING_ADVANCE_TASK_ID,
       LG_DISJOINT_CLOSE_TASK_ID,
       LG_DEFER_MATERIALIZED_VIEW_TASK_ID,
       LG_MISSPECULATE_TASK_ID,
       LG_DEFER_PHI_VIEW_REF_TASK_ID,
       LG_DEFER_PHI_VIEW_REGISTRATION_TASK_ID,
+      LG_TIGHTEN_INDEX_SPACE_TASK_ID,
+      LG_PROF_OUTPUT_TASK_ID,
       LG_MESSAGE_ID, // These two must be the last two
       LG_RETRY_SHUTDOWN_TASK_ID,
       LG_LAST_TASK_ID, // This one should always be last
@@ -363,7 +408,6 @@ namespace Legion {
         "Operation Physical Dependence Analysis",                 \
         "Task Physical Dependence Analysis",                      \
         "Deferred Recycle",                                       \
-        "Deferred Slice",                                         \
         "Must Individual Task Dependence Analysis",               \
         "Must Index Task Dependence Analysis",                    \
         "Must Task Physical Dependence Analysis",                 \
@@ -380,6 +424,7 @@ namespace Legion {
         "Index Space Independence Test",                          \
         "Remove Pending Child",                                   \
         "Decrement Pending Task",                                 \
+        "Post Decrement Task",                                    \
         "Send Version State Update",                              \
         "Update Version State Reduce",                            \
         "Add to Dependence Queue",                                \
@@ -415,11 +460,14 @@ namespace Legion {
         "Defer Point Task Map and Launch",                        \
         "Defer Versioning Set Reference",                         \
         "Version State Capture Dirty",                            \
+        "Version State Reclaim Pending Advance",                  \
         "Disjoint Close",                                         \
         "Defer Materialized View Creation",                       \
         "Handle Mapping Misspeculation",                          \
         "Defer Phi View Reference",                               \
         "Defer Phi View Registration",                            \
+        "Tighten Index Space",                                    \
+        "Legion Prof Early Output",                               \
         "Remote Message",                                         \
         "Retry Shutdown",                                         \
       };
@@ -458,6 +506,11 @@ namespace Legion {
       RELEASE_CREATE_TEMPORARY_CALL,
       RELEASE_SPECULATE_CALL,
       RELEASE_REPORT_PROFILING_CALL,
+      SELECT_PARTITION_PROJECTION_CALL,
+      MAP_PARTITION_CALL,
+      PARTITION_SELECT_SOURCES_CALL,
+      PARTITION_CREATE_TEMPORARY_CALL,
+      PARTITION_REPORT_PROFILING_CALL,
       CONFIGURE_CONTEXT_CALL,
       SELECT_TUNABLE_VALUE_CALL,
       MAP_MUST_EPOCH_CALL,
@@ -505,6 +558,11 @@ namespace Legion {
       "release create temporary",                   \
       "speculate (for release)",                    \
       "report_profiling (for release)",             \
+      "select partition projection",                \
+      "map_partition",                              \
+      "select_partition_sources",                   \
+      "partition create temporary",                 \
+      "report_profiling (for partition)",           \
       "configure_context",                          \
       "select_tunable_value",                       \
       "map_must_epoch",                             \
@@ -531,6 +589,7 @@ namespace Legion {
     // Realm resource (e.g. reservation) and therefore 
     // shouldn't be stuck behind anything.
     enum LgPriority {
+      LG_LOW_PRIORITY = -1,
       LG_THROUGHPUT_PRIORITY = 0,
       LG_DEFERRED_THROUGHPUT_PRIORITY = 1,
       LG_LATENCY_PRIORITY = 2,
@@ -555,7 +614,8 @@ namespace Legion {
       VERSION_MANAGER_VIRTUAL_CHANNEL = 13,
       ANALYSIS_VIRTUAL_CHANNEL = 14,
       FUTURE_VIRTUAL_CHANNEL = 15,
-      MAX_NUM_VIRTUAL_CHANNELS = 16, // this one must be last
+      REFERENCE_VIRTUAL_CHANNEL = 16,
+      MAX_NUM_VIRTUAL_CHANNELS = 17, // this one must be last
     };
 
     enum MessageKind {
@@ -565,6 +625,7 @@ namespace Legion {
       SEND_INDEX_SPACE_NODE,
       SEND_INDEX_SPACE_REQUEST,
       SEND_INDEX_SPACE_RETURN,
+      SEND_INDEX_SPACE_SET,
       SEND_INDEX_SPACE_CHILD_REQUEST,
       SEND_INDEX_SPACE_CHILD_RESPONSE,
       SEND_INDEX_SPACE_COLORS_REQUEST,
@@ -575,8 +636,6 @@ namespace Legion {
       SEND_INDEX_PARTITION_RETURN,
       SEND_INDEX_PARTITION_CHILD_REQUEST,
       SEND_INDEX_PARTITION_CHILD_RESPONSE,
-      SEND_INDEX_PARTITION_CHILDREN_REQUEST,
-      SEND_INDEX_PARTITION_CHILDREN_RESPONSE,
       SEND_FIELD_SPACE_NODE,
       SEND_FIELD_SPACE_REQUEST,
       SEND_FIELD_SPACE_RETURN,
@@ -606,6 +665,8 @@ namespace Legion {
       DISTRIBUTED_VALID_UPDATE,
       DISTRIBUTED_GC_UPDATE,
       DISTRIBUTED_RESOURCE_UPDATE,
+      DISTRIBUTED_INVALIDATE,
+      DISTRIBUTED_DEACTIVATE,
       DISTRIBUTED_CREATE_ADD,
       DISTRIBUTED_CREATE_REMOVE,
       DISTRIBUTED_UNREGISTER,
@@ -651,6 +712,7 @@ namespace Legion {
       SEND_LOGICAL_PARTITION_SEMANTIC_INFO,
       SEND_REMOTE_CONTEXT_REQUEST,
       SEND_REMOTE_CONTEXT_RESPONSE,
+      SEND_REMOTE_CONTEXT_RELEASE,
       SEND_REMOTE_CONTEXT_FREE,
       SEND_REMOTE_CONTEXT_PHYSICAL_REQUEST,
       SEND_REMOTE_CONTEXT_PHYSICAL_RESPONSE,
@@ -665,6 +727,8 @@ namespace Legion {
       SEND_VERSION_MANAGER_INVALIDATE,
       SEND_VERSION_MANAGER_REQUEST,
       SEND_VERSION_MANAGER_RESPONSE,
+      SEND_VERSION_MANAGER_UNVERSIONED_REQUEST,
+      SEND_VERSION_MANAGER_UNVERSIONED_RESPONSE,
       SEND_INSTANCE_REQUEST,
       SEND_INSTANCE_RESPONSE,
       SEND_GC_PRIORITY_UPDATE,
@@ -694,6 +758,7 @@ namespace Legion {
         "Send Index Space Node",                                      \
         "Send Index Space Request",                                   \
         "Send Index Space Return",                                    \
+        "Send Index Space Set",                                       \
         "Send Index Space Child Request",                             \
         "Send Index Space Child Response",                            \
         "Send Index Space Colors Request",                            \
@@ -704,8 +769,6 @@ namespace Legion {
         "Send Index Partition Return",                                \
         "Send Index Partition Child Request",                         \
         "Send Index Partition Child Response",                        \
-        "Send Index Partition Children Request",                      \
-        "Send Index Partition Children Response",                     \
         "Send Field Space Node",                                      \
         "Send Field Space Request",                                   \
         "Send Field Space Return",                                    \
@@ -735,6 +798,8 @@ namespace Legion {
         "Distributed Valid Update",                                   \
         "Distributed GC Update",                                      \
         "Distributed Resource Update",                                \
+        "Distributed Invalidate",                                     \
+        "Distributed Deactivate",                                     \
         "Distributed Create Add",                                     \
         "Distributed Create Remove",                                  \
         "Distributed Unregister",                                     \
@@ -780,6 +845,7 @@ namespace Legion {
         "Send Logical Partition Semantic Info",                       \
         "Send Remote Context Request",                                \
         "Send Remote Context Response",                               \
+        "Send Remote Context Release",                                \
         "Send Remote Context Free",                                   \
         "Send Remote Context Physical Request",                       \
         "Send Remote Context Physical Response",                      \
@@ -794,6 +860,8 @@ namespace Legion {
         "Send Version Manager Invalidate",                            \
         "Send Version Manager Request",                               \
         "Send Version Manager Response",                              \
+        "Send Version Manager Unversioned Request",                   \
+        "Send Version Manager Unversioned Response",                  \
         "Send Instance Request",                                      \
         "Send Instance Response",                                     \
         "Send GC Priority Update",                                    \
@@ -1160,6 +1228,19 @@ namespace Legion {
     class GeneratorImpl;
     class ProjectionFunction;
     class Runtime;
+    // A small interface class for handling profiling responses
+    class ProfilingResponseHandler {
+    public:
+      virtual void handle_profiling_response(
+                const Realm::ProfilingResponse &response) = 0;
+    };
+    struct ProfilingResponseBase {
+    public:
+      ProfilingResponseBase(ProfilingResponseHandler *h)
+        : handler(h) { }
+    public:
+      ProfilingResponseHandler *const handler;
+    };
 
     // legion_ops.h
     class Operation;
@@ -1189,6 +1270,7 @@ namespace Legion {
     class MustEpochOp;
     class PendingPartitionOp;
     class DependentPartitionOp;
+    class PointDepPartOp;
     class FillOp;
     class IndexFillOp;
     class PointFillOp;
@@ -1251,7 +1333,9 @@ namespace Legion {
     class RegionTreeForest;
     class IndexTreeNode;
     class IndexSpaceNode;
+    template<int DIM, typename T> class IndexSpaceNodeT;
     class IndexPartNode;
+    template<int DIM, typename T> class IndexPartNodeT;
     class FieldSpaceNode;
     class RegionTreeNode;
     class RegionNode;
@@ -1317,6 +1401,7 @@ namespace Legion {
     class TreeCloseImpl;
     class TreeClose;
     struct CloseInfo; 
+    struct FieldDataDescriptor;
 
     // legion_spy.h
     class TreeStateLogger;
@@ -1366,6 +1451,7 @@ namespace Legion {
     friend class Internal::MustEpochOp;                     \
     friend class Internal::PendingPartitionOp;              \
     friend class Internal::DependentPartitionOp;            \
+    friend class Internal::PointDepPartOp;                  \
     friend class Internal::FillOp;                          \
     friend class Internal::IndexFillOp;                     \
     friend class Internal::PointFillOp;                     \
@@ -1413,6 +1499,7 @@ namespace Legion {
     friend class Internal::RemoteContext;                   \
     friend class Internal::LeafContext;                     \
     friend class Internal::InlineContext;                   \
+    friend class Internal::InstanceBuilder;                 \
     friend class BindingLib::Utility;                       \
     friend class CObjectWrapper;                  
 
@@ -1433,12 +1520,8 @@ namespace Legion {
   }; // Internal namespace
 
   // Typedefs that are needed everywhere
-  typedef LegionRuntime::Accessor::ByteOffset ByteOffset;
   typedef Realm::Runtime RealmRuntime;
   typedef Realm::Machine Machine;
-  typedef Realm::Domain Domain;
-  typedef Realm::DomainPoint DomainPoint;
-  typedef Realm::IndexSpaceAllocator IndexSpaceAllocator;
   typedef Realm::Memory Memory;
   typedef Realm::Processor Processor;
   typedef Realm::CodeDescriptor CodeDescriptor;
@@ -1449,10 +1532,9 @@ namespace Legion {
   typedef Realm::CustomSerdezUntyped SerdezOp;
   typedef Realm::Machine::ProcessorMemoryAffinity ProcessorMemoryAffinity;
   typedef Realm::Machine::MemoryMemoryAffinity MemoryMemoryAffinity;
-  typedef Realm::ElementMask::Enumerator Enumerator;
-  typedef ::legion_lowlevel_coord_t coord_t;
-  typedef Realm::IndexSpace::FieldDataDescriptor FieldDataDescriptor;
+  typedef Realm::DynamicTemplates::TagType TypeTag;
   typedef Realm::Logger Logger;
+  typedef ::legion_coord_t coord_t;
   typedef std::map<CustomSerdezID, 
                    const Realm::CustomSerdezUntyped *> SerdezOpTable;
   typedef std::map<Realm::ReductionOpID, 
@@ -1494,12 +1576,7 @@ namespace Legion {
   typedef ::legion_projection_epoch_id_t ProjectionEpochID;
   typedef ::legion_task_id_t TaskID;
   typedef ::legion_layout_constraint_id_t LayoutConstraintID;
-  typedef std::map<Color,ColoredPoints<ptr_t> > Coloring;
-  typedef std::map<Color,Domain> DomainColoring;
-  typedef std::map<Color,std::set<Domain> > MultiDomainColoring;
-  typedef std::map<DomainPoint,ColoredPoints<ptr_t> > PointColoring;
-  typedef std::map<DomainPoint,Domain> DomainPointColoring;
-  typedef std::map<DomainPoint,std::set<Domain> > MultiDomainPointColoring;
+  typedef ::legion_internal_color_t LegionColor;
   typedef void (*RegistrationCallbackFnptr)(Machine machine, 
                 Runtime *rt, const std::set<Processor> &local_procs);
   typedef LogicalRegion (*RegionProjectionFnptr)(LogicalRegion parent, 
@@ -1524,8 +1601,42 @@ namespace Legion {
   };
 
   namespace Internal { 
+    // The invalid color
+    const LegionColor INVALID_COLOR = LLONG_MAX;
     // This is only needed internally
     typedef Realm::RegionInstance PhysicalInstance;
+    typedef Realm::CopySrcDstField CopySrcDstField;
+    // Helper for encoding templates
+    struct NT_TemplateHelper : 
+      public Realm::DynamicTemplates::ListProduct2<Realm::DIMCOUNTS, 
+                                                   Realm::DIMTYPES> {
+    typedef Realm::DynamicTemplates::ListProduct2<Realm::DIMCOUNTS, 
+                                                  Realm::DIMTYPES> SUPER;
+    public:
+      template<int N, typename T>
+      static inline TypeTag encode_tag(void) {
+        return SUPER::template encode_tag<Realm::DynamicTemplates::Int<N>, T>();
+      }
+      template<int N, typename T>
+      static inline void check_type(const TypeTag t) {
+#ifdef DEBUG_LEGION
+#ifndef NDEBUG
+        const TypeTag t1 = encode_tag<N,T>();
+#endif
+        assert(t1 == t);
+#endif
+      }
+      struct DimHelper {
+      public:
+        template<typename N, typename T>
+        static inline void demux(int *result) { *result = N::N; }
+      };
+      static inline int get_dim(const TypeTag t) {
+        int result = 0;
+        SUPER::demux<DimHelper>(t, &result);
+        return result; 
+      }
+    };
     // Pull some of the mapper types into the internal space
     typedef Mapping::Mapper Mapper;
     typedef Mapping::PhysicalInstance MappingInstance;
@@ -1816,5 +1927,20 @@ namespace Legion {
   };
 
 }; // Legion namespace
+
+// now that we have things like LgEvent defined, we can include accessor.h to
+// pick up ptr_t, which is used for compatibility-mode Coloring and friends
+#include "legion/accessor.h"
+
+namespace Legion {
+  typedef LegionRuntime::Accessor::ByteOffset ByteOffset;
+
+  typedef std::map<Color,ColoredPoints<ptr_t> > Coloring;
+  typedef std::map<Color,Domain> DomainColoring;
+  typedef std::map<Color,std::set<Domain> > MultiDomainColoring;
+  typedef std::map<DomainPoint,ColoredPoints<ptr_t> > PointColoring;
+  typedef std::map<DomainPoint,Domain> DomainPointColoring;
+  typedef std::map<DomainPoint,std::set<Domain> > MultiDomainPointColoring;
+};
 
 #endif // __LEGION_TYPES_H__

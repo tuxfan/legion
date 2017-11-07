@@ -18,15 +18,15 @@
 #ifndef REALM_TASKS_H
 #define REALM_TASKS_H
 
-#include "processor.h"
-#include "id.h"
+#include "realm/processor.h"
+#include "realm/id.h"
 
-#include "operation.h"
-#include "profiling.h"
+#include "realm/operation.h"
+#include "realm/profiling.h"
 
-#include "threads.h"
-#include "pri_queue.h"
-#include "bytearray.h"
+#include "realm/threads.h"
+#include "realm/pri_queue.h"
+#include "realm/bytearray.h"
 
 namespace Realm {
 
@@ -183,6 +183,21 @@ namespace Realm {
       int cfg_min_active_workers;
       int cfg_max_active_workers;
     };
+
+    inline long long ThreadedTaskScheduler::WorkCounter::read_counter(void) const
+    {
+      // just return the counter value
+      return counter;
+    }
+
+    // returns true if there is new work since the old_counter value was read
+    // this is non-blocking, and may be called while holding another lock
+    inline bool ThreadedTaskScheduler::WorkCounter::check_for_work(long long old_counter)
+    {
+      // test the counter value without synchronization
+      return (counter > old_counter);
+    }
+
 
     // an implementation of ThreadedTaskScheduler that uses kernel threads
     //  for workers

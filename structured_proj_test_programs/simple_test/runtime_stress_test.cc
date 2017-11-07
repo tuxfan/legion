@@ -24,7 +24,7 @@
 using namespace Legion;
 using namespace Legion::Mapping;
 using namespace LegionRuntime::Accessor;
-using namespace LegionRuntime::Arrays;
+//using namespace LegionRuntime::Arrays;
 
 /*
  * In this example we illustrate how the Legion
@@ -107,12 +107,12 @@ void SliceMapper::slice_task(const MapperContext      ctx,
   {
     case 1:
       {
-        Rect<1> rect = input.domain.get_rect<1>();
-        for (GenericPointInRectIterator<1> pir(rect);
-              pir; pir++, idx++)
+        Rect<1> rect = input.domain;
+        for (PointInRectIterator<1> pir(rect);
+              pir(); pir++, idx++)
         {
-          Rect<1> slice(pir.p, pir.p);
-          output.slices[idx] = TaskSlice(Domain::from_rect<1>(slice),
+          Rect<1> slice(*pir, *pir);
+          output.slices[idx] = TaskSlice(slice,
               procs[idx % procs.size()],
               false/*recurse*/, true/*stealable*/);
         }
@@ -120,12 +120,12 @@ void SliceMapper::slice_task(const MapperContext      ctx,
       }
     case 2:
       {
-        Rect<2> rect = input.domain.get_rect<2>();
-        for (GenericPointInRectIterator<2> pir(rect);
-              pir; pir++, idx++)
+        Rect<2> rect = input.domain;
+        for (PointInRectIterator<2> pir(rect);
+              pir(); pir++, idx++)
         {
-          Rect<2> slice(pir.p, pir.p);
-          output.slices[idx] = TaskSlice(Domain::from_rect<2>(slice),
+          Rect<2> slice(*pir, *pir);
+          output.slices[idx] = TaskSlice(slice,
               procs[idx % procs.size()],
               false/*recurse*/, true/*stealable*/);
         }
@@ -133,12 +133,12 @@ void SliceMapper::slice_task(const MapperContext      ctx,
       }
     case 3:
       {
-        Rect<3> rect = input.domain.get_rect<3>();
-        for (GenericPointInRectIterator<3> pir(rect);
-              pir; pir++, idx++)
+        Rect<3> rect = input.domain;
+        for (PointInRectIterator<3> pir(rect);
+              pir(); pir++, idx++)
         {
-          Rect<3> slice(pir.p, pir.p);
-          output.slices[idx] = TaskSlice(Domain::from_rect<3>(slice),
+          Rect<3> slice(*pir, *pir);
+          output.slices[idx] = TaskSlice(slice,
               procs[idx % procs.size()],
               false/*recurse*/, true/*stealable*/);
         }
@@ -223,11 +223,11 @@ class XDiffProjectionFunctor : public StructuredProjectionFunctor
                                   LogicalPartition upper_bound,
                                   const DomainPoint &point)
     {
-      const Point<2> onex = make_point(1,0);
-      const Point<2> new_point = point.get_point<2>() + onex;
+      const Point<2> onex = Point<2>(1,0);
+      const Point<2> new_point = Point<2>(point) + onex;
       LogicalRegion ret_region =
           runtime->get_logical_subregion_by_color(ctx, upper_bound,
-          DomainPoint::from_point<2>(new_point));
+          DomainPoint(new_point));
       return ret_region;
     }
 
@@ -265,11 +265,11 @@ class YDiffProjectionFunctor : public StructuredProjectionFunctor
                                   LogicalPartition upper_bound,
                                   const DomainPoint &point)
     {
-      const Point<2> oney = make_point(0,1);
-      const Point<2> new_point = point.get_point<2>() + oney;
+      const Point<2> oney = Point<2>(0,1);
+      const Point<2> new_point = Point<2>(point) + oney;
       LogicalRegion ret_region =
           runtime->get_logical_subregion_by_color(ctx, upper_bound,
-          DomainPoint::from_point<2>(new_point));
+          DomainPoint(new_point));
       return ret_region;
     }
 
@@ -356,10 +356,9 @@ void top_level_task(const Task *task,
   // For this example we'll create a single logical region with two
   // fields.  We'll initialize the field identified by 'FID_X' and 'FID_Y' with
   // our input data and then compute the value and write into 'FID_VAL'.
-  Rect<2> elem_rect(make_point(0,0), make_point(side_length_x-1,
+  Rect<2> elem_rect(Point<2>(0,0), Point<2>(side_length_x-1,
       side_length_y-1));
-  IndexSpace is = runtime->create_index_space(ctx, 
-                          Domain::from_rect<2>(elem_rect));
+  IndexSpace is = runtime->create_index_space(ctx, elem_rect);
   FieldSpace fs = runtime->create_field_space(ctx);
   {
     FieldAllocator allocator = 
@@ -391,9 +390,9 @@ void top_level_task(const Task *task,
   // that we want to create.  We create extra empty subregions
   // around the outside of the grid so that the compute tasks
   // can all work the same.
-  Rect<2> color_bounds(make_point(0,0),
-      make_point(num_subregions_x, num_subregions_y));
-  Domain color_domain = Domain::from_rect<2>(color_bounds);
+  Rect<2> color_bounds(Point<2>(0,0),
+      Point<2>(num_subregions_x, num_subregions_y));
+  Domain color_domain = Domain(color_bounds);
 
   // Create (possibly coarser) grid partition of the grid of points
   IndexPartition grid_ip;
@@ -406,16 +405,16 @@ void top_level_task(const Task *task,
       // Make the empty bounding subregions.
       if (itr.p[0] == num_subregions_x || itr.p[1] == num_subregions_y)
       {
-          Rect<2> subrect(make_point(0,0),make_point(-1,-1));
-          d_coloring[itr.p] = Domain::from_rect<2>(subrect);
+          Rect<2> subrect(Point<2>(0,0),Point<2>(-1,-1));
+          d_coloring[itr.p] = Domain(subrect);
           continue;
       }
       int x_start = itr.p[0] * points_per_partition_x;
       int y_start = itr.p[1] * points_per_partition_y;
       int x_end = (itr.p[0] + 1) * points_per_partition_x - 1;
       int y_end = (itr.p[1] + 1) * points_per_partition_y - 1;
-      Rect<2> subrect(make_point(x_start, y_start),make_point(x_end, y_end));
-      d_coloring[itr.p] = Domain::from_rect<2>(subrect);
+      Rect<2> subrect(Point<2>(x_start, y_start),Point<2>(x_end, y_end));
+      d_coloring[itr.p] = Domain(subrect);
     }
 
 
@@ -433,9 +432,9 @@ void top_level_task(const Task *task,
 
   // Our launch domain will again be only include the data subregions
   // and not the dummy ones
-  Rect<2> launch_bounds(make_point(0,0),
-      make_point(num_subregions_x-1, num_subregions_y-1));
-  Domain launch_domain = Domain::from_rect<2>(launch_bounds);
+  Rect<2> launch_bounds(Point<2>(0,0),
+      Point<2>(num_subregions_x-1, num_subregions_y-1));
+  Domain launch_domain = Domain(launch_bounds);
   ArgumentMap arg_map;
 
   // First initialize the 'FID_X' and 'FID_Y' fields with some data
@@ -455,7 +454,8 @@ void top_level_task(const Task *task,
     if (angle == 225)
     {
       IndexLauncher compute_launcher(COMPUTE_TASK_ANGLE_ID, launch_domain,
-           TaskArgument(NULL, 0), arg_map, FROM_TOP_RIGHT);
+           TaskArgument(NULL, 0), arg_map);
+      compute_launcher.set_ordering_id(FROM_TOP_RIGHT);
       compute_launcher.add_region_requirement(
           RegionRequirement(grid_lp, X_PROJ,
                             READ_ONLY, EXCLUSIVE, top_lr));
@@ -487,7 +487,8 @@ void top_level_task(const Task *task,
       compute_args.parallel_length = parallel_size;
       IndexLauncher compute_launcher(COMPUTE_TASK_AXIS_ALIGNED_ID,
           launch_domain, TaskArgument(&compute_args, sizeof(ComputeArgs)),
-          arg_map, FROM_TOP_RIGHT);
+          arg_map);
+      compute_launcher.set_ordering_id(FROM_TOP_RIGHT);
       compute_launcher.add_region_requirement(
           RegionRequirement(grid_lp, proj_id,
                             READ_ONLY, EXCLUSIVE, top_lr));
@@ -548,14 +549,13 @@ void init_field_task(const Task *task,
   RegionAccessor<AccessorType::Generic, int> acc_val_write = 
     regions[0].get_field_accessor(fid_val_write).typeify<int>();
 
-  Domain dom = runtime->get_index_space_domain(ctx, 
+  Rect<2> rect = runtime->get_index_space_domain(ctx, 
       task->regions[0].region.get_index_space());
-  Rect<2> rect = dom.get_rect<2>();
-  for (GenericPointInRectIterator<2> pir(rect); pir; pir++)
+  for (PointInRectIterator<2> pir(rect); pir(); pir++)
   {
-    accx.write(DomainPoint::from_point<2>(pir.p), pir.p[0]);
-    accy.write(DomainPoint::from_point<2>(pir.p), pir.p[1]);
-    acc_val_write.write(DomainPoint::from_point<2>(pir.p), 1);
+    accx.write(*pir, (*pir)[0]);
+    accy.write(*pir, (*pir)[1]);
+    acc_val_write.write(*pir, 1);
   }
 }
 
@@ -593,9 +593,8 @@ void compute_task_angle(const Task *task,
   RegionAccessor<AccessorType::Generic, int> curr_acc = 
     regions[2].get_field_accessor(val_fid_curr).typeify<int>();
 
-  Domain dom = runtime->get_index_space_domain(ctx,
+  Rect<2> rect = runtime->get_index_space_domain(ctx,
       task->regions[2].region.get_index_space());
-  Rect<2> rect = dom.get_rect<2>();
 
   Domain x_dom = runtime->get_index_space_domain(ctx,
       task->regions[0].region.get_index_space());
@@ -608,20 +607,21 @@ void compute_task_angle(const Task *task,
   Point<2> hi = rect.hi;
   Point<2> cur_point;
   int x_diff_val, y_diff_val;
-  const Point<2> onex = make_point(1,0);
-  const Point<2> oney = make_point(0,1);
+  const Point<2> onex = Point<2>(1,0);
+  const Point<2> oney = Point<2>(0,1);
 
   for (long int x = hi[0]; x >= lo[0]; x--)
   {
     for (long int y = hi[1]; y >= lo[1]; y--)
     {
-      cur_point = make_point(x, y);
+      cur_point = Point<2>(x, y);
+      const Point<2> idx_x = cur_point + onex;
+      const Point<2> idx_y = cur_point + oney;
       if (x == hi[0])
       {
         if (x_volume > 0)
         {
-          x_diff_val =
-              x_diff_acc.read(DomainPoint::from_point<2>(cur_point + onex));
+          x_diff_val = x_diff_acc.read(idx_x);
         }
         else
         {
@@ -630,15 +630,13 @@ void compute_task_angle(const Task *task,
       }
       else
       {
-        x_diff_val =
-            curr_acc.read(DomainPoint::from_point<2>(cur_point + onex));
+        x_diff_val = curr_acc.read(idx_x);
       }
       if (y == hi[1])
       {
         if (y_volume > 0)
         {
-          y_diff_val =
-              y_diff_acc.read(DomainPoint::from_point<2>(cur_point + oney));
+          y_diff_val = y_diff_acc.read(idx_y);
         }
         else
         {
@@ -647,8 +645,7 @@ void compute_task_angle(const Task *task,
       }
       else
       {
-        y_diff_val =
-            curr_acc.read(DomainPoint::from_point<2>(cur_point + oney));
+        y_diff_val = curr_acc.read(idx_y);
       }
       int computed_val = 0;
       if (x_diff_val > y_diff_val)
@@ -659,7 +656,7 @@ void compute_task_angle(const Task *task,
       {
         computed_val = y_diff_val + 1;
       }
-      curr_acc.write(DomainPoint::from_point<2>(cur_point), computed_val);
+      curr_acc.write(cur_point, computed_val);
     }
   }
 }
@@ -696,9 +693,8 @@ void compute_task_axis_aligned(const Task *task,
   RegionAccessor<AccessorType::Generic, int> curr_acc =
     regions[1].get_field_accessor(val_curr).typeify<int>();
 
-  Domain dom = runtime->get_index_space_domain(ctx,
+  Rect<2> rect = runtime->get_index_space_domain(ctx,
       task->regions[1].region.get_index_space());
-  Rect<2> rect = dom.get_rect<2>();
 
   Domain prev_dom = runtime->get_index_space_domain(ctx,
       task->regions[0].region.get_index_space());
@@ -712,12 +708,12 @@ void compute_task_axis_aligned(const Task *task,
   int primary_loop_index;
   if (angle == 180)
   {
-    offset_prev_val = make_point(1,0);
+    offset_prev_val = Point<2>(1,0);
     primary_loop_index = 0;
   }
   else
   {
-    offset_prev_val = make_point(0,1);
+    offset_prev_val = Point<2>(0,1);
     primary_loop_index = 1;
   }
 
@@ -728,18 +724,18 @@ void compute_task_axis_aligned(const Task *task,
     {
       if (angle == 180)
       {
-        cur_point = make_point(i, j);
+        cur_point = Point<2>(i, j);
       }
       else
       {
-        cur_point = make_point(j, i);
+        cur_point = Point<2>(j, i);
       }
+      const Point<2> access_idx = cur_point + offset_prev_val;
       if (i == hi[primary_loop_index])
       {
         if (prev_volume > 0)
         {
-          prev_val = prev_acc.read(
-              DomainPoint::from_point<2>(cur_point + offset_prev_val));
+          prev_val = prev_acc.read(access_idx);
         }
         else
         {
@@ -750,11 +746,10 @@ void compute_task_axis_aligned(const Task *task,
       }
       else
       {
-        prev_val = curr_acc.read(
-            DomainPoint::from_point<2>(cur_point + offset_prev_val));
+        prev_val = curr_acc.read(access_idx);
       }
       int computed_val = prev_val + 1;
-      curr_acc.write(DomainPoint::from_point<2>(cur_point), computed_val);
+      curr_acc.write(cur_point, computed_val);
     }
   }
 }
@@ -784,17 +779,17 @@ void check_task(const Task *task,
   RegionAccessor<AccessorType::Generic, int> acc_val = 
     regions[0].get_field_accessor(fid_val).typeify<int>();
 
-  Domain dom = runtime->get_index_space_domain(ctx,
+  Rect<2> rect = runtime->get_index_space_domain(ctx,
       task->regions[0].region.get_index_space());
-  Rect<2> rect = dom.get_rect<2>();
+                  
 
   // This is the checking task so we can just do the slow path
   bool all_passed = true;
-  for (GenericPointInRectIterator<2> pir(rect); pir; pir++)
+  for (PointInRectIterator<2> pir(rect); pir(); pir++)
   {
-    int x = side_length_x - 1 - accx.read(DomainPoint::from_point<2>(pir.p));
-    int y = side_length_y - 1 - accy.read(DomainPoint::from_point<2>(pir.p));
-    int val = acc_val.read(DomainPoint::from_point<2>(pir.p));
+    int x = side_length_x - 1 - accx.read(*pir);
+    int y = side_length_y - 1 - accy.read(*pir);
+    int val = acc_val.read(*pir);
     int expected = 1;
     expected = x + y + 1;
 

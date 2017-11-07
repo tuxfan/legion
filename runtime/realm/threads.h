@@ -18,8 +18,8 @@
 #ifndef REALM_THREADS_H
 #define REALM_THREADS_H
 
-#include "realm_config.h"
-#include "activemsg.h"
+#include "realm/realm_config.h"
+#include "realm/activemsg.h"
 
 #ifdef REALM_USE_USER_THREADS
 #ifdef __MACH__
@@ -168,6 +168,10 @@ namespace Realm {
     // if called from a kernel thread, that thread becomes the "host" for the user thread
     // if called by a user thread with 'switch_to'==0, control returns to host
     static void user_switch(Thread *switch_to);
+
+    // some systems do not appear to support user thread switching for
+    //  reasons unknown, so allow code to test to see if it's working first
+    static bool test_user_switch_support(size_t stack_size = 1 << 20);
 #endif
 
     template <typename CONDTYPE>
@@ -549,6 +553,6 @@ namespace Realm {
 
 } // namespace Realm
 
-#include "threads.inl"
+#include "realm/threads.inl"
 
 #endif // REALM_THREADS_H

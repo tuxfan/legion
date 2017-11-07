@@ -15,12 +15,12 @@
 
 // Realm modules
 
-#include "realm_config.h"
+#include "realm/realm_config.h"
 
 #define REALM_MODULE_REGISTRATION_STATIC
-#include "module.h"
+#include "realm/module.h"
 
-#include "logging.h"
+#include "realm/logging.h"
 
 #include <assert.h>
 #include <string.h>
@@ -38,6 +38,9 @@
 #include "realm/openmp/openmp_module.h"
 #endif
 #include "realm/procset/procset_module.h"
+#ifdef REALM_USE_PYTHON
+#include "realm/python/python_module.h"
+#endif
 #ifdef USE_CUDA
 #include "realm/cuda/cuda_module.h"
 #endif

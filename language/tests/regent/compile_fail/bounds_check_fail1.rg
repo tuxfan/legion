@@ -23,13 +23,13 @@ local c = regentlib.c
 
 local function raw_to_ptr(t)
   return terra(x : int)
-    return t { __ptr = c.legion_ptr_t { value = x } }
+    return t { __ptr = [ptr] { __ptr = c.legion_ptr_t { value = x } } }
   end
 end
 
 task main()
-  var r = region(ispace(ptr, 5), int)
-  var x = [raw_to_ptr(ptr(int, r))](0)
+  var r = region(ispace(ptr, 1), int)
+  var x = [raw_to_ptr(ptr(int, r))](1)
   @x = 5
 end
 regentlib.start(main)

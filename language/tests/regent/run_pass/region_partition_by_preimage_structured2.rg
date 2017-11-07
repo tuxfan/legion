@@ -17,17 +17,17 @@ import "regent"
 local c = regentlib.c
 
 task f()
-  var r = region(ispace(ptr, 5), int)
-  var x0 = new(ptr(int, r))
-  var x1 = new(ptr(int, r))
-  var x2 = new(ptr(int, r))
-  var x3 = new(ptr(int, r))
+  var r = region(ispace(ptr, 4), int)
+  var x0 = dynamic_cast(ptr(int, r), 0)
+  var x1 = dynamic_cast(ptr(int, r), 1)
+  var x2 = dynamic_cast(ptr(int, r), 2)
+  var x3 = dynamic_cast(ptr(int, r), 3)
   -- pointers in s will be initialized to point to x0
   var s = region(ispace(int2d, { 5, 1 }), ptr(int, r))
-  s[{ 0, 0 }] = x1
-  s[{ 1, 0 }] = x0
-  s[{ 2, 0 }] = x1
-  s[{ 3, 0 }] = x2
+  s[{ 0, 0 }] = x0
+  s[{ 1, 0 }] = x1
+  s[{ 2, 0 }] = x2
+  s[{ 3, 0 }] = x3
   s[{ 4, 0 }] = x3
 
   var rc = c.legion_point_coloring_create()
@@ -63,6 +63,6 @@ task f()
 end
 
 task main()
-  regentlib.assert(f() == 16, "test failed")
+  regentlib.assert(f() == 10, "test failed")
 end
 regentlib.start(main)

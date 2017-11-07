@@ -15,17 +15,18 @@
 
 // generic Realm interface to threading libraries (e.g. pthreads)
 
-#include "threads.h"
+#include "realm/threads.h"
 
-#include "logging.h"
-#include "faults.h"
-#include "operation.h"
+#include "realm/logging.h"
+#include "realm/faults.h"
+#include "realm/operation.h"
 
 #ifdef DEBUG_USWITCH
 #include <stdio.h>
 #endif
 
 #include <pthread.h>
+#include <errno.h>
 // for PTHREAD_STACK_MIN
 #include <limits.h>
 #ifdef __MACH__
@@ -69,6 +70,17 @@ inline void makecontext_wrap(ucontext_t *u, void (*fn)(), int args, ...) { makec
 #ifdef REALM_USE_HWLOC
 #include <hwloc/linux.h>
 #endif
+#endif
+
+#ifndef CHECK_LIBC
+#define CHECK_LIBC(cmd) do { \
+  errno = 0; \
+  int ret = (cmd); \
+  if(ret != 0) { \
+    std::cerr << "ERROR: " __FILE__ ":" << __LINE__ << ": " #cmd " = " << ret << " (" << strerror(errno) << ")" << std::endl;	\
+    assert(0); \
+  } \
+} while(0)
 #endif
 
 #ifndef CHECK_PTHREAD
@@ -551,11 +563,7 @@ namespace Realm {
     act.sa_sigaction = &signal_handler;
     act.sa_flags = SA_SIGINFO;
 
-#ifndef NDEBUG
-    int ret =
-#endif
-              sigaction(handler_signal, &act, 0);
-    assert(ret == 0);
+    CHECK_LIBC( sigaction(handler_signal, &act, 0) );
   }
 
   void Thread::signal(Signal sig, bool asynchronous)
@@ -821,6 +829,68 @@ namespace Realm {
   // class UserThread
 
 #ifdef REALM_USE_USER_THREADS
+  namespace {
+    int uswitch_test_check_flag = 1;
+    ucontext_t uswitch_test_ctx1, uswitch_test_ctx2;
+
+    void uswitch_test_entry(int arg)
+    {
+      log_thread.debug() << "uswitch test: adding: " << uswitch_test_check_flag << " " << arg;
+      __sync_fetch_and_add(&uswitch_test_check_flag, arg);
+      errno = 0;
+      int ret = swapcontext(&uswitch_test_ctx2, &uswitch_test_ctx1);
+      if(ret != 0) {
+	log_thread.fatal() << "uswitch test: swap out failed: " << ret << " " << errno;
+	assert(0);
+      }
+    }
+  }
+
+  // some systems do not appear to support user thread switching for
+  //  reasons unknown, so allow code to test to see if it's working first
+  /*static*/ bool Thread::test_user_switch_support(size_t stack_size /*= 1 << 20*/)
+  {
+    errno = 0;
+    int ret;
+    ret = getcontext(&uswitch_test_ctx2);
+    if(ret != 0) {
+      log_thread.info() << "uswitch test: getcontext failed: " << ret << " " << errno;
+      return false;
+    }
+    void *stack_base = malloc(stack_size);
+    if(!stack_base) {
+      log_thread.info() << "uswitch test: stack malloc failed";
+      return false;
+    }
+    uswitch_test_ctx2.uc_link = 0; // we don't expect it to ever fall through
+    uswitch_test_ctx2.uc_stack.ss_sp = stack_base;
+    uswitch_test_ctx2.uc_stack.ss_size = stack_size;
+    uswitch_test_ctx2.uc_stack.ss_flags = 0;
+    makecontext(&uswitch_test_ctx2,
+		reinterpret_cast<void(*)()>(uswitch_test_entry),
+		1, 66);
+
+    // now try to swap and back
+    errno = 0;
+    ret = swapcontext(&uswitch_test_ctx1, &uswitch_test_ctx2);
+    if(ret != 0) {
+      log_thread.info() << "uswitch test: swap in failed: " << ret << " " << errno;
+      free(stack_base);
+      return false;
+    }
+
+    int val = __sync_fetch_and_add(&uswitch_test_check_flag, 0);
+    if(val != 67) {
+      log_thread.info() << "uswitch test: val mismatch: " << val << " != 67";
+      free(stack_base);
+      return false;
+    }
+
+    log_thread.debug() << "uswitch test: check succeeded";
+    free(stack_base);
+    return true;
+  }
+
   class UserThread : public Thread {
   public:
     UserThread(void *_target, void (*_entry_wrapper)(void *),
@@ -932,7 +1002,7 @@ namespace Realm {
     stack_base = malloc(stack_size);
     assert(stack_base != 0);
 
-    getcontext(&ctx);
+    CHECK_LIBC( getcontext(&ctx) );
 
     ctx.uc_link = 0; // we don't expect it to ever fall through
     ctx.uc_stack.ss_sp = stack_base;
@@ -980,14 +1050,7 @@ namespace Realm {
       ThreadLocal::current_host_thread = ThreadLocal::current_thread;
       ThreadLocal::current_thread = switch_to;
 
-#ifndef NDEBUG
-      int ret =
-#endif
-	swapcontext(&host_ctx, &switch_to->ctx);
-
-      // if we return with a value of 0, that means we were (eventually) given control
-      //  back, as we hoped
-      assert(ret == 0);
+      CHECK_LIBC( swapcontext(&host_ctx, &switch_to->ctx) );
 
       assert(ThreadLocal::current_user_thread == 0);
       assert(ThreadLocal::host_context == &host_ctx);
@@ -1006,11 +1069,7 @@ namespace Realm {
 	ThreadLocal::current_thread = switch_to;
 
 	// a switch between two user contexts - nice and simple
-#ifndef NDEBUG
-	int ret =
-#endif
-	  swapcontext(&switch_from->ctx, &switch_to->ctx);
-	assert(ret == 0);
+	CHECK_LIBC( swapcontext(&switch_from->ctx, &switch_to->ctx) );
 
 	assert(switch_from->running == false);
 	switch_from->host_pthread = pthread_self();
@@ -1022,11 +1081,7 @@ namespace Realm {
 	ThreadLocal::current_thread = ThreadLocal::current_host_thread;
 	ThreadLocal::current_host_thread = 0;
 
-#ifndef NDEBUG
-	int ret =
-#endif
-	  swapcontext(&switch_from->ctx, ThreadLocal::host_context);
-	assert(ret == 0);
+	CHECK_LIBC( swapcontext(&switch_from->ctx, ThreadLocal::host_context) );
 
 	// if we get control back
 	assert(switch_from->running == false);

@@ -12,11 +12,6 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
--- runs-with:
--- [["-fvectorize", "0"]]
-
--- FIXME: Breaks vectorizer
-
 import "regent"
 
 local function make_check(r, t)
@@ -32,7 +27,6 @@ end
 local t = regentlib.newsymbol("t")
 task main()
   var r = region(ispace(ptr, 5), int)
-  new(ptr(int, r), 5)
   fill(r, 0)
 
   for r : ptr(int, r) in r do -- Region should be in scope for type of loop index.

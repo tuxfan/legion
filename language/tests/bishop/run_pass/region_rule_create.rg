@@ -48,11 +48,11 @@ do
   var pr = __physical(r)[0]
   var fd = __fields(r)[0]
   var accessor =
-    c.legion_physical_region_get_field_accessor_array(pr, fd)
+    c.legion_physical_region_get_field_accessor_array_1d(pr, fd)
   var p =
-    c.legion_accessor_array_ref(accessor,
+    c.legion_accessor_array_1d_ref(accessor,
                                 c.legion_ptr_t { value = 0 })
-  c.legion_accessor_array_destroy(accessor)
+  c.legion_accessor_array_1d_destroy(accessor)
   return p
 end
 
@@ -72,8 +72,6 @@ end
 task toplevel()
   var r1 = region(ispace(ptr, 10), int)
   var r2 = region(ispace(ptr, 10), int)
-  new(ptr(int, r1), 10)
-  new(ptr(int, r2), 10)
   for e in r2 do @e = 10 end -- this will create an instance
   var ref = ptrs { ptr1 = 0, ptr2 = get_ptr(r2) }
   ref = foo(r1, r2, ref)

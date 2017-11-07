@@ -18,7 +18,9 @@
 #ifndef REALM_LOGGING_H
 #define REALM_LOGGING_H
 
-#include <cstdarg>
+#include "realm/realm_config.h"
+
+#include <stdarg.h>
 #include <vector>
 #include <string>
 #include <sstream>
@@ -159,6 +161,6 @@ namespace Realm {
   
 }; // namespace Realm
 
-#include "logging.inl"
+#include "realm/logging.inl"
 
 #endif

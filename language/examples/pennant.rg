@@ -658,22 +658,6 @@ do
   end
 end
 
-local function accessor_generic_get_base_pointer(field_type)
-  return terra(accessor : c.legion_accessor_generic_t)
-
-    var base_pointer : &opaque = nil
-    var stride : c.size_t = terralib.sizeof(field_type)
-    var ok = c.legion_accessor_generic_get_soa_parameters(
-      accessor, &base_pointer, &stride)
-
-    regentlib.assert(ok, "failed to get base pointer")
-    regentlib.assert(stride == terralib.sizeof(field_type),
-                     "stride does not match expected value")
-
-    return [&field_type](base_pointer)
-  end
-end
-
 -- Reduce forces into points.
 task sum_point_force(rz : region(zone), rpp : region(point), rpg : region(point),
                      rs : region(side(rz, rpp, rpg, rs)),
@@ -1385,10 +1369,6 @@ task test()
   var rp_all = region(ispace(ptr, conf.np), point)
   var rs_all = region(ispace(ptr, conf.ns), side(wild, wild, wild, wild))
 
-  new(ptr(zone, rz_all), conf.nz)
-  new(ptr(point, rp_all), conf.np)
-  new(ptr(side(wild, wild, wild, wild), rs_all), conf.ns)
-
   var colorings : mesh_colorings
 
   regentlib.assert(conf.seq_init or conf.par_init,
@@ -1498,5 +1478,4 @@ end
 task toplevel()
   test()
 end
-cpennant.register_mappers()
-regentlib.start(toplevel)
+regentlib.start(toplevel, cpennant.register_mappers)

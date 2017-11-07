@@ -50,9 +50,6 @@ LEGION_LIBS     := -L. -llegion -lrealm
 
 # Handle some of the common machines we frequent
 
-# machine architecture (generally "native" unless cross-compiling)
-MARCH ?= native
-
 ifeq ($(shell uname -n),sapling)
 CONDUIT=ibv
 GPU_ARCH=fermi
@@ -87,57 +84,44 @@ CONDUIT=ibv
 GPU_ARCH=fermi
 endif
 ifeq ($(findstring titan,$(shell uname -n)),titan)
-CXX=CC
-F90=ftn
 # without this, lapack stuff will link, but generate garbage output - thanks Cray!
 LAPACK_LIBS=-L/opt/acml/5.3.1/gfortran64_fma4/lib -Wl,-rpath=/opt/acml/5.3.1/gfortran64_fma4/lib -lacml
-MARCH=bdver1
-CC_FLAGS += -DGASNETI_BUG1389_WORKAROUND=1
+MARCH ?= bdver1
 CUDA=${CUDATOOLKIT_HOME}
 CONDUIT=gemini
 GPU_ARCH=k20
-LEGION_LD_FLAGS += ${CRAY_UGNI_POST_LINK_OPTS}
-LEGION_LD_FLAGS += ${CRAY_PMI_POST_LINK_OPTS}
 endif
 ifeq ($(findstring daint,$(shell uname -n)),daint)
-CXX=CC
-F90=ftn
-# Cray's magic wrappers automatically provide LAPACK goodness?
-LAPACK_LIBS=
-MARCH=corei7-avx
-CC_FLAGS += -DGASNETI_BUG1389_WORKAROUND=1
 CUDA=${CUDATOOLKIT_HOME}
 CONDUIT=aries
 GPU_ARCH=k20
-LEGION_LD_FLAGS += ${CRAY_UGNI_POST_LINK_OPTS}
-LEGION_LD_FLAGS += ${CRAY_PMI_POST_LINK_OPTS}
 endif
 ifeq ($(findstring excalibur,$(shell uname -n)),excalibur)
-CXX=CC
-F90=ftn
-# Cray's magic wrappers automatically provide LAPACK goodness?
-LAPACK_LIBS=
-CC_FLAGS += -DGASNETI_BUG1389_WORKAROUND=1
 CONDUIT=aries
-LEGION_LD_FLAGS += ${CRAY_UGNI_POST_LINK_OPTS}
-LEGION_LD_FLAGS += ${CRAY_PMI_POST_LINK_OPTS}
 endif
 ifeq ($(findstring cori,$(shell uname -n)),cori)
+CONDUIT=aries
+endif
+
+# Customization specific to Cray programming environment
+ifneq (${CRAYPE_VERSION},)
 CXX=CC
 F90=ftn
 # Cray's magic wrappers automatically provide LAPACK goodness?
-LAPACK_LIBS=
-CC_FLAGS += -DGASNETI_BUG1389_WORKAROUND=1
-CONDUIT=aries
+LAPACK_LIBS ?=
 LEGION_LD_FLAGS += ${CRAY_UGNI_POST_LINK_OPTS}
+LEGION_LD_FLAGS += ${CRAY_UDREG_POST_LINK_OPTS}
 LEGION_LD_FLAGS += ${CRAY_PMI_POST_LINK_OPTS}
 endif
+
+# machine architecture (generally "native" unless cross-compiling)
+MARCH ?= native
 
 ifneq (${MARCH},)
   CC_FLAGS += -march=${MARCH}
 endif
 
-INC_FLAGS	+= -I$(LG_RT_DIR) -I$(LG_RT_DIR)/realm -I$(LG_RT_DIR)/legion -I$(LG_RT_DIR)/mappers
+INC_FLAGS	+= -I$(LG_RT_DIR) -I$(LG_RT_DIR)/mappers
 ifneq ($(shell uname -s),Darwin)
 LEGION_LD_FLAGS	+= -lrt -lpthread
 else
@@ -168,6 +152,7 @@ endif
 
 USE_LIBDL ?= 1
 ifeq ($(strip $(USE_LIBDL)),1)
+CC_FLAGS += -DUSE_LIBDL
 ifneq ($(shell uname -s),Darwin)
 #CC_FLAGS += -rdynamic
 LEGION_LD_FLAGS += -ldl -rdynamic
@@ -178,20 +163,25 @@ endif
 
 USE_LLVM ?= 0
 ifeq ($(strip $(USE_LLVM)),1)
-  # prefer 3.5 (actually, require it right now)
-  LLVM_CONFIG ?= $(shell which llvm-config-3.5 llvm-config | head -1)
+  # prefer known-working versions, if they can be named explicitly
+  LLVM_CONFIG ?= $(shell which llvm-config-3.9 llvm-config-3.8 llvm-config-3.6 llvm-config-3.5 llvm-config-4.0 llvm-config-5.0 llvm-config | head -1)
   ifeq ($(LLVM_CONFIG),)
     $(error cannot find llvm-config-* - set with LLVM_CONFIG if not in path)
   endif
-  CC_FLAGS += -DREALM_USE_LLVM
+  LLVM_VERSION_NUMBER := $(shell $(LLVM_CONFIG) --version | cut -c1,3)
+  CC_FLAGS += -DREALM_USE_LLVM -DREALM_LLVM_VERSION=$(LLVM_VERSION_NUMBER)
   # NOTE: do not use these for all source files - just the ones that include llvm include files
   LLVM_CXXFLAGS ?= -std=c++11 -I$(shell $(LLVM_CONFIG) --includedir)
-  LEGION_LD_FLAGS += $(shell $(LLVM_CONFIG) --ldflags --libs irreader jit mcjit x86)
+  ifeq ($(LLVM_VERSION_NUMBER),35)
+    LLVM_LIBS += $(shell $(LLVM_CONFIG) --ldflags --libs irreader jit mcjit x86)
+  else
+    LLVM_LIBS += $(shell $(LLVM_CONFIG) --ldflags --libs irreader mcjit x86)
+  endif
   # llvm-config --system-libs gives you all the libraries you might need for anything,
   #  which includes things we don't need, and might not be installed
   # by default, filter out libedit
   LLVM_SYSTEM_LIBS ?= $(filter-out -ledit,$(shell $(LLVM_CONFIG) --system-libs))
-  LEGION_LD_FLAGS += $(LLVM_SYSTEM_LIBS)
+  LEGION_LD_FLAGS += $(LLVM_LIBS) $(LLVM_SYSTEM_LIBS)
 endif
 
 USE_OPENMP ?= 0
@@ -205,6 +195,68 @@ ifeq ($(strip $(USE_OPENMP)),1)
   ifeq ($(strip $(REALM_OPENMP_KMP_SUPPORT)),1)
     CC_FLAGS += -DREALM_OPENMP_KMP_SUPPORT
   endif
+endif
+
+USE_PYTHON ?= 0
+ifeq ($(strip $(USE_PYTHON)),1)
+  ifneq ($(strip $(USE_LIBDL)),1)
+    $(error USE_PYTHON requires USE_LIBDL)
+  endif
+
+  # Attempt to auto-detect location of Python shared library based on
+  # the location of Python executable on PATH. We do this because the
+  # shared library may not be on LD_LIBRARY_PATH even when the
+  # executable is on PATH.
+
+  # Note: Set PYTHON_ROOT to an empty string to skip this logic and
+  # defer to the normal search of LD_LIBRARY_PATH instead. Or set
+  # PYTHON_LIB to specify the path to the shared library directly.
+  ifndef PYTHON_LIB
+    ifndef PYTHON_ROOT
+      PYTHON_EXE := $(shell which python)
+      ifeq ($(PYTHON_EXE),)
+        $(error cannot find python - set PYTHON_ROOT if not in PATH)
+      endif
+      PYTHON_ROOT := $(dir $(PYTHON_EXE))
+    endif
+
+    # Try searching for common locations of the Python shared library.
+    ifneq ($(strip $(PYTHON_ROOT)),)
+      PYTHON_EXT := so
+      ifeq ($(strip $(DARWIN)),1)
+        PYTHON_EXT := dylib
+      endif
+      PYTHON_LIB := $(PYTHON_ROOT)/libpython2.7.$(PYTHON_EXT)
+      ifeq ($(wildcard $(PYTHON_LIB)),)
+        PYTHON_LIB := $(abspath $(PYTHON_ROOT)/../lib/libpython2.7.$(PYTHON_EXT))
+        ifeq ($(wildcard $(PYTHON_LIB)),)
+          $(warning cannot find libpython2.7.$(PYTHON_EXT) - falling back to using LD_LIBRARY_PATH)
+          PYTHON_LIB :=
+        endif
+      endif
+    endif
+  endif
+
+  ifneq ($(strip $(PYTHON_LIB)),)
+    ifndef FORCE_PYTHON
+      ifeq ($(wildcard $(PYTHON_LIB)),)
+        $(error cannot find libpython2.7.$(PYTHON_EXT) - PYTHON_LIB set but file does not exist)
+      else
+        CC_FLAGS += -DREALM_PYTHON_LIB="\"$(PYTHON_LIB)\""
+      endif
+    endif
+  endif
+
+  CC_FLAGS += -DREALM_USE_PYTHON
+endif
+
+USE_DLMOPEN ?= 0
+ifeq ($(strip $(USE_DLMOPEN)),1)
+  ifneq ($(strip $(USE_LIBDL)),1)
+    $(error USE_DLMOPEN requires USE_LIBDL)
+  endif
+
+  CC_FLAGS += -DREALM_USE_DLMOPEN
 endif
 
 # Flags for Realm
@@ -223,7 +275,7 @@ endif
 ifeq ($(strip $(USE_CUDA)),1)
 CC_FLAGS        += -DUSE_CUDA
 NVCC_FLAGS      += -DUSE_CUDA
-INC_FLAGS	+= -I$(CUDA)/include 
+INC_FLAGS	+= -I$(CUDA)/include -I$(LG_RT_DIR)/realm/transfer
 ifeq ($(strip $(DEBUG)),1)
 NVCC_FLAGS	+= -DDEBUG_REALM -DDEBUG_LEGION -g -O0
 #NVCC_FLAGS	+= -G
@@ -248,9 +300,17 @@ ifeq ($(strip $(GPU_ARCH)),k20)
 NVCC_FLAGS	+= -arch=compute_35 -code=sm_35
 NVCC_FLAGS	+= -DK20_ARCH
 endif
+ifeq ($(strip $(GPU_ARCH)),maxwell)
+NVCC_FLAGS	+= -arch=compute_52 -code=sm_52
+NVCC_FLAGS	+= -DMAXWELL_ARCH
+endif
 ifeq ($(strip $(GPU_ARCH)),pascal)
 NVCC_FLAGS	+= -arch=compute_60 -code=sm_60
 NVCC_FLAGS	+= -DPASCAL_ARCH
+endif
+ifeq ($(strip $(GPU_ARCH)),volta)
+NVCC_FLAGS	+= -arch=compute_70 -code=sm_70
+NVCC_FLAGS	+= -DVOLTA_ARCH
 endif
 NVCC_FLAGS	+= -Xptxas "-v" #-abi=no"
 endif
@@ -288,14 +348,14 @@ ifeq ($(strip $(USE_GASNET)),1)
   ifeq ($(strip $(CONDUIT)),gemini)
     INC_FLAGS	+= -I$(GASNET)/include/gemini-conduit
     CC_FLAGS	+= -DGASNET_CONDUIT_GEMINI
-    LEGION_LD_FLAGS	+= -lgasnet-gemini-par -lugni -lpmi -lhugetlbfs
+    LEGION_LD_FLAGS	+= -lgasnet-gemini-par -lugni -ludreg -lpmi -lhugetlbfs
     # GASNet needs MPI for interop support
     USE_MPI	= 1
   endif
   ifeq ($(strip $(CONDUIT)),aries)
     INC_FLAGS   += -I$(GASNET)/include/aries-conduit
     CC_FLAGS    += -DGASNET_CONDUIT_ARIES
-    LEGION_LD_FLAGS    += -lgasnet-aries-par -lugni -lpmi -lhugetlbfs
+    LEGION_LD_FLAGS    += -lgasnet-aries-par -lugni -ludreg -lpmi -lhugetlbfs
     # GASNet needs MPI for interop support
     USE_MPI	= 1
   endif
@@ -324,8 +384,14 @@ endif
 USE_HDF ?= 0
 HDF_LIBNAME ?= hdf5
 ifeq ($(strip $(USE_HDF)), 1)
-  CC_FLAGS      += -DUSE_HDF -I/usr/include/hdf5/serial
+  CC_FLAGS      += -DUSE_HDF
   LEGION_LD_FLAGS      += -l$(HDF_LIBNAME)
+  ifdef HDF_ROOT
+       CC_FLAGS    += -I$(HDF_ROOT)/include
+       LD_FLAGS    += -L$(HDF_ROOT)/lib
+  else
+    CC_FLAGS      += -I/usr/include/hdf5/serial
+  endif
 endif
 
 SKIP_MACHINES= titan% daint% excalibur% cori%
@@ -377,6 +443,7 @@ ASM_SRC		?=
 
 # Set the source files
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/runtime_impl.cc \
+	           $(LG_RT_DIR)/realm/transfer/transfer.cc \
 	           $(LG_RT_DIR)/realm/transfer/channel.cc \
 	           $(LG_RT_DIR)/realm/transfer/channel_disk.cc \
 	           $(LG_RT_DIR)/realm/transfer/lowlevel_dma.cc \
@@ -386,15 +453,20 @@ LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/runtime_impl.cc \
 		   $(LG_RT_DIR)/realm/operation.cc \
 	           $(LG_RT_DIR)/realm/tasks.cc \
 	           $(LG_RT_DIR)/realm/metadata.cc \
+	           $(LG_RT_DIR)/realm/deppart/partitions.cc \
+	           $(LG_RT_DIR)/realm/deppart/sparsity_impl.cc \
+	           $(LG_RT_DIR)/realm/deppart/image.cc \
+	           $(LG_RT_DIR)/realm/deppart/preimage.cc \
+	           $(LG_RT_DIR)/realm/deppart/byfield.cc \
+	           $(LG_RT_DIR)/realm/deppart/setops.cc \
 		   $(LG_RT_DIR)/realm/event_impl.cc \
 		   $(LG_RT_DIR)/realm/rsrv_impl.cc \
 		   $(LG_RT_DIR)/realm/proc_impl.cc \
 		   $(LG_RT_DIR)/realm/mem_impl.cc \
 		   $(LG_RT_DIR)/realm/inst_impl.cc \
-		   $(LG_RT_DIR)/realm/idx_impl.cc \
+		   $(LG_RT_DIR)/realm/inst_layout.cc \
 		   $(LG_RT_DIR)/realm/machine_impl.cc \
 		   $(LG_RT_DIR)/realm/sampling_impl.cc \
-                   $(LG_RT_DIR)/lowlevel.cc \
                    $(LG_RT_DIR)/realm/transfer/lowlevel_disk.cc
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/numa/numa_module.cc \
 		   $(LG_RT_DIR)/realm/numa/numasysif.cc
@@ -404,6 +476,10 @@ LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/openmp/openmp_module.cc \
 		   $(LG_RT_DIR)/realm/openmp/openmp_api.cc
 endif
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/procset/procset_module.cc
+ifeq ($(strip $(USE_PYTHON)),1)
+LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/python/python_module.cc \
+		   $(LG_RT_DIR)/realm/python/python_source.cc
+endif
 ifeq ($(strip $(USE_CUDA)),1)
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/cuda/cuda_module.cc \
 		   $(LG_RT_DIR)/realm/cuda/cudart_hijack.cc
@@ -414,11 +490,10 @@ LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/llvmjit/llvmjit_module.cc \
 endif
 ifeq ($(strip $(USE_HDF)),1)
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/hdf5/hdf5_module.cc \
-		   $(LG_RT_DIR)/realm/hdf5/hdf5_internal.cc
+		   $(LG_RT_DIR)/realm/hdf5/hdf5_internal.cc \
+		   $(LG_RT_DIR)/realm/hdf5/hdf5_access.cc
 endif
-ifeq ($(strip $(USE_GASNET)),1)
-LOW_RUNTIME_SRC += $(LG_RT_DIR)/activemsg.cc
-endif
+LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/activemsg.cc
 GPU_RUNTIME_SRC +=
 
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/logging.cc \
@@ -434,10 +509,6 @@ MAPPER_SRC	+= $(LG_RT_DIR)/mappers/default_mapper.cc \
 		   $(LG_RT_DIR)/mappers/replay_mapper.cc \
 		   $(LG_RT_DIR)/mappers/debug_mapper.cc \
 		   $(LG_RT_DIR)/mappers/wrapper_mapper.cc
-
-ifeq ($(strip $(ALT_MAPPERS)),1)
-MAPPER_SRC	+= $(LG_RT_DIR)/mappers/alt_mappers.cc
-endif
 
 HIGH_RUNTIME_SRC += $(LG_RT_DIR)/legion/legion.cc \
 		    $(LG_RT_DIR)/legion/legion_c.cc \

@@ -15,11 +15,11 @@
 
 
 #include "legion.h"
-#include "runtime.h"
-#include "legion_ops.h"
-#include "legion_tasks.h"
-#include "region_tree.h"
-#include "garbage_collection.h"
+#include "legion/runtime.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_tasks.h"
+#include "legion/region_tree.h"
+#include "legion/garbage_collection.h"
 
 namespace Legion {
   namespace Internal {
@@ -138,8 +138,14 @@ namespace Legion {
       assert(valid_references == 0);
       assert(resource_references == 0);
 #endif
+      if (is_owner() && registered_with_runtime)
+        unregister_with_runtime();
       gc_lock.destroy_reservation();
       gc_lock = Reservation::NO_RESERVATION;
+#ifdef LEGION_GC
+      log_garbage.info("GC Deletion %lld %d", 
+          LEGION_DISTRIBUTED_ID_FILTER(did), local_space);
+#endif
     }
 
     //--------------------------------------------------------------------------
@@ -170,7 +176,8 @@ namespace Legion {
         if (first)
         {
 #ifdef DEBUG_LEGION
-          assert(!has_gc_references);
+          // Should have at least one reference here
+          assert(__sync_fetch_and_add(&gc_references, 0) > 0);
 #endif
           has_gc_references = true;
           first = false;
@@ -214,10 +221,10 @@ namespace Legion {
         AutoLock gc(gc_lock);
         if (first)
         {
-#ifdef DEBUG_LEGION
-          assert(has_gc_references);
-#endif
-          has_gc_references = false;
+          // Check to see if we lost the race for changing state
+          if (has_gc_references && 
+              (__sync_fetch_and_add(&gc_references, 0) == 0))
+            has_gc_references = false;
           first = false;
         }
         done = update_state(need_activate, need_validate,
@@ -258,7 +265,8 @@ namespace Legion {
         if (first)
         {
 #ifdef DEBUG_LEGION
-          assert(!has_valid_references);
+          // Should have at least one reference here
+          assert(__sync_fetch_and_add(&valid_references, 0) > 0);
 #endif
           has_valid_references = true;
           first = false;
@@ -306,10 +314,10 @@ namespace Legion {
         AutoLock gc(gc_lock);
         if (first)
         {
-#ifdef DEBUG_LEGION
-          assert(has_valid_references);
-#endif
-          has_valid_references = false;
+          // Check to see if we lost the race for changing state
+          if (has_valid_references &&
+              (__sync_fetch_and_add(&valid_references, 0) == 0))
+            has_valid_references = false;
           first = false;
         }
         done = update_state(need_activate, need_validate,
@@ -376,35 +384,46 @@ namespace Legion {
     bool DistributedCollectable::try_active_deletion(void)
     //--------------------------------------------------------------------------
     {
-      AutoLock gc(gc_lock);
-      // We can only do this from five states
+      // We can only do this from four states
+      // The fifth state is a little weird in that we have to continue
+      // polling until it is safely out of the valid state
       // Note this also prevents duplicate deletions
-      if (current_state == INACTIVE_STATE)
+      bool result = false;
+      while (true)
       {
-        current_state = DELETED_STATE;
-        return true;
+        AutoLock gc(gc_lock);
+        if (current_state == INACTIVE_STATE)
+        {
+          current_state = DELETED_STATE;
+          return true;
+        }
+        if (current_state == ACTIVE_INVALID_STATE)
+        {
+          current_state = ACTIVE_DELETED_STATE;
+          return true;
+        }
+        if (current_state == PENDING_INACTIVE_STATE)
+        {
+          current_state = PENDING_INACTIVE_DELETED_STATE;
+          return true;
+        }
+        if (current_state == PENDING_ACTIVE_STATE)
+        {
+          current_state = PENDING_ACTIVE_DELETED_STATE;
+          return true;
+        }
+        // If we're in PENDING_INVALID_STATE go to the deleted
+        // version and then keep going around the loop again until
+        // we end up in the ACTIVE_DELETED_STATE
+        if (current_state == PENDING_INVALID_STATE)
+        { 
+          current_state = PENDING_INVALID_DELETED_STATE;
+          result = true;
+        }
+        else if (current_state != PENDING_INVALID_DELETED_STATE)
+          break;
       }
-      if (current_state == ACTIVE_INVALID_STATE)
-      {
-        current_state = ACTIVE_DELETED_STATE;
-        return true;
-      }
-      if (current_state == PENDING_INACTIVE_STATE)
-      {
-        current_state = PENDING_INACTIVE_DELETED_STATE;
-        return true;
-      }
-      if (current_state == PENDING_ACTIVE_STATE)
-      {
-        current_state = PENDING_ACTIVE_DELETED_STATE;
-        return true;
-      }
-      if (current_state == PENDING_INVALID_STATE)
-      {
-        current_state = PENDING_INVALID_DELETED_STATE;
-        return true;
-      }
-      return false; 
+      return result;
     }
 
     //--------------------------------------------------------------------------
@@ -1155,6 +1174,22 @@ namespace Legion {
 #endif // DEBUG_LEGION_GC
 
     //--------------------------------------------------------------------------
+    void DistributedCollectable::notify_remote_inactive(ReferenceMutator *m)
+    //--------------------------------------------------------------------------
+    {
+      // Should only called for classes that override this method
+      assert(false);
+    }
+
+    //--------------------------------------------------------------------------
+    void DistributedCollectable::notify_remote_invalid(ReferenceMutator *m)
+    //--------------------------------------------------------------------------
+    {
+      // Should only called for classes that override this method
+      assert(false);
+    }
+
+    //--------------------------------------------------------------------------
     bool DistributedCollectable::has_remote_instance(
                                                AddressSpaceID remote_inst) const
     //--------------------------------------------------------------------------
@@ -1187,8 +1222,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    RtEvent DistributedCollectable::unregister_with_runtime(
-                                                    VirtualChannelKind vc) const
+    void DistributedCollectable::unregister_with_runtime(void) const
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
@@ -1196,14 +1230,11 @@ namespace Legion {
       assert(registered_with_runtime);
 #endif
       runtime->unregister_distributed_collectable(did);
-      registered_with_runtime = false;
-      // If the virtual channel is MAX_NUM_VIRTUAL_CHANNELS we'll use
-      // that as a signal to avoid sending any messages
-      if (!remote_instances.empty() && (vc != MAX_NUM_VIRTUAL_CHANNELS))
-        return runtime->recycle_distributed_id(did, 
-                                               send_unregister_messages(vc));
+      if (!remote_instances.empty())
+        runtime->recycle_distributed_id(did, 
+                     send_unregister_messages(REFERENCE_VIRTUAL_CHANNEL));
       else
-        return runtime->recycle_distributed_id(did, RtEvent::NO_RT_EVENT);
+        runtime->recycle_distributed_id(did, RtEvent::NO_RT_EVENT);
     }
 
     //--------------------------------------------------------------------------
@@ -1243,7 +1274,6 @@ namespace Legion {
       assert(registered_with_runtime);
 #endif
       runtime->unregister_distributed_collectable(did);
-      registered_with_runtime = false;
     }
 
     //--------------------------------------------------------------------------
@@ -1303,6 +1333,7 @@ namespace Legion {
         RezCheck z(rez);
         rez.serialize(did);
         rez.serialize(signed_count);
+        rez.serialize<bool>(target == owner_space);
         if (add)
           rez.serialize(done_event);
       }
@@ -1331,6 +1362,7 @@ namespace Legion {
         RezCheck z(rez);
         rez.serialize(did);
         rez.serialize(signed_count);
+        rez.serialize<bool>(target == owner_space);
         if (add)
           rez.serialize(done_event);
       }
@@ -1356,8 +1388,57 @@ namespace Legion {
         RezCheck z(rez);
         rez.serialize(did);
         rez.serialize(signed_count);
+        rez.serialize<bool>(target == owner_space);
       }
       runtime->send_did_remote_resource_update(target, rez);
+    }
+
+    //--------------------------------------------------------------------------
+    void DistributedCollectable::send_remote_invalidate(AddressSpaceID target,
+                                                      ReferenceMutator *mutator)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      assert(is_owner());
+#endif
+      Serializer rez;
+      if (mutator == NULL)
+      {
+        rez.serialize(did);
+        rez.serialize(RtUserEvent::NO_RT_USER_EVENT);
+      }
+      else
+      {
+        RtUserEvent done = Runtime::create_rt_user_event();
+        rez.serialize(did);
+        rez.serialize(done);
+        mutator->record_reference_mutation_effect(done);
+      }
+      runtime->send_did_remote_invalidate(target, rez);
+    }
+
+    //--------------------------------------------------------------------------
+    void DistributedCollectable::send_remote_deactivate(AddressSpaceID target,
+                                                      ReferenceMutator *mutator)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      assert(is_owner());
+#endif
+      Serializer rez;
+      if (mutator == NULL)
+      {
+        rez.serialize(did);
+        rez.serialize(RtUserEvent::NO_RT_USER_EVENT);
+      }
+      else
+      {
+        RtUserEvent done = Runtime::create_rt_user_event();
+        rez.serialize(did);
+        rez.serialize(done);
+        mutator->record_reference_mutation_effect(done);
+      }
+      runtime->send_did_remote_deactivate(target, rez);
     }
 
 #ifdef USE_REMOTE_REFERENCES
@@ -1452,8 +1533,18 @@ namespace Legion {
       derez.deserialize(did);
       int count;
       derez.deserialize(count);
-      DistributedCollectable *target = 
-        runtime->find_distributed_collectable(did);
+      bool is_owner;
+      derez.deserialize(is_owner);
+      DistributedCollectable *target = NULL;
+      if (!is_owner)
+      {
+        RtEvent ready;
+        target = runtime->find_distributed_collectable(did, ready);
+        if (ready.exists() && !ready.has_triggered())
+          ready.lg_wait();
+      }
+      else
+        target = runtime->find_distributed_collectable(did);
       if (count > 0)
       {
         std::set<RtEvent> mutator_events;
@@ -1482,8 +1573,18 @@ namespace Legion {
       derez.deserialize(did);
       int count;
       derez.deserialize(count);
-      DistributedCollectable *target = 
-        runtime->find_distributed_collectable(did);
+      bool is_owner;
+      derez.deserialize(is_owner);
+      DistributedCollectable *target = NULL;
+      if (!is_owner)
+      {
+        RtEvent ready;
+        target = runtime->find_distributed_collectable(did, ready);
+        if (ready.exists() && !ready.has_triggered())
+          ready.lg_wait();
+      }
+      else
+        target = runtime->find_distributed_collectable(did);
       if (count > 0)
       {
         std::set<RtEvent> mutator_events;
@@ -1512,13 +1613,83 @@ namespace Legion {
       derez.deserialize(did);
       int count;
       derez.deserialize(count);
-      DistributedCollectable *target = 
-        runtime->find_distributed_collectable(did);
+      bool is_owner;
+      derez.deserialize(is_owner);
+      DistributedCollectable *target = NULL;
+      if (!is_owner)
+      {
+        RtEvent ready;
+        target = runtime->find_distributed_collectable(did, ready);
+        if (ready.exists() && !ready.has_triggered())
+          ready.lg_wait();
+      }
+      else
+        target = runtime->find_distributed_collectable(did);
       if (count > 0)
         target->add_base_resource_ref(REMOTE_DID_REF, unsigned(count));
       else if (target->remove_base_resource_ref(REMOTE_DID_REF, 
                                                 unsigned(-count)))
         delete target;
+    }
+
+    //--------------------------------------------------------------------------
+    /*static*/ void DistributedCollectable::handle_did_remote_invalidate(
+                                          Runtime *runtime, Deserializer &derez)
+    //--------------------------------------------------------------------------
+    {
+      DerezCheck z(derez);
+      DistributedID did;
+      derez.deserialize(did);
+      RtUserEvent done;
+      derez.deserialize(done);
+      // We know we are not the owner so we might have to wait 
+      RtEvent ready;
+      DistributedCollectable *target = 
+        runtime->find_distributed_collectable(did, ready);
+      if (ready.exists() && !ready.has_triggered())
+        ready.lg_wait();
+      if (done.exists())
+      {
+        std::set<RtEvent> preconditions;
+        WrapperReferenceMutator mutator(preconditions);
+        target->notify_remote_invalid(&mutator);
+        if (!preconditions.empty())
+          Runtime::trigger_event(done, Runtime::merge_events(preconditions));
+        else
+          Runtime::trigger_event(done);
+      }
+      else
+        target->notify_remote_invalid(NULL);
+    }
+
+    //--------------------------------------------------------------------------
+    /*static*/ void DistributedCollectable::handle_did_remote_deactivate(
+                                          Runtime *runtime, Deserializer &derez)
+    //--------------------------------------------------------------------------
+    {
+      DerezCheck z(derez);
+      DistributedID did;
+      derez.deserialize(did);
+      RtUserEvent done;
+      derez.deserialize(done);
+      // We know we are not the owner so we might have to wait 
+      RtEvent ready;
+      DistributedCollectable *target = 
+        runtime->find_distributed_collectable(did, ready);
+      if (ready.exists() && !ready.has_triggered())
+        ready.lg_wait();
+      if (done.exists())
+      {
+        std::set<RtEvent> preconditions;
+        WrapperReferenceMutator mutator(preconditions);
+        target->notify_remote_inactive(&mutator);
+        if (!preconditions.empty())
+          Runtime::trigger_event(done, Runtime::merge_events(preconditions));
+        else
+          Runtime::trigger_event(done);
+      }
+      else
+        target->notify_remote_inactive(NULL);
     }
 
     //--------------------------------------------------------------------------

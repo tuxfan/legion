@@ -19,7 +19,7 @@
 #include "realm/profiling.h"
 #include "realm/event_impl.h"
 
-#include "activemsg.h"
+#include "realm/activemsg.h"
 
 #include <set>
 #include <iostream>
@@ -132,7 +132,7 @@ namespace Realm {
 
     void request_cancellation(Event finish_event, const void *reason_data, size_t reason_size);
     
-    static int register_handlers(gasnet_handlerentry_t *handlers);
+    static void register_handlers(void);
 
   protected:
     void event_triggered(Event e);
@@ -158,6 +158,7 @@ namespace Realm {
     };
     typedef std::map<Event, TableEntry> Table;
 
+#ifdef REALM_USE_OPERATION_TABLE
     // event table is protected by a mutex
     // try to avoid a serial bottleneck by splitting events over 4 different tables
     static const int NUM_TABLES = 4;
@@ -165,10 +166,11 @@ namespace Realm {
     GASNetHSL mutexes[NUM_TABLES];
     Table tables[NUM_TABLES];
     TableCleaner cleaner;
+#endif
   };
 
 };
 
-#include "operation.inl"
+#include "realm/operation.inl"
 
 #endif // REALM_OPERATION_H

@@ -514,7 +514,7 @@ do
     if Lambda.is_lambda(self:expr()) then
       expr_str = tostring(self:expr())
     else
-      expr_str = render(self:expr())
+      expr_str = ast_util.render(self:expr())
     end
     return "\\" .. binder_str .. "." .. expr_str
   end
@@ -690,7 +690,7 @@ do
     if #fields > 1 then field_str = "{" .. field_str .. "}" end
     local index_str = tostring(self:index())
     if not Lambda.is_lambda(self:index()) then
-      index_str = render(self:index())
+      index_str = ast_util.render(self:index())
     end
     return tostring(self:region()) .. "[" ..  index_str .. "]." ..
            field_str .. " (range: " ..  tostring(self:range()) .. ")"
@@ -768,6 +768,7 @@ function parallel_task_context.new_task_scope(params)
   cx.field_access_stats = {}
   cx.stencils = terralib.newlist()
   cx.ghost_symbols = {}
+  cx.use_primary = {}
   return setmetatable(cx, parallel_task_context)
 end
 
@@ -788,10 +789,10 @@ function parallel_task_context:insert_metadata_parameters(params)
     local region_param =
       self.region_params[self.region_param_indices[idx]]
     if region_param.bounds then
-      params:insert(mk_task_param(region_param.bounds))
+      params:insert(ast_util.mk_task_param(region_param.bounds))
     end
   end
-  params:insert(mk_task_param(self:get_task_point_symbol()))
+  params:insert(ast_util.mk_task_param(self:get_task_point_symbol()))
 end
 
 function parallel_task_context:make_param_arg_mapping(caller_cx, args)
@@ -861,7 +862,7 @@ function parallel_param:hash()
     end
     if self.__constraints then
       for idx = 1, #self.__constraints do
-        str = str .. "#" .. render(self.__constraints[idx])
+        str = str .. "#" .. ast_util.render(self.__constraints[idx])
       end
     end
     self.__hash = str
@@ -1470,7 +1471,7 @@ local function create_image_partition(caller_cx, pr, pp, stencil, pparam)
                                     sr_bounds_expr,
                                     ast_util.mk_expr_id(tmp_var),
                                     polarity_expr })
-  --loop_body:insert(ast_util.mk_stat_block(mk_block(terralib.newlist {
+  --loop_body:insert(ast_util.mk_stat_block(ast_util.mk_block(terralib.newlist {
   --  ast_util.mk_stat_expr(ast_util.mk_expr_call(print_rect[pr_rect_type],
   --                            pr_bounds_expr)),
   --  ast_util.mk_stat_expr(ast_util.mk_expr_call(print_rect[pr_rect_type],
@@ -1489,7 +1490,7 @@ local function create_image_partition(caller_cx, pr, pp, stencil, pparam)
                                     ghost_rect_expr })))
 
   stats:insert(
-    ast_util.mk_stat_for_list(color_symbol, color_space_expr, mk_block(loop_body)))
+    ast_util.mk_stat_for_list(color_symbol, color_space_expr, ast_util.mk_block(loop_body)))
   stats:insert(
     ast_util.mk_stat_var(gp_symbol, nil,
                 ast_util.mk_expr_partition(gp_type, color_space_expr, coloring_expr)))
@@ -1572,7 +1573,7 @@ local function create_subset_partition(caller_cx, sr, pp, pparam)
                                     intersect_expr })))
 
   stats:insert(
-    ast_util.mk_stat_for_list(color_symbol, color_space_expr, mk_block(loop_body)))
+    ast_util.mk_stat_for_list(color_symbol, color_space_expr, ast_util.mk_block(loop_body)))
   stats:insert(
     ast_util.mk_stat_var(sp_symbol, nil,
                 ast_util.mk_expr_partition(sp_type, color_space_expr, coloring_expr)))
@@ -1631,11 +1632,13 @@ local function create_indexspace_launch(parallelizable, caller_cx, expr, lhs)
   end
   -- Now push subregions of ghost partitions
   for idx = 1, #task_cx.stencils do
-    local gp = caller_cx:find_ghost_partition(expr, task_cx.stencils[idx])
-    local pr_type = gp:gettype().parent_region_symbol:gettype()
-    local sr_type = gp:gettype():subregion_dynamic()
-    args:insert(ast_util.mk_expr_index_access(ast_util.mk_expr_id(gp), color_expr, sr_type))
-    caller_cx:update_constraint(args[#args])
+    if not task_cx.use_primary[task_cx.stencils[idx]] then
+      local gp = caller_cx:find_ghost_partition(expr, task_cx.stencils[idx])
+      local pr_type = gp:gettype().parent_region_symbol:gettype()
+      local sr_type = gp:gettype():subregion_dynamic()
+      args:insert(ast_util.mk_expr_index_access(ast_util.mk_expr_id(gp), color_expr, sr_type))
+      caller_cx:update_constraint(args[#args])
+    end
   end
   -- Append the original region-typed arguments at the end
   for idx = 1, #expr.args do
@@ -1657,7 +1660,7 @@ local function create_indexspace_launch(parallelizable, caller_cx, expr, lhs)
     call_stat = ast_util.mk_stat_expr(expr)
   end
   local index_launch =
-    ast_util.mk_stat_for_list(color_symbol, color_space_expr, mk_block(call_stat))
+    ast_util.mk_stat_for_list(color_symbol, color_space_expr, ast_util.mk_block(call_stat))
   if not std.config["flow-spmd"] then
     index_launch = index_launch {
       annotations = index_launch.annotations {
@@ -1676,38 +1679,24 @@ end
 local function normalize_calls(parallelizable, call_stats)
   local function normalize(node, field)
     local stat_vars = terralib.newlist()
-    local values = node[field]:map(function(value)
-      if parallelizable(value) then
-        local tmp_var = get_new_tmp_var(std.as_read(value.expr_type), "") -- FIXME: need semantic name
-        stat_vars:insert(ast_util.mk_stat_var(tmp_var, nil, value))
-        return ast_util.mk_expr_id(tmp_var)
-      else
-        return value
-      end
-    end)
-    return stat_vars, node { [field] = values }
+    local value = node[field]
+    if parallelizable(value) then
+      local tmp_var = get_new_tmp_var(std.as_read(value.expr_type), "") -- FIXME: need semantic name
+      stat_vars:insert(ast_util.mk_stat_var(tmp_var, nil, value))
+      value = ast_util.mk_expr_id(tmp_var)
+    end
+    return stat_vars, node { [field] = value }
   end
 
   return function(node, continuation)
-    if node:is(ast.typed.stat.Var) and
-           data.any(unpack(node.values:map(parallelizable))) then
-      if #node.values == 1 then
-        call_stats[node] = true
-        return node
-      else
-        local normalized, new_node = normalize(node, "values")
-        normalized:map(function(stat) call_stats[stat] = true end)
-        normalized:insert(new_node)
-        -- This should be flattened later in the outer scope
-        return normalized
-      end
+    if node:is(ast.typed.stat.Var) and parallelizable(node.value) then
+      call_stats[node] = true
+      return node
 
-    elseif (node:is(ast.typed.stat.Assignment) or
-            node:is(ast.typed.stat.Reduce)) and
-           data.any(unpack(node.rhs:map(parallelizable))) then
+    elseif (node:is(ast.typed.stat.Assignment) or node:is(ast.typed.stat.Reduce)) and
+           parallelizable(node.rhs) then
       if node:is(ast.typed.stat.Reduce) and
-         parallelizable(node.rhs[1]).cx.reduction_info.op == node.op and
-         #node.rhs == 1 then
+         parallelizable(node.rhs).cx.reduction_info.op == node.op then
         call_stats[node] = true
         return node
       end
@@ -1729,10 +1718,10 @@ end
 local function add_metadata_declarations(cx)
   return function(node, continuation)
     if node:is(ast.typed.stat.Var) and
-       std.is_region(node.symbols[1]:gettype()) and
-       not node.symbols[1]:gettype():is_opaque() then
+       std.is_region(node.symbol:gettype()) and
+       not node.symbol:gettype():is_opaque() then
       local stats = terralib.newlist {node}
-      local region_symbol = node.symbols[1]
+      local region_symbol = node.symbol
 
       -- Reserve symbols for metadata
       local base_name = (region_symbol:hasname() and region_symbol:getname()) or ""
@@ -1767,29 +1756,27 @@ local function collect_calls(cx, parallelizable)
         continuation(node, true)
         cx:pop_scope()
       elseif node:is(ast.typed.stat.Var) then
-        for idx = 1, #node.symbols do
-          local symbol_type = node.symbols[idx]:gettype()
-          if std.is_region(symbol_type) or std.is_partition(symbol_type) then
-            local region_type
-            if std.is_region(symbol_type) then
-              cx:add_region_decl(symbol_type, node)
-              cx:add_region_symbol(symbol_type, node.symbols[idx])
-              region_type = symbol_type
-            elseif std.is_partition(symbol_type) then
-              cx:add_partition_decl(symbol_type, node)
-              cx:add_partition_symbol(symbol_type, node.symbols[idx])
-              region_type = symbol_type:parent_region()
-            else
-              assert(false, "unreachable")
-            end
-            assert(region_type ~= nil)
+        local symbol_type = node.symbol:gettype()
+        if std.is_region(symbol_type) or std.is_partition(symbol_type) then
+          local region_type
+          if std.is_region(symbol_type) then
+            cx:add_region_decl(symbol_type, node)
+            cx:add_region_symbol(symbol_type, node.symbol)
+            region_type = symbol_type
+          elseif std.is_partition(symbol_type) then
+            cx:add_partition_decl(symbol_type, node)
+            cx:add_partition_symbol(symbol_type, node.symbol)
+            region_type = symbol_type:parent_region()
+          else
+            assert(false, "unreachable")
+          end
+          assert(region_type ~= nil)
 
-            if node.values[idx]:is(ast.typed.expr.IndexAccess) then
-              local partition_type =
-                std.as_read(node.values[idx].value.expr_type)
-              cx:add_parent_region(node.symbols[idx],
-                partition_type.parent_region_symbol)
-            end
+          if node.value:is(ast.typed.expr.IndexAccess) then
+            local partition_type =
+              std.as_read(node.value.value.expr_type)
+            cx:add_parent_region(node.symbol,
+              partition_type.parent_region_symbol)
           end
         end
         continuation(node, true)
@@ -1893,17 +1880,16 @@ local function insert_partition_creation(parallelizable, caller_cx, call_stats)
   return function(node, continuation)
     if caller_cx:get_call_exprs(node) then
       assert(node:is(ast.typed.stat.Var))
-      assert(#node.symbols == 1)
 
       local call_exprs_map = caller_cx:get_call_exprs(node)
       local stats = terralib.newlist {node}
-      local symbol_type = node.symbols[1]:gettype()
+      local symbol_type = node.symbol:gettype()
       local region_symbol
 
       if std.is_region(symbol_type) then
         if symbol_type:is_opaque() then return node end
 
-        region_symbol = node.symbols[1]
+        region_symbol = node.symbol
 
         -- First, create necessary primary partitions
         for pparam, _ in call_exprs_map:items() do
@@ -1912,7 +1898,7 @@ local function insert_partition_creation(parallelizable, caller_cx, call_stats)
           end
         end
       elseif std.is_partition(symbol_type) then
-        local partition_symbol = node.symbols[1]
+        local partition_symbol = node.symbol
         region_symbol = symbol_type.parent_region_symbol
 
         for pparam, _ in call_exprs_map:items() do
@@ -1970,7 +1956,7 @@ local function insert_partition_creation(parallelizable, caller_cx, call_stats)
               caller_cx:find_primary_partition(pparam, range_symbol)
           else
             range_symbol = stencil:range():region()
-            partition_symbol = node.symbols[1]
+            partition_symbol = node.symbol
           end
           assert(partition_symbol)
           while caller_cx:has_parent_region(range_symbol) do
@@ -1998,16 +1984,16 @@ local function insert_partition_creation(parallelizable, caller_cx, call_stats)
 
       return stats
     elseif call_stats[node] then
-      assert(node:is(ast.typed.stat.Var) and #node.values == 1 or
-             (node:is(ast.typed.stat.Assignment) or node:is(ast.typed.stat.Reduce)) and
-             #node.rhs == 1 or
+      assert(node:is(ast.typed.stat.Var) or
+             node:is(ast.typed.stat.Assignment) or
+             node:is(ast.typed.stat.Reduce) or
              node:is(ast.typed.stat.Expr))
       local call
       if node:is(ast.typed.stat.Var) then
-        call = node.values[1]
+        call = node.value
       elseif node:is(ast.typed.stat.Assignment) or
              node:is(ast.typed.stat.Reduce) then
-        call = node.rhs[1]
+        call = node.rhs
       else
         call = node.expr
       end
@@ -2145,12 +2131,12 @@ local function transform_task_launches(parallelizable, caller_cx, call_stats)
         local expr
         local lhs
         if node:is(ast.typed.stat.Var) then
-          expr = node.values[1]
-          lhs = ast_util.mk_expr_id(node.symbols[1],
-                           std.rawref(&std.as_read(node.symbols[1]:gettype())))
+          expr = node.value
+          lhs = ast_util.mk_expr_id(node.symbol,
+                           std.rawref(&std.as_read(node.symbol:gettype())))
         elseif node:is(ast.typed.stat.Reduce) then
-          expr = node.rhs[1]
-          lhs = node.lhs[1]
+          expr = node.rhs
+          lhs = node.lhs
         else
           assert(false, "unreachable")
         end
@@ -2159,9 +2145,9 @@ local function transform_task_launches(parallelizable, caller_cx, call_stats)
         local lhs_type = std.as_read(lhs.expr_type)
         if node:is(ast.typed.stat.Var) then
           stats:insert(node {
-            values = terralib.newlist { ast_util.mk_expr_constant(
+            value = ast_util.mk_expr_constant(
               std.reduction_op_init[reduction_op][lhs_type], lhs_type)}
-          })
+          )
         end
         stats:insertall(
           create_indexspace_launch(parallelizable, caller_cx, expr, lhs))
@@ -2226,7 +2212,8 @@ end
 
 function parallelize_task_calls.top_task(global_cx, node)
   local function parallelizable(node)
-    if not node:is(ast.typed.expr.Call) then return false end
+    if not node then return false
+    elseif not node:is(ast.typed.expr.Call) then return false end
     local fn = node.fn.value
     return not node.annotations.parallel:is(ast.annotation.Forbid) and
            std.is_task(fn) and global_cx[fn]
@@ -2563,20 +2550,17 @@ end
 function normalize_accesses.stat(task_cx, normalizer_cx)
   return function(node, continuation)
     if node:is(ast.typed.stat.Var) then
-      for idx = 1, #node.symbols do
-        local symbol = node.symbols[idx]
-        local symbol_type = symbol:gettype()
-        if std.is_index_type(symbol_type) or
-           std.is_bounded_type(symbol_type) then
-          -- TODO: variables can be assigned later
-          assert(node.values[idx])
-          normalizer_cx:add_decl(symbol, node.values[idx])
-        end
+      local symbol_type = node.symbol:gettype()
+      if std.is_index_type(symbol_type) or
+         std.is_bounded_type(symbol_type) then
+        -- TODO: variables can be assigned later
+        assert(node.value)
+        normalizer_cx:add_decl(node.symbol, node.value)
       end
       local accesses = terralib.newlist()
       local access_cx = access_context.new(normalizer_cx:get_loop_bound())
       ast.traverse_node_continuation(
-        find_field_accesses(access_cx, accesses), node.values)
+        find_field_accesses(access_cx, accesses), node.value)
       return lift_all_accesses(task_cx, normalizer_cx, accesses, node)
     elseif node:is(ast.typed.stat.Assignment) or
            node:is(ast.typed.stat.Reduce) then
@@ -2587,12 +2571,6 @@ function normalize_accesses.stat(task_cx, normalizer_cx)
         find_field_accesses(access_cx, accesses_lhs), node.lhs)
       ast.traverse_node_continuation(
         find_field_accesses(access_cx, accesses_rhs), node.rhs)
-      assert(data.all(unpack(accesses_lhs:map(function(access)
-        if not is_centered(loop_bound, access) then
-          return false
-        end
-        return true
-      end))))
       return lift_all_accesses(task_cx, normalizer_cx, accesses_rhs, node)
     else
       return continuation(node, true)
@@ -2641,24 +2619,16 @@ function reduction_analysis.top_task(task_cx, node)
 
   ast.traverse_node_continuation(function(node, continuation)
     if node:is(ast.typed.stat.Var) then
-      for idx = 1, #node.symbols do
-        if node.symbols[idx] == reduction_var then
-          assert(node.values[idx] ~= nil)
-          init_expr = node.values[idx]
-          decl = {
-            stat = node,
-            index = idx,
-          }
-          break
-        end
+      if node.symbol == reduction_var then
+        assert(node.value)
+        init_expr = node.value
+        decl = node
       end
     elseif node:is(ast.typed.stat.Reduce) then
-      node.lhs:map(function(expr)
-        if expr:is(ast.typed.expr.ID) and expr.value == reduction_var then
-          assert(reduction_op == nil or reduction_op == node.op)
-          reduction_op = node.op
-        end
-      end)
+      if node.lhs:is(ast.typed.expr.ID) and node.lhs.value == reduction_var then
+        assert(reduction_op == nil or reduction_op == node.op)
+        reduction_op = node.op
+      end
       continuation(node.rhs, true)
     elseif node:is(ast.typed.expr.ID) then
       assert(node.value ~= reduction_var)
@@ -2978,7 +2948,7 @@ function stencil_analysis.top(cx)
     elseif a1.span.start.offset > a2.span.start.offset then
       return false
     else
-      return render(a1) < render(a2)
+      return ast_util.render(a1) < ast_util.render(a2)
     end
   end)
 
@@ -3059,18 +3029,16 @@ function parallelize_tasks.stat(task_cx)
   return function(node, continuation)
     if task_cx:stat_requires_case_split(node) then
       assert(node:is(ast.typed.stat.Var) and
-             #node.symbols == 1 and #node.types == 1 and
-             #node.values == 1 and
-             (node.values[1]:is(ast.typed.expr.FieldAccess) or
-              node.values[1]:is(ast.typed.expr.Deref) or
-              node.values[1]:is(ast.typed.expr.IndexAccess)))
+             (node.value:is(ast.typed.expr.FieldAccess) or
+              node.value:is(ast.typed.expr.Deref) or
+              node.value:is(ast.typed.expr.IndexAccess)))
       local stats = terralib.newlist()
 
       -- Remove RHS of a variable declaration as it depends on case analysis
-      stats:insert(node { values = terralib.newlist() })
+      stats:insert(node { value = false })
 
       -- Cache index calculation for several comparisions later
-      local access = node.values[1]
+      local access = node.value
       local access_info = task_cx.field_accesses[access]
       local stencil_expr =
         extract_stencil_expr(access.expr_type.pointer_type, access)
@@ -3084,7 +3052,7 @@ function parallelize_tasks.stat(task_cx)
       end
 
       -- Make an expression for result to reuse in the case splits
-      local result_symbol = node.symbols[1]
+      local result_symbol = node.symbol
       local result_expr =
         ast_util.mk_expr_id(result_symbol, std.rawref(&result_symbol:gettype()))
 
@@ -3181,40 +3149,19 @@ function parallelize_tasks.top_task_body(task_cx, node)
       if stat:is(ast.typed.stat.ForList) then
         return parallelize_tasks.stat_for_list(task_cx, stat)
       elseif task_cx.reduction_info ~= nil and
-             task_cx.reduction_info.declaration.stat == stat then
-        local red_decl_index = task_cx.reduction_info.declaration.index
-
-        local symbols = terralib.newlist()
-        local types = terralib.newlist()
-        local values = terralib.newlist()
-
-        for idx = 1, #stat.symbols do
-          if idx ~= red_decl_index then
-            symbols:insert(stat.symbols[idx])
-            types:insert(stat.types[idx])
-            values:insert(stat.values[idx])
-          end
-        end
+             task_cx.reduction_info.declaration == stat then
 
         local stats = terralib.newlist()
-        if #symbols > 0 then
-          stats:insert(stat {
-            symbols = symbols,
-            types = types,
-            values = values,
-          })
-        end
 
-        local red_var = stat.symbols[red_decl_index]
+        local red_var = stat.symbol
         local red_var_expr =
           ast_util.mk_expr_id(red_var, std.rawref(&red_var:gettype()))
-        stats:insert(ast_util.mk_stat_var(red_var, stat.types[red_decl_index]))
+        stats:insert(ast_util.mk_stat_var(red_var, stat.type))
 
         local cond = ast_util.mk_expr_call(is_zero,
           ast_util.mk_expr_id(task_cx:get_task_point_symbol()))
         local if_stat = ast_util.mk_stat_if(
-          cond, ast_util.mk_stat_assignment(
-            red_var_expr, stat.values[red_decl_index]))
+          cond, ast_util.mk_stat_assignment(red_var_expr, stat.value))
         local init =
           std.reduction_op_init[task_cx.reduction_info.op][red_var:gettype()]
         assert(init ~= nil)
@@ -3251,12 +3198,42 @@ function parallelize_tasks.top_task(global_cx, node)
   -- passed by indexspace launch. this will avoid rewriting types in AST nodes
   params:insertall(node.params)
   -- each stencil corresponds to one ghost region
+  local orig_privileges = node.prototype:get_privileges()
+  local function has_interfering_update(stencil)
+    local region = stencil:region()
+    local fields = stencil:fields()
+    for i = 1, #fields do
+      for j = 1, #orig_privileges do
+        for k = 1, #orig_privileges[j] do
+          local pv = orig_privileges[j][k]
+          if pv.privilege == std.writes and
+             pv.region == region and
+             pv.field_path == fields[i] then
+             return true
+          end
+        end
+      end
+    end
+    return false
+  end
+
   for idx = 1, #task_cx.stencils do
     local stencil = task_cx.stencils[idx]
-    local ghost_symbol =
-      copy_region_symbol(stencil:region(), "__ghost" .. tostring(idx))
-    task_cx.ghost_symbols[stencil] = ghost_symbol
-    params:insert(mk_task_param(task_cx.ghost_symbols[stencil]))
+    local check = has_interfering_update(stencil)
+    if check then
+      -- FIXME: Ghost accesses can be out of bounds because we force them to use
+      --        primary partition here. Task is in general not parallelizable
+      --        if it has stencils that conflict with its update set. We assume
+      --        that the programmer specified right hints to make it parallelizable.
+      task_cx.ghost_symbols[stencil] = stencil:region()
+      task_cx.use_primary[stencil] = true
+    else
+      local ghost_symbol =
+        copy_region_symbol(stencil:region(), "__ghost" .. tostring(idx))
+      task_cx.ghost_symbols[stencil] = ghost_symbol
+      task_cx.use_primary[stencil] = false
+      params:insert(ast_util.mk_task_param(task_cx.ghost_symbols[stencil]))
+    end
   end
   -- Append parameters reserved for the metadata of original region parameters
   task_cx:insert_metadata_parameters(params)
@@ -3275,7 +3252,7 @@ function parallelize_tasks.top_task(global_cx, node)
   --    coherence_modes[region][field_path] = true
   --  end)
   --end)
-  privileges:insertall(node.prototype:get_privileges())
+  privileges:insertall(orig_privileges)
   for region, _ in pairs(node.prototype:get_region_universe()) do
     region_universe[region] = true
   end
@@ -3289,14 +3266,16 @@ function parallelize_tasks.top_task(global_cx, node)
 
   for idx = 1, #task_cx.stencils do
     local stencil = task_cx.stencils[idx]
-		local region = task_cx.ghost_symbols[stencil]
-		--local fields = task_cx.stencils[idx]:fields()
-    -- TODO: handle reductions on ghost regions
-    privileges:insert(fields:map(function(field)
-      return std.privilege(std.reads, region, field)
-    end))
-    --coherence_modes[region][field_path] = std.exclusive
-    region_universe[region:gettype()] = true
+    if not task_cx.use_primary[stencil] then
+		  local region = task_cx.ghost_symbols[stencil]
+		  --local fields = task_cx.stencils[idx]:fields()
+      -- TODO: handle reductions on ghost regions
+      privileges:insert(fields:map(function(field)
+        return std.privilege(std.reads, region, field)
+      end))
+      --coherence_modes[region][field_path] = std.exclusive
+      region_universe[region:gettype()] = true
+    end
   end
   task:set_privileges(privileges)
   task:set_coherence_modes(coherence_modes)
@@ -3321,7 +3300,6 @@ function parallelize_tasks.top_task(global_cx, node)
       leaf = false,
       inner = false,
       idempotent = false,
-      alloc = true,
     },
     region_divergence = false,
     prototype = task,

@@ -58,7 +58,7 @@ where reads(rn.node_voltage,
       reads writes(rw.{current, voltage})
 do
   var recip_dt : float = 1.0 / DT
-  __demand(__vectorize)
+  --__demand(__vectorize)
   for w in rw do
     var temp_v : float[WIRE_SEGMENTS + 1]
     var temp_i : float[WIRE_SEGMENTS]
@@ -142,9 +142,6 @@ task toplevel()
 
   var rn = region(ispace(ptr, num_circuit_nodes), Node)
   var rw = region(ispace(ptr, num_circuit_wires), Wire(rn))
-
-  new(ptr(Node, rn), num_circuit_nodes)
-  new(ptr(Wire(rn), rw), num_circuit_wires)
 
   c.printf("Generating random circuit...\n")
   helper.generate_random_circuit(rn, rw, conf)

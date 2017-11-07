@@ -15,8 +15,8 @@
 -- runs-with:
 -- [
 --  ["-ll:cpu", "4", "-fbounds-checks", "1", "-fdebug", "1",
---   "-fparallelize-dop", "4,4"],
---  ["-ll:cpu", "4", "-fparallelize-dop", "3,3"],
+--   "-fparallelize-dop", "2,2"],
+--  ["-ll:cpu", "4", "-fparallelize-dop", "2,5"],
 --  ["-ll:cpu", "4", "-fparallelize-dop", "5,5"]
 -- ]
 
@@ -85,7 +85,6 @@ task test(size : int)
   c.srand48(12345)
   var r1 = region(ispace(int2d, {size, size}), fs1)
   var r2 = region(ispace(ptr, size * size), fs2(wild))
-  new(ptr(fs2(wild), r2), size * size)
   init(r1, r2, size)
   for i = 0, 3 do
     stencil(r1, r2)

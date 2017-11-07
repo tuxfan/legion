@@ -52,16 +52,6 @@ local C = terralib.includecstring [[
 #include <string.h>
 ]]
 
-local terra assert(x : bool, message : rawstring)
-  if not x then
-    var stderr = C.fdopen(2, "w")
-    C.fprintf(stderr, "assertion failed: %s\n", message)
-    -- Just because it's stderr doesn't mean it's unbuffered...
-    C.fflush(stderr)
-    C.abort()
-  end
-end
-
 local struct CUctx_st
 local struct CUmod_st
 local struct CUlinkState_st
@@ -99,9 +89,10 @@ end
 
 do
   if has_symbol("cuInit") then
+    local r = DriverAPI.cuInit(0)
+    assert(r == 0)
     terra cudahelper.check_cuda_available()
-      var r = DriverAPI.cuInit(0)
-      return r == 0
+      return [r] == 0;
     end
   else
     terra cudahelper.check_cuda_available()
@@ -112,11 +103,21 @@ end
 
 -- copied and modified from cudalib.lua in Terra interpreter
 
+local c = terralib.includec("unistd.h")
+
+local terra assert(x : bool, message : rawstring)
+  if not x then
+    var stderr = C.fdopen(2, "w")
+    C.fprintf(stderr, "assertion failed: %s\n", message)
+    -- Just because it's stderr doesn't mean it's unbuffered...
+    C.fflush(stderr)
+    C.abort()
+  end
+end
+
 local terra init_cuda() : int32
-  var r = DriverAPI.cuInit(0)
-  assert(r == 0, "CUDA error in cuInit")
   var cx : &CUctx_st
-  r = DriverAPI.cuCtxGetCurrent(&cx)
+  var r = DriverAPI.cuCtxGetCurrent(&cx)
   assert(r == 0, "CUDA error in cuCtxGetCurrent")
   var d : int32
   if cx ~= nil then
@@ -164,6 +165,19 @@ local terra register_function(handle : &&opaque, id : int, name : &int8)
   HijackAPI.hijackCudaRegisterFunction(handle, [&int8](id), name)
 end
 
+local function find_device_library(target)
+  local device_lib_dir = terralib.cudahome .. "/nvvm/libdevice/"
+  local libdevice = nil
+  for f in io.popen("ls " .. device_lib_dir):lines() do
+    local version = tonumber(string.match(string.match(f, "[0-9][0-9][.]"), "[0-9][0-9]"))
+    if version <= target then
+      libdevice = device_lib_dir .. f
+    end
+  end
+  assert(libdevice ~= nil, "Failed to find a device library")
+  return libdevice
+end
+
 function cudahelper.jit_compile_kernels_and_register(kernels)
   local module = {}
   for k, v in pairs(kernels) do
@@ -171,10 +185,7 @@ function cudahelper.jit_compile_kernels_and_register(kernels)
   end
   local device = init_cuda()
   local version = get_cuda_version(device)
-  local libdevice =
-    terralib.cudahome..
-    string.format("/nvvm/libdevice/libdevice.compute_%d.10.bc",
-                  tonumber(version))
+  local libdevice = find_device_library(tonumber(version))
   local llvmbc = terralib.linkllvm(libdevice)
   externcall_builtin = function(name, ftype)
     return llvmbc:extern(name, ftype)

@@ -12,6 +12,11 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
+-- FIXME: Turn off this test until vectorizer supports scattered reads again.
+-- runs-with:
+-- []
+--
+
 import "regent"
 
 local c = regentlib.c
@@ -63,9 +68,7 @@ end
 
 task test(size : int)
   var r1 = region(ispace(ptr, size), fs1)
-  new(ptr(fs1, r1), size)
   var r2 = region(ispace(ptr, size), fs2(wild))
-  new(ptr(fs2(wild), r2), size)
   init(r1, r2, size)
   stencil(r1, r2)
   check(r1, r2)

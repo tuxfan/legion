@@ -20,6 +20,8 @@
  * \file legion_template_help.h
  */
 
+#include "legion/legion_config.h"
+
 namespace Legion {
 
   /**

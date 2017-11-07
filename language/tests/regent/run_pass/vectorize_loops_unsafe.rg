@@ -12,8 +12,9 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
+-- FIXME: Turn off this test until vectorizer supports scattered reads again.
 -- runs-with:
--- [["-fvectorize-unsafe", "1"]]
+-- []
 --
 
 import "regent"
@@ -50,9 +51,6 @@ task toplevel()
   var x = region(ispace(ptr, 10), int)
   var y = region(ispace(ptr, 10), int)
   var z = region(ispace(ptr, 10), ptr(int, x, y))
-  new(ptr(int, x), 10)
-  new(ptr(int, y), 10)
-  new(ptr(ptr(int, x, y), z), 10)
   for p in z do
     @p = static_cast(ptr(int, x, y), dynamic_cast(ptr(int, x), __raw(p).value))
   end

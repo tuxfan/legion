@@ -18,11 +18,11 @@
 #define __DEFAULT_MAPPER_H__
 
 #include "legion.h"
-#include "legion_mapping.h"
-#include "mapping_utilities.h"
+#include "legion/legion_mapping.h"
+#include "mappers/mapping_utilities.h"
 
-#include <cstdlib>
-#include <cassert>
+#include <stdlib.h>
+#include <assert.h>
 #include <algorithm>
 
 namespace Legion {
@@ -45,10 +45,14 @@ namespace Legion {
         DEFAULT_TUNABLE_LOCAL_CPUS = 1,
         DEFAULT_TUNABLE_LOCAL_GPUS = 2,
         DEFAULT_TUNABLE_LOCAL_IOS = 3,
-        DEFAULT_TUNABLE_GLOBAL_CPUS = 4,
-        DEFAULT_TUNABLE_GLOBAL_GPUS = 5,
-        DEFAULT_TUNABLE_GLOBAL_IOS = 6,
-        DEFAULT_TUNABLE_LAST = 7, // this one must always be last and unused
+        DEFAULT_TUNABLE_LOCAL_OMPS = 4,
+        DEFAULT_TUNABLE_LOCAL_PYS = 5,
+        DEFAULT_TUNABLE_GLOBAL_CPUS = 6,
+        DEFAULT_TUNABLE_GLOBAL_GPUS = 7,
+        DEFAULT_TUNABLE_GLOBAL_IOS = 8,
+        DEFAULT_TUNABLE_GLOBAL_OMPS = 9,
+        DEFAULT_TUNABLE_GLOBAL_PYS = 10,
+        DEFAULT_TUNABLE_LAST = 11, // this one must always be last and unused
       };
       enum MappingKind {
         TASK_MAPPING,
@@ -57,6 +61,7 @@ namespace Legion {
         CLOSE_MAPPING,
         ACQUIRE_MAPPING,
         RELEASE_MAPPING,
+        PARTITION_MAPPING,
       };
       enum MapperMessageType
       {
@@ -72,6 +77,10 @@ namespace Legion {
 	//  the default mapper tries to make larger instances that will be
 	//  reused for other mappings)
 	EXACT_REGION = (1 << 1),
+
+	// should this task be assigned to a processor in the same address
+	//  space as the parent task
+	SAME_ADDRESS_SPACE = (1 << 2),
       };
     protected: // Internal types
       struct VariantInfo {
@@ -83,6 +92,11 @@ namespace Legion {
         Processor::Kind      proc_kind;
         bool                 tight_bound;
         bool                 is_inner;
+      };
+      enum CachedMappingPolicy
+      {
+        DEFAULT_CACHE_POLICY_ENABLE,
+        DEFAULT_CACHE_POLICY_DISABLE,
       };
       struct CachedTaskMapping {
       public:
@@ -241,6 +255,28 @@ namespace Legion {
       virtual void report_profiling(const MapperContext         ctx,
                                     const Release&              release,
                                     const ReleaseProfilingInfo& input);
+    public: // Partition mapping calls
+      virtual void select_partition_projection(const MapperContext  ctx,
+                          const Partition&                          partition,
+                          const SelectPartitionProjectionInput&     input,
+                                SelectPartitionProjectionOutput&    output);
+      virtual void map_partition(const MapperContext        ctx,
+                                 const Partition&           partition,
+                                 const MapPartitionInput&   input,
+                                       MapPartitionOutput&  output);
+      virtual void select_partition_sources(
+                                     const MapperContext             ctx,
+                                     const Partition&                partition,
+                                     const SelectPartitionSrcInput&  input,
+                                           SelectPartitionSrcOutput& output);
+      virtual void create_partition_temporary_instance(
+                              const MapperContext                   ctx,
+                              const Partition&                      partition,
+                              const CreatePartitionTemporaryInput&  input,
+                                    CreatePartitionTemporaryOutput& output);
+      virtual void report_profiling(const MapperContext              ctx,
+                                    const Partition&                 partition,
+                                    const PartitionProfilingInfo&    input);
     public: // Task execution mapping calls
       virtual void configure_context(const MapperContext         ctx,
                                      const Task&                 task,
@@ -282,6 +318,10 @@ namespace Legion {
                                     MapperContext ctx,
                                     const Task &task,
                                     std::vector<Processor> &target_procs);
+      virtual TaskPriority default_policy_select_task_priority(
+                                    MapperContext ctx, const Task &task);
+      virtual CachedMappingPolicy default_policy_select_task_cache_policy(
+                                    MapperContext ctx, const Task &task);
       virtual bool default_policy_select_must_epoch_processors(
                                     MapperContext ctx,
 				    const std::vector<std::set<const Task *> > &tasks,
@@ -298,7 +338,8 @@ namespace Legion {
                                     const TaskLayoutConstraintSet &layout1,
                                     const TaskLayoutConstraintSet &layout2);
       virtual Memory default_policy_select_target_memory(MapperContext ctx, 
-                                    Processor target_proc);
+                                    Processor target_proc,
+                                    const RegionRequirement &req);
       virtual LayoutConstraintID default_policy_select_layout_constraints(
                                     MapperContext ctx, Memory target_memory,
                                     const RegionRequirement &req,
@@ -354,8 +395,12 @@ namespace Legion {
       Processor default_get_next_global_gpu(void);
       Processor default_get_next_local_io(void);
       Processor default_get_next_global_io(void);
+      Processor default_get_next_local_py(void);
+      Processor default_get_next_global_py(void);
       Processor default_get_next_local_procset(void);
       Processor default_get_next_global_procset(void);
+      Processor default_get_next_local_omp(void);
+      Processor default_get_next_global_omp(void);
       VariantInfo default_find_preferred_variant(
                                  const Task &task, MapperContext ctx,
                                  bool needs_tight_bound, bool cache = true,
@@ -398,15 +443,23 @@ namespace Legion {
       static const char* create_default_name(Processor p);
       template<int DIM>
       static void default_decompose_points(
-                              const LegionRuntime::Arrays::Rect<DIM> &point_rect,
-                              const std::vector<Processor> &targets,
-                              const LegionRuntime::Arrays::Point<DIM> &blocking, 
-                              bool recurse, bool stealable,
-                              std::vector<TaskSlice> &slices);
+                            const DomainT<DIM,coord_t> &point_space,
+                            const std::vector<Processor> &targets,
+                            const Point<DIM,coord_t> &blocking, 
+                            bool recurse, bool stealable,
+                            std::vector<TaskSlice> &slices);
+      // For some backwards compatibility with the old interface
       template<int DIM>
-      static LegionRuntime::Arrays::Point<DIM> default_select_num_blocks(
-                            long long int factor, const LegionRuntime::Arrays::
-                            Rect<DIM> &rect_to_factor);
+      static void default_decompose_points(
+                            const LegionRuntime::Arrays::Rect<DIM> &rect, 
+                            const std::vector<Processor> &targets,
+                            const LegionRuntime::Arrays::Point<DIM> &blocking,
+                            bool recurse, bool stealable,
+                            std::vector<TaskSlice> &slices);
+      template<int DIM>
+      static Point<DIM,coord_t> default_select_num_blocks(
+                            long long int factor, 
+                            const Rect<DIM,coord_t> &rect_to_factor);
       static unsigned long long compute_task_hash(const Task &task);
       static inline bool physical_sort_func(
                          const std::pair<PhysicalInstance,unsigned> &left,
@@ -426,26 +479,35 @@ namespace Legion {
       unsigned               total_nodes;
       // There are a couple of parameters from the machine description that 
       // the default mapper uses to determine how to perform mapping.
-      std::vector<Processor> local_ios;
-      std::vector<Processor> local_cpus;
       std::vector<Processor> local_gpus;
+      std::vector<Processor> local_cpus;
+      std::vector<Processor> local_ios;
       std::vector<Processor> local_procsets;
-      std::vector<Processor> remote_ios;
-      std::vector<Processor> remote_cpus;
+      std::vector<Processor> local_omps;
+      std::vector<Processor> local_pys;
       std::vector<Processor> remote_gpus;
+      std::vector<Processor> remote_cpus;
+      std::vector<Processor> remote_ios;
       std::vector<Processor> remote_procsets;
+      std::vector<Processor> remote_omps;
+      std::vector<Processor> remote_pys;
     protected:
       // For doing round-robining of tasks onto processors
-      unsigned next_local_io, next_local_cpu, next_local_gpu, next_local_procset;
-      Processor next_global_io,next_global_cpu,next_global_gpu,next_global_procset;
-      Machine::ProcessorQuery *global_io_query, *global_cpu_query,
-                              *global_gpu_query, *global_procset_query;
+      unsigned next_local_gpu, next_local_cpu, next_local_io,
+               next_local_procset, next_local_omp, next_local_py;
+      Processor next_global_gpu, next_global_cpu, next_global_io,
+                next_global_procset, next_global_omp, next_global_py;
+      Machine::ProcessorQuery *global_gpu_query, *global_cpu_query,
+                              *global_io_query, *global_procset_query,
+                              *global_omp_query, *global_py_query;
     protected: 
       // Cached mapping information about the application
-      std::map<Domain,std::vector<TaskSlice> > cpu_slices_cache,
-                                               gpu_slices_cache,
+      std::map<Domain,std::vector<TaskSlice> > gpu_slices_cache,
+                                               cpu_slices_cache,
                                                io_slices_cache,
-                                               procset_slices_cache;
+                                               procset_slices_cache,
+                                               omp_slices_cache,
+                                               py_slices_cache;
       std::map<TaskID,VariantInfo>             preferred_variants; 
       std::map<std::pair<TaskID,Processor>,
                std::list<CachedTaskMapping> >  cached_task_mappings;
@@ -481,7 +543,7 @@ namespace LegionRuntime {
 };
 
 // Include template definitions
-#include "default_mapper.inl"
+#include "mappers/default_mapper.inl"
 
 #endif // __DEFAULT_MAPPER_H__
 

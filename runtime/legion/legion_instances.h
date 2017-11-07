@@ -16,11 +16,11 @@
 #ifndef __LEGION_INSTANCES_H__
 #define __LEGION_INSTANCES_H__
 
-#include "runtime.h"
-#include "legion_types.h"
-#include "legion_utilities.h"
-#include "legion_allocation.h"
-#include "garbage_collection.h"
+#include "legion/runtime.h"
+#include "legion/legion_types.h"
+#include "legion/legion_utilities.h"
+#include "legion/legion_allocation.h"
+#include "legion/garbage_collection.h"
 
 namespace Legion {
   namespace Internal {
@@ -41,10 +41,12 @@ namespace Legion {
     public:
       LayoutDescription(FieldSpaceNode *owner,
                         const FieldMask &mask,
+                        const unsigned total_dims,
                         LayoutConstraints *constraints,
                         const std::vector<unsigned> &mask_index_map,
-                        const std::vector<CustomSerdezID> &serdez,
-          const std::vector<std::pair<FieldID,size_t> > &field_sizes);
+                        const std::vector<FieldID> &fids,
+                        const std::vector<size_t> &field_sizes,
+                        const std::vector<CustomSerdezID> &serdez);
       // Used only by the virtual manager
       LayoutDescription(const FieldMask &mask, LayoutConstraints *constraints);
       LayoutDescription(const LayoutDescription &rhs);
@@ -56,28 +58,28 @@ namespace Legion {
     public:
       void compute_copy_offsets(const FieldMask &copy_mask, 
                                 PhysicalInstance inst,
-                                std::vector<Domain::CopySrcDstField> &fields);
+                                std::vector<CopySrcDstField> &fields);
       void compute_copy_offsets(FieldID copy_field, PhysicalInstance inst,
-                                std::vector<Domain::CopySrcDstField> &fields);
+                                std::vector<CopySrcDstField> &fields);
       void compute_copy_offsets(const std::vector<FieldID> &copy_fields,
                                 PhysicalInstance inst,
-                                std::vector<Domain::CopySrcDstField> &fields);
+                                std::vector<CopySrcDstField> &fields);
     public:
       void get_fields(std::set<FieldID> &fields) const;
       bool has_field(FieldID fid) const;
       void has_fields(std::map<FieldID,bool> &fields) const;
       void remove_space_fields(std::set<FieldID> &fields) const;
     public:
-      const Domain::CopySrcDstField& find_field_info(FieldID fid) const;
+      const CopySrcDstField& find_field_info(FieldID fid) const;
       size_t get_total_field_size(void) const;
       void get_fields(std::vector<FieldID>& fields) const;
       void compute_destroyed_fields(
           std::vector<PhysicalInstance::DestroyedField> &serdez_fields) const;
     public:
-      bool match_layout(const LayoutConstraintSet &constraints) const;
-      bool match_layout(const LayoutDescription *layout) const;
-    public:
-      void set_descriptor(FieldDataDescriptor &desc, FieldID fid) const;
+      bool match_layout(const LayoutConstraintSet &constraints,
+                        unsigned num_dims) const;
+      bool match_layout(const LayoutDescription *layout,
+                        unsigned num_dims) const;
     public:
       void pack_layout_description(Serializer &rez, AddressSpaceID target);
       static LayoutDescription* handle_unpack_layout_description(
@@ -86,13 +88,10 @@ namespace Legion {
       const FieldMask allocated_fields;
       LayoutConstraints *const constraints;
       FieldSpaceNode *const owner;
+      const unsigned total_dims;
     protected:
       // In order by index of bit mask
-#ifdef NEW_INSTANCE_CREATION
-      std::vector<Domain::CopySrcDstFieldInfo> field_infos;
-#else
-      std::vector<Domain::CopySrcDstField> field_infos;
-#endif
+      std::vector<CopySrcDstField> field_infos;
       // A mapping from FieldIDs to indexes into our field_infos
       std::map<FieldID,unsigned/*index*/> field_indexes;
     protected:
@@ -112,7 +111,7 @@ namespace Legion {
                       LayoutDescription *layout, const PointerConstraint &cons,
                       DistributedID did, AddressSpaceID owner_space, 
                       RegionNode *node, PhysicalInstance inst, 
-                      const Domain &intance_domain,
+                      IndexSpaceNode *instance_domain,
                       bool own_domain, bool register_now);
       virtual ~PhysicalManager(void);
     public:
@@ -125,6 +124,7 @@ namespace Legion {
     public:
       void log_instance_creation(UniqueID creator_id, Processor proc,
                      const std::vector<LogicalRegion> &regions) const;
+      void force_deletion(void);
     public:
       inline bool is_reduction_manager(void) const;
       inline bool is_instance_manager(void) const;
@@ -206,7 +206,7 @@ namespace Legion {
       RegionNode *const region_node;
       LayoutDescription *const layout;
       const PhysicalInstance instance;
-      const Domain instance_domain;
+      IndexSpaceNode *instance_domain;
       const bool own_domain;
       const PointerConstraint pointer_constraint;
     protected:
@@ -226,9 +226,9 @@ namespace Legion {
       const FieldMask &full_mask;
     public:
       void compute_across_offsets(const FieldMask &src_mask,
-             std::vector<Domain::CopySrcDstField> &dst_fields);
+                   std::vector<CopySrcDstField> &dst_fields);
     public:
-      std::vector<Domain::CopySrcDstField> offsets; 
+      std::vector<CopySrcDstField> offsets; 
       LegionDeque<std::pair<FieldMask,FieldMask> >::aligned compressed_cache;
     };
 
@@ -244,7 +244,7 @@ namespace Legion {
       InstanceManager(RegionTreeForest *ctx, DistributedID did,
                       AddressSpaceID owner_space,
                       MemoryManager *memory, PhysicalInstance inst, 
-                      const Domain &instance_domain, bool own_domain,
+                      IndexSpaceNode *instance_domain, bool own_domain,
                       RegionNode *node, LayoutDescription *desc, 
                       const PointerConstraint &constraint,
                       bool register_now, ApEvent use_event,
@@ -270,19 +270,15 @@ namespace Legion {
       virtual InstanceView* create_instance_top_view(InnerContext *context,
                                             AddressSpaceID logical_owner);
       void compute_copy_offsets(const FieldMask &copy_mask,
-                                std::vector<Domain::CopySrcDstField> &fields);
+                                std::vector<CopySrcDstField> &fields);
       void compute_copy_offsets(FieldID fid, 
-                                std::vector<Domain::CopySrcDstField> &fields);
+                                std::vector<CopySrcDstField> &fields);
       void compute_copy_offsets(const std::vector<FieldID> &copy_fields,
-                                std::vector<Domain::CopySrcDstField> &fields);
+                                std::vector<CopySrcDstField> &fields);
       void initialize_across_helper(CopyAcrossHelper *across_helper,
                                     const FieldMask &mask,
                                     const std::vector<unsigned> &src_indexes,
                                     const std::vector<unsigned> &dst_indexes);
-    public:
-      
-    public:
-      void set_descriptor(FieldDataDescriptor &desc, unsigned fid_idx) const;
     public:
       virtual void send_manager(AddressSpaceID target);
       static void handle_send_manager(Runtime *runtime, 
@@ -309,7 +305,7 @@ namespace Legion {
                        MemoryManager *mem, PhysicalInstance inst, 
                        LayoutDescription *description,
                        const PointerConstraint &constraint,
-                       const Domain &inst_domain, bool own_domain,
+                       IndexSpaceNode *inst_domain, bool own_domain,
                        RegionNode *region_node, ReductionOpID redop, 
                        const ReductionOp *op, bool register_now);
       virtual ~ReductionManager(void);
@@ -325,10 +321,10 @@ namespace Legion {
     public:
       virtual bool is_foldable(void) const = 0;
       virtual void find_field_offsets(const FieldMask &reduce_mask,
-          std::vector<Domain::CopySrcDstField> &fields) = 0;
+          std::vector<CopySrcDstField> &fields) = 0;
       virtual ApEvent issue_reduction(Operation *op,
-          const std::vector<Domain::CopySrcDstField> &src_fields,
-          const std::vector<Domain::CopySrcDstField> &dst_fields,
+          const std::vector<CopySrcDstField> &src_fields,
+          const std::vector<CopySrcDstField> &dst_fields,
           RegionTreeNode *dst, ApEvent precondition, PredEvent pred_guard,
           bool reduction_fold, bool precise_domain, 
           RegionTreeNode *intersect) = 0;
@@ -376,7 +372,7 @@ namespace Legion {
                            MemoryManager *mem, PhysicalInstance inst, 
                            LayoutDescription *description,
                            const PointerConstraint &constraint,
-                           const Domain &inst_domain, bool own_domain,
+                           IndexSpaceNode *inst_domain, bool own_domain,
                            RegionNode *node, ReductionOpID redop, 
                            const ReductionOp *op, Domain dom,
                            bool register_now);
@@ -395,10 +391,10 @@ namespace Legion {
     public:
       virtual bool is_foldable(void) const;
       virtual void find_field_offsets(const FieldMask &reduce_mask,
-          std::vector<Domain::CopySrcDstField> &fields);
+          std::vector<CopySrcDstField> &fields);
       virtual ApEvent issue_reduction(Operation *op,
-          const std::vector<Domain::CopySrcDstField> &src_fields,
-          const std::vector<Domain::CopySrcDstField> &dst_fields,
+          const std::vector<CopySrcDstField> &src_fields,
+          const std::vector<CopySrcDstField> &dst_fields,
           RegionTreeNode *dst, ApEvent precondition, PredEvent pred_guard,
           bool reduction_fold, bool precise_domain, RegionTreeNode *intersect);
       virtual Domain get_pointer_space(void) const;
@@ -422,7 +418,7 @@ namespace Legion {
                            MemoryManager *mem, PhysicalInstance inst, 
                            LayoutDescription *description,
                            const PointerConstraint &constraint,
-                           const Domain &inst_dom, bool own_dom,
+                           IndexSpaceNode *inst_dom, bool own_dom,
                            RegionNode *node, ReductionOpID redop, 
                            const ReductionOp *op, ApEvent use_event,
                            bool register_now);
@@ -441,10 +437,10 @@ namespace Legion {
     public:
       virtual bool is_foldable(void) const;
       virtual void find_field_offsets(const FieldMask &reduce_mask,
-          std::vector<Domain::CopySrcDstField> &fields);
+          std::vector<CopySrcDstField> &fields);
       virtual ApEvent issue_reduction(Operation *op,
-          const std::vector<Domain::CopySrcDstField> &src_fields,
-          const std::vector<Domain::CopySrcDstField> &dst_fields,
+          const std::vector<CopySrcDstField> &src_fields,
+          const std::vector<CopySrcDstField> &dst_fields,
           RegionTreeNode *dst, ApEvent precondition, PredEvent pred_guard,
           bool reduction_fold, bool precise_domain, RegionTreeNode *intersect);
       virtual Domain get_pointer_space(void) const;
@@ -498,43 +494,51 @@ namespace Legion {
      * \class InstanceBuilder 
      * A helper for building physical instances of logical regions
      */
-    class InstanceBuilder {
+    class InstanceBuilder : public ProfilingResponseHandler {
     public:
       InstanceBuilder(const std::vector<LogicalRegion> &regs,
-                      const LayoutConstraintSet &cons,
+                      const LayoutConstraintSet &cons, Runtime *rt,
                       MemoryManager *memory, UniqueID cid)
-        : regions(regs), constraints(cons), memory_manager(memory),
-          creator_id(cid), ancestor(NULL), instance_domain(Domain::NO_DOMAIN), 
-          own_domain(false), redop_id(0), reduction_op(NULL), valid(false) { }
+        : regions(regs), constraints(cons), runtime(rt), memory_manager(memory),
+          creator_id(cid), instance(PhysicalInstance::NO_INST), ancestor(NULL), 
+          instance_domain(NULL), own_domain(false), redop_id(0), 
+          reduction_op(NULL), realm_layout(NULL), 
+          own_realm_layout(true), valid(false) { }
+      virtual ~InstanceBuilder(void);
     public:
       size_t compute_needed_size(RegionTreeForest *forest);
       PhysicalManager* create_physical_instance(RegionTreeForest *forest);
+    public:
+      virtual void handle_profiling_response(
+                    const Realm::ProfilingResponse &response);
     protected:
       void initialize(RegionTreeForest *forest);
       void compute_ancestor_and_domain(RegionTreeForest *forest);
       RegionNode* find_common_ancestor(RegionNode *one, RegionNode *two) const;
     protected:
-      void compute_new_parameters(void);
-      void compute_old_parameters(void);
+      void compute_layout_parameters(void);
     protected:
       const std::vector<LogicalRegion> &regions;
       LayoutConstraintSet constraints;
+      Runtime *const runtime;
       MemoryManager *const memory_manager;
       const UniqueID creator_id;
     protected:
+      PhysicalInstance instance;
+      RtUserEvent profiling_ready;
+    protected:
       RegionNode *ancestor;
-      Domain instance_domain;
+      IndexSpaceNode *instance_domain;
       bool own_domain;
-      std::vector<std::pair<FieldID,size_t> > field_sizes;
+      // Mapping from logical field order to layout order
       std::vector<unsigned> mask_index_map;
+      std::vector<size_t> field_sizes;
       std::vector<CustomSerdezID> serdez;
       FieldMask instance_mask;
       ReductionOpID redop_id;
       const ReductionOp *reduction_op;
-#ifndef NEW_INSTANCE_CREATION
-      std::vector<size_t> sizes_only;
-      size_t block_size;
-#endif
+      Realm::InstanceLayoutGeneric *realm_layout;
+      bool own_realm_layout;
     public:
       bool valid;
     };
@@ -544,7 +548,7 @@ namespace Legion {
                                                               DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return LEGION_DISTRIBUTED_HELP_ENCODE(did, 0x0ULL);
+      return LEGION_DISTRIBUTED_HELP_ENCODE(did, INSTANCE_MANAGER_DC);
     }
 
     //--------------------------------------------------------------------------
@@ -552,7 +556,7 @@ namespace Legion {
                                                               DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return LEGION_DISTRIBUTED_HELP_ENCODE(did, 0x1ULL);
+      return LEGION_DISTRIBUTED_HELP_ENCODE(did, REDUCTION_FOLD_DC);
     }
 
     //--------------------------------------------------------------------------
@@ -560,14 +564,15 @@ namespace Legion {
                                                               DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return LEGION_DISTRIBUTED_HELP_ENCODE(did, 0x2ULL);
+      return LEGION_DISTRIBUTED_HELP_ENCODE(did, REDUCTION_LIST_DC);
     }
 
     //--------------------------------------------------------------------------
     /*static*/ inline bool PhysicalManager::is_instance_did(DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0x3) == 0x0);
+      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0xF) == 
+                                                        INSTANCE_MANAGER_DC);
     }
 
     //--------------------------------------------------------------------------
@@ -575,7 +580,8 @@ namespace Legion {
                                                               DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0x3) == 0x1);
+      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0xF) == 
+                                                    REDUCTION_FOLD_DC);
     }
 
     //--------------------------------------------------------------------------
@@ -583,7 +589,8 @@ namespace Legion {
                                                               DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0x3) == 0x2);
+      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0xF) == 
+                                                    REDUCTION_LIST_DC);
     }
 
     //--------------------------------------------------------------------------

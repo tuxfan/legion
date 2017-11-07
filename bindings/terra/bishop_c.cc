@@ -16,8 +16,7 @@
 #include "bishop_c.h"
 #include "bishop_mapper.h"
 #include "legion.h"
-#include "legion_c_util.h"
-#include "utilities.h"
+#include "legion/legion_c_util.h"
 
 #include <vector>
 #include <set>
@@ -105,7 +104,7 @@ bishop_all_processors()
   {
     // FIXME: need to change this if we add more processors useful for
     // mapping purporses
-    if (it->kind() == Processor::LOC_PROC || it->kind() == Processor::TOC_PROC)
+    if (it->kind() != Processor::UTIL_PROC)
       procs_.list[idx++] = CObjectWrapper::wrap(*it);
   }
   procs_.size = idx;
@@ -167,6 +166,26 @@ bishop_filter_processors_by_isa(bishop_processor_list_t source,
           break;
         }
     }
+  }
+
+  bishop_processor_list_t result_ = bishop_create_processor_list(result.size());
+  for (unsigned i = 0; i < result.size(); ++i)
+    result_.list[i] = result[i];
+  return result_;
+}
+
+bishop_processor_list_t
+bishop_filter_processors_by_kind(bishop_processor_list_t source,
+                                 legion_processor_kind_t kind_)
+{
+  vector<legion_processor_t> result;
+
+  Processor::Kind kind = CObjectWrapper::unwrap(kind_);
+  for (unsigned i = 0; i < source.size; ++i)
+  {
+    legion_processor_t proc_ = source.list[i];
+    Processor proc = CObjectWrapper::unwrap(proc_);
+    if (proc.kind() == kind) result.push_back(proc_);
   }
 
   bishop_processor_list_t result_ = bishop_create_processor_list(result.size());
@@ -271,6 +290,95 @@ bishop_physical_region_get_fields(legion_physical_region_t pr_)
        it != fields.end(); it++)
     fields_.list[idx++] = *it;
   return fields_;
+}
+
+typedef std::map<std::pair<size_t, LogicalRegion>,
+                 legion_physical_instance_t*> InstanceCache;
+
+bishop_instance_cache_t
+bishop_instance_cache_create()
+{
+  bishop_instance_cache_t cache_;
+  cache_.impl = new InstanceCache;
+  return cache_;
+}
+
+bool
+bishop_instance_cache_has_cached_instances(bishop_instance_cache_t cache_,
+                                           size_t idx,
+                                           legion_logical_region_t lr_)
+{
+  InstanceCache *cache = (InstanceCache*)cache_.impl;
+
+  LogicalRegion lr = CObjectWrapper::unwrap(lr_);
+  std::pair<size_t, LogicalRegion> key(idx, lr);
+  InstanceCache::iterator finder = cache->find(key);
+  return finder != cache->end();
+}
+
+legion_physical_instance_t*
+bishop_instance_cache_get_cached_instances(bishop_instance_cache_t cache_,
+                                           size_t idx,
+                                           legion_logical_region_t lr_)
+{
+  InstanceCache *cache = (InstanceCache*)cache_.impl;
+
+  LogicalRegion lr = CObjectWrapper::unwrap(lr_);
+  std::pair<size_t, LogicalRegion> key(idx, lr);
+  InstanceCache::iterator finder = cache->find(key);
+  if (finder == cache->end())
+  {
+    // TODO: Some layout constraints may require multiple instances
+    legion_physical_instance_t *instances =
+      (legion_physical_instance_t*)malloc(sizeof(legion_physical_instance_t));
+    (*cache)[key] = instances;
+    return instances;
+  }
+  else
+    return finder->second;
+}
+
+typedef std::map<Domain, std::vector<Mapper::TaskSlice> > SliceCache;
+
+bishop_slice_cache_t
+bishop_slice_cache_create()
+{
+  bishop_slice_cache_t cache_;
+  cache_.impl = new SliceCache;
+  return cache_;
+}
+
+bool
+bishop_slice_cache_has_cached_slices(bishop_slice_cache_t cache_,
+                                     legion_domain_t domain_)
+{
+  SliceCache *cache = (SliceCache*)cache_.impl;
+  return cache->find(CObjectWrapper::unwrap(domain_)) != cache->end();
+}
+
+void
+bishop_slice_cache_copy_cached_slices(bishop_slice_cache_t cache_,
+                                      legion_domain_t domain_,
+                                      legion_slice_task_output_t output_)
+{
+  SliceCache *cache = (SliceCache*)cache_.impl;
+  SliceCache::iterator finder = cache->find(CObjectWrapper::unwrap(domain_));
+#ifdef DEBUG_LEGION
+  assert(finder != cache->end());
+#endif
+  Mapper::SliceTaskOutput* output = CObjectWrapper::unwrap(output_);
+  output->slices.reserve(finder->second.size());
+  output->slices = finder->second;
+}
+
+void
+bishop_slice_cache_add_entry(bishop_slice_cache_t cache_,
+                             legion_domain_t domain_,
+                             legion_slice_task_output_t output_)
+{
+  SliceCache *cache = (SliceCache*)cache_.impl;
+  Mapper::SliceTaskOutput* output = CObjectWrapper::unwrap(output_);
+  (*cache)[CObjectWrapper::unwrap(domain_)] = output->slices;
 }
 
 void

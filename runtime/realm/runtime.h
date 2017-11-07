@@ -18,11 +18,9 @@
 #ifndef REALM_RUNTIME_H
 #define REALM_RUNTIME_H
 
-#include "processor.h"
-#include "redop.h"
-#include "custom_serdez.h"
-
-#include "lowlevel_config.h"
+#include "realm/processor.h"
+#include "realm/redop.h"
+#include "realm/custom_serdez.h"
 
 namespace Realm {
 
@@ -81,9 +79,10 @@ namespace Realm {
 	__attribute__((deprecated("use collect_spawn calls instead")));
 
       // requests a shutdown of the runtime
-      void shutdown(Event wait_on = Event::NO_EVENT);
+      void shutdown(Event wait_on = Event::NO_EVENT, int result_code = 0);
 
-      void wait_for_shutdown(void);
+      // returns the result_code passed to shutdown()
+      int wait_for_shutdown(void);
     };
 	
 }; // namespace Realm

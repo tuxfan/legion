@@ -15,12 +15,11 @@
 
 
 #include "legion.h"
-#include "legion_ops.h"
-#include "legion_spy.h"
-#include "legion_trace.h"
-#include "legion_tasks.h"
-#include "legion_context.h"
-#include "logger_message_descriptor.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_spy.h"
+#include "legion/legion_trace.h"
+#include "legion/legion_tasks.h"
+#include "legion/legion_context.h"
 
 namespace Legion {
   namespace Internal {
@@ -469,52 +468,31 @@ namespace Legion {
         {
           // Check for exceeding the trace size
           if (index >= dependences.size())
-          {
-            MessageDescriptor TRACE_VIOLATION_RECORDED(1600, "undefined");
-            log_run.error(TRACE_VIOLATION_RECORDED.id(),
+            REPORT_LEGION_ERROR(ERROR_TRACE_VIOLATION_RECORDED,
                           "Trace violation! Recorded %zd operations in trace "
                           "%d in task %s (UID %lld) but %d operations have "
                           "now been issued!", dependences.size(), tid,
-                          ctx->get_task_name(), ctx->get_unique_id(), index+1);
-#ifdef DEBUG_LEGION
-            assert(false);
-#endif
-            exit(ERROR_TRACE_VIOLATION);
-          }
+                          ctx->get_task_name(), ctx->get_unique_id(), index+1)
           // Check to see if the meta-data alignes
           const OperationInfo &info = op_info[index];
           // Check that they are the same kind of operation
           if (info.kind != op->get_operation_kind())
-          {
-            MessageDescriptor TRACE_VIOLATION_OPERATION(1601, "undefined");
-            log_run.error(TRACE_VIOLATION_OPERATION.id(),
+            REPORT_LEGION_ERROR(ERROR_TRACE_VIOLATION_OPERATION,
                           "Trace violation! Operation at index %d of trace %d "
                           "in task %s (UID %lld) was recorded as having type "
                           "%s but instead has type %s in replay.",
                           index, tid, ctx->get_task_name(),ctx->get_unique_id(),
                           Operation::get_string_rep(info.kind),
-                          Operation::get_string_rep(op->get_operation_kind()));
-#ifdef DEBUG_LEGION
-            assert(false);
-#endif
-            exit(ERROR_TRACE_VIOLATION);
-          }
+                          Operation::get_string_rep(op->get_operation_kind()))
           // Check that they have the same number of region requirements
           if (info.count != op->get_region_count())
-          {
-            MessageDescriptor TRACE_VIOLATION_OPERATION2(1602, "undefined");
-            log_run.error(TRACE_VIOLATION_OPERATION2.id(),
+            REPORT_LEGION_ERROR(ERROR_TRACE_VIOLATION_OPERATION,
                           "Trace violation! Operation at index %d of trace %d "
                           "in task %s (UID %lld) was recorded as having %d "
                           "regions, but instead has %zd regions in replay.",
                           index, tid, ctx->get_task_name(),
                           ctx->get_unique_id(), info.count,
-                          op->get_region_count());
-#ifdef DEBUG_LEGION
-            assert(false);
-#endif
-            exit(ERROR_TRACE_VIOLATION);
-          }
+                          op->get_region_count())
           // If we make it here, everything is good
           const LegionVector<DependenceRecord>::aligned &deps = 
                                                           dependences[index];
@@ -651,7 +629,7 @@ namespace Legion {
         if (!source->is_internal_op())
         {
           // Normal case
-          dependences.back().push_back(DependenceRecord(finder->second));
+          insert_dependence(DependenceRecord(finder->second));
         }
         else
         {
@@ -665,8 +643,7 @@ namespace Legion {
             assert(internal_dependences.find(src_key) != 
                    internal_dependences.end());
 #endif
-            internal_dependences[src_key].push_back(
-                DependenceRecord(finder->second));
+            insert_dependence(src_key, DependenceRecord(finder->second));
           }
         }
       }
@@ -686,15 +663,11 @@ namespace Legion {
           internal_finder = internal_dependences.find(local_key);
         if (internal_finder != internal_dependences.end())
         {
-          LegionVector<DependenceRecord>::aligned &target_deps = 
-                                                        dependences.back();
           const LegionVector<DependenceRecord>::aligned &internal_deps = 
                                                         internal_finder->second;
           for (LegionVector<DependenceRecord>::aligned::const_iterator it = 
                 internal_deps.begin(); it != internal_deps.end(); it++)
-          {
-            target_deps.push_back(DependenceRecord(it->operation_idx)); 
-          }
+            insert_dependence(DependenceRecord(it->operation_idx)); 
         }
       }
     }
@@ -729,9 +702,8 @@ namespace Legion {
         if (!source->is_internal_op())
         {
           // Normal case
-          dependences.back().push_back(
-              DependenceRecord(finder->second, target_idx, source_idx,
-                               validates, dtype, dep_mask));
+          insert_dependence(DependenceRecord(finder->second, target_idx, 
+                                source_idx, validates, dtype, dep_mask));
         }
         else
         {
@@ -745,7 +717,7 @@ namespace Legion {
             assert(internal_dependences.find(src_key) != 
                    internal_dependences.end());
 #endif
-            internal_dependences[src_key].push_back(
+            insert_dependence(src_key, 
                 DependenceRecord(finder->second, target_idx, source_idx,
                                  validates, dtype, dep_mask));
           }
@@ -773,9 +745,8 @@ namespace Legion {
               FieldMask overlap = it->dependent_mask & dep_mask;
               if (!overlap)
                 continue;
-              dependences.back().push_back(
-                  DependenceRecord(it->operation_idx, it->prev_idx,
-                     source_idx, it->validates, it->dtype, overlap));
+              insert_dependence(DependenceRecord(it->operation_idx, 
+                  it->prev_idx, source_idx, it->validates, it->dtype, overlap));
             }
           }
           else
@@ -788,8 +759,6 @@ namespace Legion {
             assert(internal_dependences.find(src_key) != 
                    internal_dependences.end());
 #endif
-            LegionVector<DependenceRecord>::aligned &internal_deps = 
-                                              internal_dependences[src_key];
             for (LegionVector<DependenceRecord>::aligned::const_iterator
                   it = internal_finder->second.begin(); 
                   it != internal_finder->second.end(); it++)
@@ -797,7 +766,7 @@ namespace Legion {
               FieldMask overlap = it->dependent_mask & dep_mask;
               if (!overlap)
                 continue;
-              internal_deps.push_back(
+              insert_dependence(src_key, 
                   DependenceRecord(it->operation_idx, it->prev_idx,
                     source_idx, it->validates, it->dtype, overlap));
             }
@@ -814,6 +783,37 @@ namespace Legion {
       unsigned index = operations.size() - 1;
       aliased_children[index].push_back(AliasChildren(req_index, depth, mask));
     } 
+
+    //--------------------------------------------------------------------------
+    void DynamicTrace::insert_dependence(const DependenceRecord &record)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      assert(!dependences.empty());
+#endif
+      LegionVector<DependenceRecord>::aligned &deps = dependences.back();
+      // Try to merge it with an existing dependence
+      for (unsigned idx = 0; idx < deps.size(); idx++)
+        if (deps[idx].merge(record))
+          return;
+      // If we make it here, we couldn't merge it so just add it
+      deps.push_back(record);
+    }
+
+    //--------------------------------------------------------------------------
+    void DynamicTrace::insert_dependence(
+                                 const std::pair<InternalOp*,GenerationID> &key,
+                                 const DependenceRecord &record)
+    //--------------------------------------------------------------------------
+    {
+      LegionVector<DependenceRecord>::aligned &deps = internal_dependences[key];
+      // Try to merge it with an existing dependence
+      for (unsigned idx = 0; idx < deps.size(); idx++)
+        if (deps[idx].merge(record))
+          return;
+      // If we make it here, we couldn't merge it so just add it
+      deps.push_back(record);
+    }
 
     /////////////////////////////////////////////////////////////
     // TraceCaptureOp 
@@ -947,7 +947,7 @@ namespace Legion {
     void TraceCompleteOp::initialize_complete(TaskContext *ctx)
     //--------------------------------------------------------------------------
     {
-      initialize(ctx, MIXED_FENCE);
+      initialize(ctx, MAPPING_FENCE);
 #ifdef DEBUG_LEGION
       assert(trace != NULL);
 #endif

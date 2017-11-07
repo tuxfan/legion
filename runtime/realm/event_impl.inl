@@ -16,10 +16,10 @@
 // Event/UserEvent/Barrier implementations for Realm
 
 // nop, but helps IDEs
-#include "event_impl.h"
+#include "realm/event_impl.h"
 
 // can't include runtime_impl.h because it's including us, but we need this declaration:
-//include "runtime_impl.h"
+//include "realm/runtime_impl.h"
 namespace Realm { 
   extern EventImpl *get_event_impl(Event e);
   extern GenEventImpl *get_genevent_impl(Event e);
@@ -59,7 +59,7 @@ namespace Realm {
   inline /*static*/ void GenEventImpl::trigger(Event e, bool poisoned)
   {
     GenEventImpl *impl = get_genevent_impl(e);
-    impl->trigger(ID(e).event.generation, gasnet_mynode(), poisoned);
+    impl->trigger(ID(e).event.generation, my_node_id, poisoned);
   }
 
 

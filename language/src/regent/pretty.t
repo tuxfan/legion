@@ -213,6 +213,15 @@ function pretty.expr_function(cx, node)
     name = node.value:get_name():mkstring(".")
   elseif terralib.isfunction(node.value) then
     name = node.value:getname()
+  elseif node.value == _G['array'] or node.value == _G['arrayof'] then
+    name = 'array'
+  elseif node.value == _G['vector'] or node.value == _G['vectorof'] then
+    name = 'vector'
+  elseif node.value == _G['tuple'] then
+    name = 'tuple'
+  elseif regentlib.is_math_op(node.value) then
+    -- HACK: This information should be exported from std.t
+    name = regentlib.get_math_op_name(node.value, node.expr_type.returntype)
   else
     name = tostring(node.value)
   end
@@ -298,14 +307,6 @@ function pretty.expr_isnull(cx, node)
   return join({"isnull(", pretty.expr(cx, node.pointer), ")"})
 end
 
-function pretty.expr_new(cx, node)
-  return join({
-      "new(",
-      commas({tostring(node.pointer_type), pretty.expr(cx, node.region),
-              node.extent and pretty.expr(cx, node.extent)}),
-      ")"})
-end
-
 function pretty.expr_null(cx, node)
   return text.Line { value = "null(" .. tostring(node.pointer_type) .. ")" }
 end
@@ -335,11 +336,12 @@ function pretty.expr_region(cx, node)
 end
 
 function pretty.expr_partition(cx, node)
-  return join({
-      "partition(",
-      commas({tostring(node.disjointness),
-              pretty.expr(cx, node.region), pretty.expr(cx, node.coloring)}),
-      ")"})
+  local args = terralib.newlist()
+  args:insert(tostring(node.disjointness))
+  args:insert(pretty.expr(cx, node.region))
+  args:insert(pretty.expr(cx, node.coloring))
+  if node.colors then args:insert(pretty.expr(cx, node.colors)) end
+  return join({"partition(", commas(args), ")"})
 end
 
 function pretty.expr_partition_equal(cx, node)
@@ -655,9 +657,6 @@ function pretty.expr(cx, node)
   elseif node:is(ast.typed.expr.Isnull) then
     return pretty.expr_isnull(cx, node)
 
-  elseif node:is(ast.typed.expr.New) then
-    return pretty.expr_new(cx, node)
-
   elseif node:is(ast.typed.expr.Null) then
     return pretty.expr_null(cx, node)
 
@@ -919,10 +918,13 @@ function pretty.stat_index_launch_list(cx, node)
 end
 
 function pretty.stat_var(cx, node)
-  local symbols = commas(node.symbols:map(function(symbol) return tostring(symbol) end))
-  local types = commas(node.types:map(function(type) return tostring(type) end))
-  local assign = #node.values > 0 and "="
-  return join({"var", symbols, ":", types, assign, pretty.expr_list(cx, node.values)}, true)
+  local decls = terralib.newlist()
+  decls:insert(join({tostring(node.symbol), ":", tostring(node.type)}, true))
+  if node.value then
+    return join({"var", commas(decls), "=", pretty.expr(cx, node.value)}, true)
+  else
+    return join({"var", commas(decls)}, true)
+  end
 end
 
 function pretty.stat_var_unpack(cx, node)
@@ -940,11 +942,11 @@ function pretty.stat_break(cx, node)
 end
 
 function pretty.stat_assignment(cx, node)
-  return join({pretty.expr_list(cx, node.lhs), "=", pretty.expr_list(cx, node.rhs)}, true)
+  return join({pretty.expr(cx, node.lhs), "=", pretty.expr(cx, node.rhs)}, true)
 end
 
 function pretty.stat_reduce(cx, node)
-  return join({pretty.expr_list(cx, node.lhs), node.op .. "=", pretty.expr_list(cx, node.rhs)}, true)
+  return join({pretty.expr(cx, node.lhs), node.op .. "=", pretty.expr(cx, node.rhs)}, true)
 end
 
 function pretty.stat_expr(cx, node)

@@ -26,6 +26,7 @@ add_subdirectory(dynamic_registration)
 add_subdirectory(ghost)
 add_subdirectory(ghost_pull)
 add_subdirectory(realm_saxpy)
+add_subdirectory(realm_stencil)
 add_subdirectory(spmd_cgsolver)
 add_subdirectory(virtual_map)
 
@@ -35,4 +36,8 @@ endif()
 
 if(Legion_USE_CUDA)
   add_subdirectory(thrust_interop)
+endif()
+
+if(Legion_USE_Python)
+  add_subdirectory(python_interop)
 endif()
