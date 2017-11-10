@@ -20,7 +20,6 @@
 #include "legion.h"
 using namespace Legion;
 using namespace LegionRuntime::Accessor;
-using namespace LegionRuntime::Arrays;
 
 /*
  * In this example we illustrate how the Legion
@@ -82,9 +81,9 @@ class SingleDiffProjectionFunctor : public ProjectionFunctor
                                   LogicalPartition upper_bound,
                                   const DomainPoint &point)
     {
-      const Point<1> one = make_point(1);
-      const Point<1> new_point = point.get_point<1>() + one;
-      DomainPoint new_d_point = DomainPoint::from_point<1>(new_point);
+      const Point<1> one = Point<1>(1);
+      const Point<1> new_point = Point<1>(point) + one;
+      DomainPoint new_d_point(new_point);
       if (runtime->has_logical_subregion_by_color(upper_bound, new_d_point))
       {
         return runtime->get_logical_subregion_by_color(
@@ -144,9 +143,9 @@ class YDiffProjectionFunctorFirst : public ProjectionFunctor
                                   LogicalPartition upper_bound,
                                   const DomainPoint &point)
     {
-      const Point<1> one = make_point(1);
-      const Point<1> new_point = point.get_point<1>() - one;
-      DomainPoint new_d_point = DomainPoint::from_point<1>(new_point);
+      const Point<1> one = Point<1>(1);
+      const Point<1> new_point = Point<1>(point) - one;
+      DomainPoint new_d_point(new_point);
       return runtime->get_logical_subregion_by_color(upper_bound, new_d_point);
     }
 
@@ -174,9 +173,9 @@ class XDiffProjectionFunctorSecond : public ProjectionFunctor
                                   LogicalPartition upper_bound,
                                   const DomainPoint &point)
     {
-      const Point<1> one = make_point(1);
-      const Point<1> new_point = point.get_point<1>() + one;
-      DomainPoint new_d_point = DomainPoint::from_point<1>(new_point);
+      const Point<1> one = Point<1>(1);
+      const Point<1> new_point = Point<1>(point) + one;
+      DomainPoint new_d_point = DomainPoint(new_point);
       return runtime->get_logical_subregion_by_color(upper_bound, new_d_point);
     }
 
@@ -271,10 +270,10 @@ void top_level_task(const Task *task,
   // For this example we'll create a single logical region with three
   // fields.  We'll initialize the field identified by 'FID_X' and 'FID_Y' with
   // our input data and then compute the value and write into 'FID_VAL'.
-  Rect<2> elem_rect(make_point(0,0),
-      make_point(side_length_x-1, side_length_y-1));
+  Rect<2> elem_rect(Point<2>(0,0),
+      Point<2>(side_length_x-1, side_length_y-1));
   IndexSpace is = runtime->create_index_space(ctx, 
-                          Domain::from_rect<2>(elem_rect));
+                          Domain(elem_rect));
   FieldSpace fs = runtime->create_field_space(ctx);
   {
     FieldAllocator allocator = 
@@ -290,8 +289,8 @@ void top_level_task(const Task *task,
   // sides (for double counting the corner).
   // We subtract an additional 1 when making the bounds for 0 indexing.
   int total_diag_slices = num_subregions_x + num_subregions_y - 1;
-  Rect<1> color_bounds(make_point(0), make_point(total_diag_slices - 1));
-  Domain color_domain = Domain::from_rect<1>(color_bounds);
+  Rect<1> color_bounds(Point<1>(0), Point<1>(total_diag_slices - 1));
+  Domain color_domain = Domain(color_bounds);
 
   // Create two levels of partition
   // First divide the grid along the opposite diagonal
@@ -311,9 +310,9 @@ void top_level_task(const Task *task,
         int y_start = y * points_per_partition_y;
         int x_end = x_start + points_per_partition_x - 1;
         int y_end = y_start + points_per_partition_y - 1;
-        Rect<2> subrect(make_point(x_start, y_start),make_point(x_end, y_end));
-        d_coloring[DomainPoint::from_point<1>(make_point(x + y))].insert(
-          Domain::from_rect<2>(subrect));
+        Rect<2> subrect(Point<2>(x_start, y_start),Point<2>(x_end, y_end));
+        d_coloring[DomainPoint(Point<1>(x + y))].insert(
+          Domain(subrect));
       }
     }
 
@@ -353,8 +352,8 @@ void top_level_task(const Task *task,
         y_offset = short_offset;
       }
 
-      Rect<1> sub_color_bounds(make_point(-1), make_point(bound));
-      Domain sub_color_domain = Domain::from_rect<1>(sub_color_bounds);
+      Rect<1> sub_color_bounds(Point<1>(-1), Point<1>(bound));
+      Domain sub_color_domain = Domain(sub_color_bounds);
       DomainPointColoring sub_d_coloring;
       LogicalRegion to_partition = runtime->get_logical_subregion_by_color(ctx,
           first_lp, itr.p);
@@ -365,8 +364,8 @@ void top_level_task(const Task *task,
         if (itr2.p[0] == -1 || itr2.p[0] == bound)
         {
           // Map the first and last point to the empty domain
-          Rect<2> subrect(make_point(0,0),make_point(-1,-1));
-          sub_d_coloring[itr2.p] = Domain::from_rect<2>(subrect);
+          Rect<2> subrect(Point<2>(0,0),Point<2>(-1,-1));
+          sub_d_coloring[itr2.p] = Domain(subrect);
           continue;
         }
         int x_start = (itr2.p[0] + x_offset) * points_per_partition_x;
@@ -374,8 +373,8 @@ void top_level_task(const Task *task,
             (bound - itr2.p[0] - 1 + y_offset) * points_per_partition_y;
         int x_end = x_start + points_per_partition_x - 1;
         int y_end = y_start + points_per_partition_y - 1;
-        Rect<2> subrect(make_point(x_start, y_start),make_point(x_end, y_end));
-        sub_d_coloring[itr2.p] = Domain::from_rect<2>(subrect);
+        Rect<2> subrect(Point<2>(x_start, y_start),Point<2>(x_end, y_end));
+        sub_d_coloring[itr2.p] = Domain(subrect);
       }
 
       sub_ip = runtime->create_index_partition(ctx,
@@ -386,7 +385,7 @@ void top_level_task(const Task *task,
 
   for (int i = num_subregions_x + num_subregions_y - 2; i >= 0; i--)
   {
-    DomainPoint init_point = DomainPoint::from_point<1>(make_point(i));
+    DomainPoint init_point = DomainPoint(Point<1>(i));
     LogicalRegion init_region =
         runtime->get_logical_subregion_by_color(first_lp, init_point);
 
@@ -404,20 +403,20 @@ void top_level_task(const Task *task,
   // We need to run a special compute task for the corner region
   LogicalRegion corner_intermediate_region =
     runtime->get_logical_subregion_by_color(first_lp,
-        DomainPoint::from_point<1>(
-        make_point(num_subregions_x + num_subregions_y - 2)));
+        DomainPoint(
+        Point<1>(num_subregions_x + num_subregions_y - 2)));
   LogicalPartition corner_intermediate_partition =
     runtime->get_logical_partition_by_color(corner_intermediate_region,
-        DomainPoint::from_point<1>(make_point(0)));
+        DomainPoint(Point<1>(0)));
   LogicalRegion corner_region =
     runtime->get_logical_subregion_by_color(corner_intermediate_partition,
-        DomainPoint::from_point<1>(make_point(0)));
+        DomainPoint(Point<1>(0)));
   LogicalRegion dummy_region_1 =
     runtime->get_logical_subregion_by_color(corner_intermediate_partition,
-        DomainPoint::from_point<1>(make_point(-1)));
+        DomainPoint(Point<1>(-1)));
   LogicalRegion dummy_region_2 =
     runtime->get_logical_subregion_by_color(corner_intermediate_partition,
-        DomainPoint::from_point<1>(make_point(1)));
+        DomainPoint(Point<1>(1)));
 
   TaskLauncher compute_launcher(COMPUTE_TASK_ID,
        TaskArgument(NULL, 0));
@@ -440,8 +439,8 @@ void top_level_task(const Task *task,
   {
     for (int i = num_subregions_x + num_subregions_y - 3; i >= 0; i--)
     {
-      DomainPoint compute_point = DomainPoint::from_point<1>(make_point(i));
-      DomainPoint data_point = DomainPoint::from_point<1>(make_point(i+1));
+      DomainPoint compute_point = DomainPoint(Point<1>(i));
+      DomainPoint data_point = DomainPoint(Point<1>(i+1));
       LogicalRegion compute_region =
           runtime->get_logical_subregion_by_color(first_lp, compute_point);
       LogicalRegion data_region =
@@ -507,14 +506,14 @@ void init_field_task(const Task *task,
   RegionAccessor<AccessorType::Generic, int> acc_val_write = 
     regions[0].get_field_accessor(fid_val_write).typeify<int>();
 
-  Domain dom = runtime->get_index_space_domain(ctx, 
+  Rect<2> rect = runtime->get_index_space_domain(ctx, 
       task->regions[0].region.get_index_space());
-  Rect<2> rect = dom.get_rect<2>();
-  for (GenericPointInRectIterator<2> pir(rect); pir; pir++)
+
+  for (PointInRectIterator<2> pir(rect); pir(); pir++)
   {
-    accx.write(DomainPoint::from_point<2>(pir.p), pir.p[0]);
-    accy.write(DomainPoint::from_point<2>(pir.p), pir.p[1]);
-    acc_val_write.write(DomainPoint::from_point<2>(pir.p), 1);
+    accx.write(*pir, (*pir)[0]);
+    accy.write(*pir, (*pir)[1]);
+    acc_val_write.write(*pir, 1);
   }
 }
 
@@ -530,14 +529,13 @@ void init_launcher_helper_task(const Task *task,
 
   LogicalPartition init_partition =
       runtime->get_logical_partition_by_color(ctx, lr_0,
-                  DomainPoint::from_point<1>(make_point(0)));
+                  DomainPoint(Point<1>(0)));
 
-  Domain extended_init_domain = runtime->get_index_partition_color_space(
+  Rect<1> extended_rect = runtime->get_index_partition_color_space(
       init_partition.get_index_partition());
-  Rect<1> extended_rect = extended_init_domain.get_rect<1>();
-  Rect<1> rect(make_point(extended_rect.lo[0] + 1),
-      make_point(extended_rect.hi[0] - 1));
-  Domain init_launch_domain = Domain::from_rect<1>(rect);
+  Rect<1> rect(Point<1>(extended_rect.lo[0] + 1),
+      Point<1>(extended_rect.hi[0] - 1));
+  Domain init_launch_domain = Domain(rect);
   
   ArgumentMap arg_map;
   IndexLauncher init_launcher(INIT_FIELD_TASK_ID, init_launch_domain,
@@ -567,18 +565,17 @@ void compute_launcher_helper_task(const Task *task,
 
   LogicalPartition compute_partition =
       runtime->get_logical_partition_by_color(ctx, lr_0,
-                  DomainPoint::from_point<1>(make_point(0)));
+                  DomainPoint(Point<1>(0)));
   LogicalPartition data_partition = 
       runtime->get_logical_partition_by_color(ctx, lr_1,
-                  DomainPoint::from_point<1>(make_point(0)));
+                  DomainPoint(Point<1>(0)));
 
-  Domain extended_compute_domain =
+  Rect<1> extended_rect =
       runtime->get_index_partition_color_space(
       compute_partition.get_index_partition());
-  Rect<1> extended_rect = extended_compute_domain.get_rect<1>();
-  Rect<1> rect(make_point(extended_rect.lo[0] + 1),
-      make_point(extended_rect.hi[0] - 1));
-  Domain compute_launch_domain = Domain::from_rect<1>(rect);
+  Rect<1> rect(Point<1>(extended_rect.lo[0] + 1),
+      Point<1>(extended_rect.hi[0] - 1));
+  Domain compute_launch_domain = Domain(rect);
   
 
   ProjIDs x_proj = X_PROJ_FIRST;
@@ -630,9 +627,8 @@ void compute_task(const Task *task,
   RegionAccessor<AccessorType::Generic, int> curr_acc = 
     regions[2].get_field_accessor(val_fid_curr).typeify<int>();
 
-  Domain dom = runtime->get_index_space_domain(ctx,
+  Rect<2> rect = runtime->get_index_space_domain(ctx,
       task->regions[2].region.get_index_space());
-  Rect<2> rect = dom.get_rect<2>();
 
   Domain x_dom = runtime->get_index_space_domain(ctx,
       task->regions[0].region.get_index_space());
@@ -645,20 +641,22 @@ void compute_task(const Task *task,
   Point<2> hi = rect.hi;
   Point<2> cur_point;
   int x_diff_val, y_diff_val;
-  const Point<2> onex = make_point(1,0);
-  const Point<2> oney = make_point(0,1);
+  const Point<2> onex = Point<2>(1,0);
+  const Point<2> oney = Point<2>(0,1);
 
   for (long int x = hi[0]; x >= lo[0]; x--)
   {
     for (long int y = hi[1]; y >= lo[1]; y--)
     {
-      cur_point = make_point(x, y);
+      cur_point = Point<2>(x, y);
+      const Point<2> idx_x = cur_point + onex;
+      const Point<2> idx_y = cur_point + oney;
       if (x == hi[0])
       {
         if (x_volume > 0)
         {
           x_diff_val =
-              x_diff_acc.read(DomainPoint::from_point<2>(cur_point + onex));
+              x_diff_acc.read(idx_x);
         }
         else
         {
@@ -668,14 +666,14 @@ void compute_task(const Task *task,
       else
       {
         x_diff_val =
-            curr_acc.read(DomainPoint::from_point<2>(cur_point + onex));
+            curr_acc.read(idx_x);
       }
       if (y == hi[1])
       {
         if (y_volume > 0)
         {
           y_diff_val =
-              y_diff_acc.read(DomainPoint::from_point<2>(cur_point + oney));
+              y_diff_acc.read(idx_y);
         }
         else
         {
@@ -685,7 +683,7 @@ void compute_task(const Task *task,
       else
       {
         y_diff_val =
-            curr_acc.read(DomainPoint::from_point<2>(cur_point + oney));
+            curr_acc.read(idx_y);
       }
       int computed_val = 0;
       if (x_diff_val > y_diff_val)
@@ -696,7 +694,7 @@ void compute_task(const Task *task,
       {
         computed_val = y_diff_val + 1;
       }
-      curr_acc.write(DomainPoint::from_point<2>(cur_point), computed_val);
+      curr_acc.write(cur_point, computed_val);
     }
   }
 }
@@ -741,17 +739,16 @@ void check_task(const Task *task,
   RegionAccessor<AccessorType::Generic, int> acc_val = 
     regions[0].get_field_accessor(fid_val).typeify<int>();
 
-  Domain dom = runtime->get_index_space_domain(ctx,
+  Rect<2> rect = runtime->get_index_space_domain(ctx,
       task->regions[0].region.get_index_space());
-  Rect<2> rect = dom.get_rect<2>();
 
   // This is the checking task so we can just do the slow path
   bool all_passed = true;
-  for (GenericPointInRectIterator<2> pir(rect); pir; pir++)
+  for (PointInRectIterator<2> pir(rect); pir(); pir++)
   {
-    int x = side_length_x - 1 - accx.read(DomainPoint::from_point<2>(pir.p));
-    int y = side_length_y - 1 - accy.read(DomainPoint::from_point<2>(pir.p));
-    int val = acc_val.read(DomainPoint::from_point<2>(pir.p));
+    int x = side_length_x - 1 - accx.read(*pir);
+    int y = side_length_y - 1 - accy.read(*pir);
+    int val = acc_val.read(*pir);
     int expected = x + y + 1;
 
     //printf("At point (%lld, %lld).  Checking for values %d and %d... "
