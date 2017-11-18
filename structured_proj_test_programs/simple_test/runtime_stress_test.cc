@@ -193,7 +193,7 @@ class IDProjectionFunctor : public StructuredProjectionFunctor
     {
       StructuredProjectionStep first_step =
         StructuredProjectionStep::make_step(1, 0 , 0, 1, 1, 0);
-      StructuredProjection sproj(2, 1);
+      StructuredProjection sproj;
       sproj.steps.push_back(first_step);
       return sproj;
     }
@@ -235,7 +235,7 @@ class XDiffProjectionFunctor : public StructuredProjectionFunctor
     {
       StructuredProjectionStep first_step =
         StructuredProjectionStep::make_step(1, 0 , 1, 1, 1, 0);
-      StructuredProjection sproj(2, 1);
+      StructuredProjection sproj;
       sproj.steps.push_back(first_step);
       return sproj;
     }
@@ -277,7 +277,7 @@ class YDiffProjectionFunctor : public StructuredProjectionFunctor
     {
       StructuredProjectionStep first_step =
         StructuredProjectionStep::make_step(1, 0 , 0, 1, 1, 1);
-      StructuredProjection sproj(2, 1);
+      StructuredProjection sproj;
       sproj.steps.push_back(first_step);
       return sproj;
     }

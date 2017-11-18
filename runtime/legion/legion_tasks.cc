@@ -7021,11 +7021,11 @@ namespace Legion {
             proj_func->project_structured(DUMMY_CONTEXT));
       }
 
-      int structured_depth = structured_funcs[0].depth;
+      unsigned structured_depth = structured_funcs[0].steps.size();
       ProjectionType handle_type = proj_reqs[0].handle_type;
       for (unsigned idx = 1; idx < proj_reqs.size(); idx++)
       {
-        assert(structured_depth == structured_funcs[idx].depth);
+        assert(structured_depth == structured_funcs[idx].steps.size());
         assert(handle_type == proj_reqs[idx].handle_type);
         if (handle_type == REG_PROJECTION)
           assert(proj_reqs[0].region == proj_reqs[idx].region);

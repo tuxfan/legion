@@ -496,6 +496,9 @@ namespace Legion {
             ProjectionExpression *lhs_exp,
             ProjectionExpression *rhs_exp);
       public:
+        void pack_constraint(Serializer &rez) const;
+        void unpack_constraint(Deserializer &derez);
+      public:
         ProjectionAnalysisConstraint *simplify(void);
         ProjectionAnalysisConstraint *substitute(DomainPoint &left_point,
                                                  DomainPoint &right_point);

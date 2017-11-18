@@ -3079,16 +3079,7 @@ namespace Legion {
     class StructuredProjection {
     public:
       StructuredProjection(void) {}
-      StructuredProjection(int proj_dim, int proj_depth)
-      {
-        dim = proj_dim;
-        depth = proj_depth;
-        steps.reserve(proj_dim);
-      }
-      int get_dim(void) const { return dim; }
     public:
-      int dim;
-      int depth;
       std::vector<StructuredProjectionStep> steps;
     };
 
