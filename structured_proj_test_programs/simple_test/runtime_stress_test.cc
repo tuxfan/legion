@@ -606,6 +606,7 @@ void compute_task_angle(const Task *task,
   Point<2> lo = rect.lo;
   Point<2> hi = rect.hi;
   Point<2> cur_point;
+  //printf("starting the compute task for point (%lld, %lld)\n", hi[0], hi[1]);
   int x_diff_val, y_diff_val;
   const Point<2> onex = Point<2>(1,0);
   const Point<2> oney = Point<2>(0,1);
@@ -656,6 +657,7 @@ void compute_task_angle(const Task *task,
       {
         computed_val = y_diff_val + 1;
       }
+      //printf("x diff is %d, y diff is %d\n", x_diff_val, y_diff_val);
       curr_acc.write(cur_point, computed_val);
     }
   }
@@ -793,7 +795,7 @@ void check_task(const Task *task,
     int expected = 1;
     expected = x + y + 1;
 
-    //printf("At point (%lld, %lld)\n", pir.p[0], pir.p[1]);
+    //printf("At point (%lld, %lld)\n", (*pir)[0], (*pir)[1]);
     //printf("Checking for values %d and %d... expected %d, found %d\n",
     //    x, y, expected, val);
     
