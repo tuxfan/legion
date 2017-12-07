@@ -1449,6 +1449,35 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    void TaskOp::pack_constraint_equations(Serializer &rez,
+                      std::vector<ProjectionAnalysisConstraint> &eqns)
+    //--------------------------------------------------------------------------
+    {
+      RezCheck z(rez);
+      rez.serialize(eqns.size());
+      for (unsigned idx = 0; idx < eqns.size(); idx++)
+      {
+        eqns[idx].pack_constraint(rez);
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    void TaskOp::unpack_constraint_equations(Deserializer &derez,
+                      std::vector<ProjectionAnalysisConstraint> &eqns)
+    //--------------------------------------------------------------------------
+    {
+      DerezCheck z(derez);
+      size_t num_constraints;
+      derez.deserialize(num_constraints);
+      ProjectionAnalysisConstraint default_constraint(TRUE);
+      eqns.resize(num_constraints, default_constraint);
+      for (unsigned idx = 0; idx < num_constraints; idx++)
+      {
+        eqns[idx].unpack_constraint(derez);
+      }
+    }
+
+    //--------------------------------------------------------------------------
     void TaskOp::activate_outstanding_task(void)
     //--------------------------------------------------------------------------
     {
@@ -4274,6 +4303,8 @@ namespace Legion {
         this->serdez_redop_fns = rhs->serdez_redop_fns;
         initialize_reduction_state();
       }
+      this->constraint_equations = rhs->constraint_equations;
+      this->oid = rhs->oid;
       this->restrict_infos = rhs->restrict_infos;
       this->projection_infos = rhs->projection_infos;
       this->predicate_false_future = rhs->predicate_false_future;
@@ -4308,6 +4339,12 @@ namespace Legion {
       // Only necessary for structured index space launches
       if (constraint_equations.size() == 0)
       {
+        for(std::list<SliceTask*>::const_iterator it1 = slices.begin();
+            it1 != slices.end(); ++it1)
+        {
+          SliceTask *slice = *it1;
+          slice->set_structured_slice_mapped_trigger(Runtime::create_rt_user_event());
+        }
         return;
       }
       int dim = internal_domain.get_dim();
@@ -4317,6 +4354,7 @@ namespace Legion {
         SliceTask *slice = *it1;
         runtime->forest->find_launch_space_domain(slice->internal_space,
           slice->internal_domain);
+        slice->set_structured_slice_mapped_trigger(Runtime::create_rt_user_event());
       }
       for(std::list<SliceTask*>::const_iterator it1 = slices.begin();
           it1 != slices.end(); ++it1)
@@ -4343,18 +4381,18 @@ namespace Legion {
             for (unsigned idx_p = 0; idx_p < constraint_equations.size();
                 idx_p++)
             {
-              ProjectionAnalysisConstraint* constraintEq =
+              ProjectionAnalysisConstraint constraintEq =
                   constraint_equations[idx_p];
               OrderingFunctor *ordering_func =
                 runtime->find_ordering_functor(oid);
                 // make this into a domain point
-              constraintEq->get_dependent_points(p1,
+              constraintEq.get_dependent_points(p1,
                   internal_domain, ordering_func, dependent_points);
-              constraintEq->get_dependent_points(p2,
+              constraintEq.get_dependent_points(p2,
                   internal_domain, ordering_func, dependent_points);
-              constraintEq->get_dependent_points(p3,
+              constraintEq.get_dependent_points(p3,
                   internal_domain, ordering_func, dependent_points);
-              constraintEq->get_dependent_points(p4,
+              constraintEq.get_dependent_points(p4,
                   internal_domain, ordering_func, dependent_points);
             }
             for (unsigned idx_p = 0; idx_p < dependent_points.size(); idx_p++)
@@ -4368,7 +4406,8 @@ namespace Legion {
                 if (other_slice->internal_domain.contains(
                   dependent_points[idx_p]))
                 {
-                  slice_dependency_events.insert(other_slice->mapped_event);
+                  slice_dependency_events.insert(
+                      other_slice->get_structured_slice_mapped_trigger());
                   break;
                 }
               }
@@ -4489,6 +4528,7 @@ namespace Legion {
       rez.serialize(launch_space);
       rez.serialize(sliced);
       rez.serialize(redop);
+      rez.serialize(oid);
     }
 
     //--------------------------------------------------------------------------
@@ -4508,6 +4548,7 @@ namespace Legion {
         serdez_redop_fns = Runtime::get_serdez_redop_fns(redop);
         initialize_reduction_state();
       }
+      derez.deserialize(oid);
     }
 
     //--------------------------------------------------------------------------
@@ -5118,7 +5159,9 @@ namespace Legion {
       // See if we need to do any versioning computations first
       RtEvent version_ready_event = perform_versioning_analysis();
       if (version_ready_event.exists() && !version_ready_event.has_triggered())
+      {
         return defer_perform_mapping(version_ready_event, must_epoch_owner);
+      }
       // Now try to do the mapping, we can just use our completion
       // event since we know this task will object will be active
       // throughout the duration of the computation
@@ -6123,8 +6166,11 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       // We have a structured index task launch
-      if (slice_owner->index_owner->constraint_equations.size() > 0)
+      if (slice_owner->constraint_equations.size() > 0)
       {
+        Domain internal_domain;
+        runtime->forest->find_launch_space_domain(slice_owner->internal_space,
+            internal_domain);
         // for each point in the constraint equations that we depend on
         // get it's mapping event from the index task, or create one if it
         // doesn't exist already
@@ -6134,26 +6180,25 @@ namespace Legion {
         // interlaunch dependency
         map_preconditions.insert(slice_owner->slice_deps_mapped_event);
         for (unsigned idx1 = 0;
-            idx1 < slice_owner->index_owner->constraint_equations.size();
+            idx1 < slice_owner->constraint_equations.size();
             idx1++)
         {
-          ProjectionAnalysisConstraint* constraintEq =
-          slice_owner->index_owner->constraint_equations[idx1];
+          ProjectionAnalysisConstraint constraintEq =
+          slice_owner->constraint_equations[idx1];
           // USE THIS TO TEST THAT APPLICATION IS CORRECT! EVENTUALLY DELETE
           /*std::vector<DomainPoint> dependentPoints =
               constraintEq->get_dependent_points2(index_point,
               slice_owner->index_owner->internal_domain);*/
           OrderingFunctor *ord_func =
-            runtime->find_ordering_functor(slice_owner->index_owner->oid);
+            runtime->find_ordering_functor(slice_owner->oid);
           std::vector<DomainPoint> dependent_points;
-          constraintEq->get_dependent_points(index_point,
-              slice_owner->index_owner->internal_domain,
-              ord_func, dependent_points);
+          constraintEq.get_dependent_points(index_point,
+              internal_domain, ord_func, dependent_points);
           for (unsigned idx2 = 0; idx2 < dependent_points.size(); idx2++)
           {
             DomainPoint dep_point = dependent_points[idx2];
             map_preconditions.insert(
-            slice_owner->index_owner->point_task_events[dep_point]);
+            slice_owner->point_task_events[dep_point]);
           }
         }
         RtEvent done = Runtime::merge_events(map_preconditions);
@@ -6179,14 +6224,23 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void PointTask::map_and_launch(void)
+    void PointTask::map_and_launch(bool needs_versioning)
     //--------------------------------------------------------------------------
     {
       // We know by now we are able to map
       // twarsz - I believe that this if statement is unnecessary but leaving
       // it for now
-      std::set<RtEvent> ready_events;
-      perform_versioning_analysis(ready_events);
+      if (needs_versioning)
+      {
+        std::set<RtEvent> ready_events;
+        perform_versioning_analysis(ready_events);
+        if (!ready_events.empty())
+        {
+          RtEvent ready_event = Runtime::merge_events(ready_events);
+          defer_map_and_launch(ready_event, false);
+          return;
+        }
+      }
       RtEvent map_event = perform_mapping();
       if (map_event.exists() && !map_event.has_triggered())
       {
@@ -6350,11 +6404,13 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    RtEvent PointTask::defer_map_and_launch(RtEvent precondition)
+    RtEvent PointTask::defer_map_and_launch(RtEvent precondition,
+        bool needs_versioning)
     //--------------------------------------------------------------------------
     {
       DeferPointMapAndLaunchArgs args;
       args.proxy_this = this;
+      args.needs_versioning = needs_versioning;
       return runtime->issue_runtime_meta_task(args,
           LG_DEFERRED_THROUGHPUT_PRIORITY, this, precondition);
     }
@@ -7034,7 +7090,7 @@ namespace Legion {
       }
       Domain::DomainPointIterator itr(internal_domain);
       const DomainPoint first_point = itr.p;
-      std::vector<ProjectionAnalysisConstraint*> constraints;
+      std::vector<ProjectionAnalysisConstraint> constraints;
       RegionTreeNode *upper_bound;
       if (handle_type == REG_PROJECTION)
         upper_bound = runtime->forest->get_node(proj_reqs[0].region);
@@ -7058,7 +7114,7 @@ namespace Legion {
           ProjectionAnalysisConstraint *constraint =
             runtime->forest->compute_proj_constraint(proj1, proj2,
                 sample_region)->simplify();
-          constraints.push_back(constraint);
+          constraints.push_back(*constraint);
         }
       }
       constraint_equations = constraints;
@@ -8266,7 +8322,7 @@ namespace Legion {
         RtEvent dep_event = next_point->find_interlaunch_dependencies();
         if (dep_event.exists() && !dep_event.has_triggered())
         {
-          next_point->defer_map_and_launch(dep_event);
+          next_point->defer_map_and_launch(dep_event, true);
         }
         else {
           next_point->perform_versioning_analysis(ready_events);
@@ -8318,6 +8374,8 @@ namespace Legion {
       rez.serialize(locally_mapped);
       rez.serialize(remote_owner_uid);
       rez.serialize(internal_space);
+      rez.serialize(structured_slice_mapped_trigger);
+      rez.serialize(slice_deps_mapped_event);
       if (is_locally_mapped())
       {
         // If we've mapped everything and there are no virtual mappings
@@ -8341,6 +8399,11 @@ namespace Legion {
         pack_projection_infos(rez, projection_infos);
       else
         index_owner->pack_projection_infos(rez, index_owner->projection_infos);
+      if (is_remote())
+        pack_constraint_equations(rez, constraint_equations);
+      else
+        index_owner->pack_constraint_equations(rez,
+            index_owner->constraint_equations);
       if (predicate_false_future.impl != NULL)
         rez.serialize(predicate_false_future.impl->did);
       else
@@ -8397,9 +8460,12 @@ namespace Legion {
       derez.deserialize(locally_mapped);
       derez.deserialize(remote_owner_uid);
       derez.deserialize(internal_space);
+      derez.deserialize(structured_slice_mapped_trigger);
+      derez.deserialize(slice_deps_mapped_event);
       unpack_version_infos(derez, version_infos, ready_events);
       unpack_restrict_infos(derez, restrict_infos, ready_events);
       unpack_projection_infos(derez, projection_infos, launch_space);
+      unpack_constraint_equations(derez, constraint_equations);
       if (Runtime::legion_spy_enabled)
         LegionSpy::log_slice_slice(remote_unique_id, get_unique_id());
       if (runtime->profiler != NULL)
@@ -8593,9 +8659,9 @@ namespace Legion {
       {
         points[point_idx] = clone_as_point_task(itr.p);
         // if is structured, add the point task map_applied event
-        if (index_owner->constraint_equations.size() > 0)
+        if (constraint_equations.size() > 0)
         {
-          index_owner->point_task_events[itr.p] =
+          point_task_events[itr.p] =
             points[point_idx]->mapped_event;
         }
       }
@@ -8811,6 +8877,7 @@ namespace Legion {
                              applied_condition, ApEvent::NO_AP_EVENT);
       }
       complete_mapping(applied_condition);
+      Runtime::trigger_event(structured_slice_mapped_trigger);
       if (!acquired_instances.empty())
         release_acquired_instances(acquired_instances);
       complete_execution();

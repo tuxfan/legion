@@ -20041,7 +20041,7 @@ namespace Legion {
           {
             const PointTask::DeferPointMapAndLaunchArgs *margs =
               (const PointTask::DeferPointMapAndLaunchArgs*)args;
-            margs->proxy_this->map_and_launch();
+            margs->proxy_this->map_and_launch(margs->needs_versioning);
             break;
           }
         case LG_ADD_VERSIONING_SET_REF_TASK_ID:

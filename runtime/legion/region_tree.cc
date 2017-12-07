@@ -1543,7 +1543,7 @@ namespace Legion {
       if (filter_mask != NULL)
         user_mask &= *filter_mask;
       // If this is not the top of the tree, see if we have to get
-      // any version infromation from our parent context (e.g. because
+      // any version information from our parent context (e.g. because
       // it virtually mapped above where we have privileges)
       const unsigned depth = parent_node->get_depth();
       if (!skip_parent_check && (depth > 0))
