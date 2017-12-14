@@ -5235,6 +5235,8 @@ namespace Legion {
                                               bool restrict_out)
     //--------------------------------------------------------------------------
     {
+      DETAILED_PROFILER(context->runtime,
+                        COMPOSITE_VIEW_ISSUE_DEFERRED_COPIES_CALL);
       CompositeCopier copier(copy_mask);
       FieldMask top_locally_complete;
       FieldMask dominate_capture(copy_mask);
