@@ -18,6 +18,8 @@
 #include <cassert>
 #include <cstdlib>
 #include "legion.h"
+#include <unistd.h>  // for sleep and usleep
+#include <random> // for gaussian distribution of sleep
 
 #include "default_mapper.h"
 
@@ -69,6 +71,8 @@ struct RectDims {
 struct ComputeArgs {
   int angle;
   int parallel_length;
+  int sleep_ms;
+  double sleep_multiplier;
 };
 
 // A new mapper to control how the index space is sliced
@@ -76,17 +80,24 @@ struct ComputeArgs {
 // dependencies
 class SliceMapper : public DefaultMapper {
 public:
-  SliceMapper(Machine machine, Runtime *rt, Processor local);
+  SliceMapper(Machine machine, Runtime *rt, Processor local, int sl);
 public:
   virtual void slice_task(const MapperContext ctx,
                           const Task& task,
                           const SliceTaskInput& input,
                                 SliceTaskOutput& output);
+private:
+  void compute_cached_procs(std::vector<Processor> all_procs);
+public:
+  unsigned slice_side_length;
+  bool cached;
+  std::vector<Processor> cached_procs;
 };
 
 // pass arguments through to Default
-SliceMapper::SliceMapper(Machine m, Runtime *rt, Processor p)
-  : DefaultMapper(rt->get_mapper_runtime(), m, p)
+SliceMapper::SliceMapper(Machine m, Runtime *rt, Processor p, int sl)
+  : DefaultMapper(rt->get_mapper_runtime(), m, p), slice_side_length(sl),
+  cached(false)
 {
 }
 
@@ -96,12 +107,16 @@ void SliceMapper::slice_task(const MapperContext      ctx,
                                    SliceTaskOutput&   output)
 {
   // Iterate over all the points and send them all over the world
-  output.slices.resize(input.domain.get_volume());
+  //output.slices.resize(input.domain.get_volume());
   unsigned idx = 0;
 
-  Machine::ProcessorQuery all_procs(machine);
-  all_procs.only_kind(local_cpus[0].kind());
-  std::vector<Processor> procs(all_procs.begin(), all_procs.end());
+  if (!cached)
+  {
+    Machine::ProcessorQuery all_procs(machine);
+    all_procs.only_kind(local_cpus[0].kind());
+    std::vector<Processor> procs(all_procs.begin(), all_procs.end());
+    compute_cached_procs(procs);
+  }
 
   switch (input.domain.get_dim())
   {
@@ -113,21 +128,35 @@ void SliceMapper::slice_task(const MapperContext      ctx,
         {
           Rect<1> slice(*pir, *pir);
           output.slices[idx] = TaskSlice(slice,
-              procs[idx % procs.size()],
+              cached_procs[idx % cached_procs.size()],
               false/*recurse*/, true/*stealable*/);
         }
         break;
       }
-    case 2:
+    case 2: // only care about this case for now
       {
         Rect<2> rect = input.domain;
-        for (PointInRectIterator<2> pir(rect);
-              pir(); pir++, idx++)
+        Point<2> lo = rect.lo;
+        Point<2> hi = rect.hi;
+        assert((hi[0] - lo[0] + 1) % slice_side_length == 0);
+        assert((hi[1] - lo[1] + 1) % slice_side_length == 0);
+        unsigned x_iter = (hi[0] - lo[0]) / slice_side_length + 1;
+        unsigned y_iter = (hi[1] - lo[1]) / slice_side_length + 1;
+        output.slices.resize(x_iter * y_iter);
+        //printf("using the slice mapper, side length %u\n", slice_side_length);
+        for (unsigned x = 0; x < x_iter; ++x)
         {
-          Rect<2> slice(*pir, *pir);
-          output.slices[idx] = TaskSlice(slice,
-              procs[idx % procs.size()],
+          for (unsigned y = 0; y < y_iter; ++y)
+          {
+            Point<2> slice_lo(x * slice_side_length, y * slice_side_length);
+            Point<2> slice_hi((x+1) * slice_side_length - 1, (y+1) * slice_side_length - 1);
+            //printf("x = %u, y = %u, slice goes from (%lld, %lld) to (%lld, %lld)\n",
+              //x, y, slice_lo[0], slice_lo[1], slice_hi[0], slice_hi[1]);
+            Rect<2> slice(slice_lo, slice_hi);
+            output.slices[idx] = TaskSlice(slice, cached_procs[x % cached_procs.size()],
               false/*recurse*/, true/*stealable*/);
+            idx++;
+          }
         }
         break;
       }
@@ -139,7 +168,7 @@ void SliceMapper::slice_task(const MapperContext      ctx,
         {
           Rect<3> slice(*pir, *pir);
           output.slices[idx] = TaskSlice(slice,
-              procs[idx % procs.size()],
+              cached_procs[idx % cached_procs.size()],
               false/*recurse*/, true/*stealable*/);
         }
         break;
@@ -147,6 +176,21 @@ void SliceMapper::slice_task(const MapperContext      ctx,
     default:
       assert(false);
   }
+}
+
+void SliceMapper::compute_cached_procs(std::vector<Processor> all_procs)
+{
+  std::vector<AddressSpace> address_spaces;
+  for (unsigned i = 0; i < all_procs.size(); ++i)
+  {
+    Processor p = all_procs[i];
+    if (std::find(address_spaces.begin(), address_spaces.end(), p.address_space()) == address_spaces.end())
+    {
+      address_spaces.push_back(p.address_space());
+      cached_procs.push_back(p);
+    }
+  }
+  cached = true;
 }
 
 class FromTopRightOrderFunctor : public OrderingFunctor
@@ -297,6 +341,8 @@ void top_level_task(const Task *task,
   int num_subregions_x = 4; // Assumed to divide side_length_x
   int num_subregions_y = 4; // Assumed to divide side_length_y
   int angle = 225; // angle is measured ccw from positive x-axis
+  int sleep_ms = 0; // how long each task should sleep in milliseconds
+  bool use_gauss = false; // if we should sleep based on a gaussian distribution
 
   // say it's disjoint by default,
   // give flag for toggling to force it to compute disjointedness
@@ -331,6 +377,10 @@ void top_level_task(const Task *task,
         partition_kind = COMPUTE_KIND;
       if (!strcmp(command_args.argv[i],"-a"))
         angle = atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-sms"))
+        sleep_ms = atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-gauss"))
+        use_gauss = true;
     }
   }
 
@@ -353,6 +403,27 @@ void top_level_task(const Task *task,
   printf("Partitioning data into (%d, %d) sub-regions...\n",
       num_subregions_x, num_subregions_y);
 
+  std::default_random_engine generator;
+  std::vector<double> multipliers;
+  int num_tasks = side_length_x * side_length_y;
+  multipliers.resize(num_tasks);
+  std::normal_distribution<double> distribution(1.0,1.0);
+  for (int i = 0; i < num_tasks; ++i)
+  {
+    if (use_gauss)
+    {
+      multipliers[i] = distribution(generator);
+      if (multipliers[i] < 0)
+      {
+        multipliers[i] = 0;
+      }
+    }
+    else
+    {
+      multipliers[i] = 1.0;
+    }
+  }
+
   // For this example we'll create a single logical region with two
   // fields.  We'll initialize the field identified by 'FID_X' and 'FID_Y' with
   // our input data and then compute the value and write into 'FID_VAL'.
@@ -369,7 +440,7 @@ void top_level_task(const Task *task,
   }
   LogicalRegion top_lr = runtime->create_logical_region(ctx, is, fs);
 
-  int parallel_size;
+  int parallel_size = 0;
   // these may be needed later num_waves, subregions_per_wave, perp_size;
   if (angle == 180)
   {
@@ -448,13 +519,21 @@ void top_level_task(const Task *task,
   init_launcher.add_field(0, FID_VAL);
   runtime->execute_index_space(ctx, init_launcher);
 
+  FutureMap fm;
   // Now we launch the computation to calculate Pascal's triangle
+  double ts_start = Realm::Clock::current_time_in_microseconds();
+  int task_idx = 0;
   for (int j = 0; j < num_iterations; j++)
   {
     if (angle == 225)
     {
+      ComputeArgs compute_args;
+      compute_args.angle = angle; // unused, but might as well be correct
+      compute_args.parallel_length = 0; //unused
+      compute_args.sleep_ms = sleep_ms;
+      compute_args.sleep_multiplier = multipliers[task_idx];
       IndexLauncher compute_launcher(COMPUTE_TASK_ANGLE_ID, launch_domain,
-           TaskArgument(NULL, 0), arg_map);
+           TaskArgument(&compute_args, sizeof(ComputeArgs)), arg_map);
       compute_launcher.set_ordering_id(FROM_TOP_RIGHT);
       compute_launcher.add_region_requirement(
           RegionRequirement(grid_lp, X_PROJ,
@@ -469,7 +548,7 @@ void top_level_task(const Task *task,
       compute_launcher.add_field(1, FID_VAL);
       compute_launcher.add_field(2, FID_VAL);
 
-      runtime->execute_index_space(ctx, compute_launcher);
+      fm = runtime->execute_index_space(ctx, compute_launcher);
     }
     else
     {
@@ -485,6 +564,8 @@ void top_level_task(const Task *task,
       ComputeArgs compute_args;
       compute_args.angle = angle;
       compute_args.parallel_length = parallel_size;
+      compute_args.sleep_ms = sleep_ms;
+      compute_args.sleep_multiplier = multipliers[task_idx];
       IndexLauncher compute_launcher(COMPUTE_TASK_AXIS_ALIGNED_ID,
           launch_domain, TaskArgument(&compute_args, sizeof(ComputeArgs)),
           arg_map);
@@ -498,9 +579,15 @@ void top_level_task(const Task *task,
       compute_launcher.add_field(0, FID_VAL);
       compute_launcher.add_field(1, FID_VAL);
 
-      runtime->execute_index_space(ctx, compute_launcher);
+      fm = runtime->execute_index_space(ctx, compute_launcher);
     }
+    task_idx++;
   }
+
+  fm.wait_all_results();
+  double ts_end = Realm::Clock::current_time_in_microseconds();
+  double sim_time = 1e-6 * (ts_end - ts_start);
+  printf("ELAPSED TIME = %7.7f s\n", sim_time);
 
   // Finally, we launch a single task to check the results.
   RectDims rect_dims;
@@ -535,12 +622,12 @@ void init_field_task(const Task *task,
   FieldID fidx = *fields;
   FieldID fidy = *(++fields);
   FieldID fid_val_write = *(++fields);
-  const int pointx = task->index_point.point_data[0];
-  const int pointy = task->index_point.point_data[1];
-  fprintf(stderr, "Initializing fields %d and %d for block (%d, %d) "
-      "with region id %d...\n",
-      fidx, fidy, pointx, pointy,
-      task->regions[0].region.get_index_space().get_id());
+  //const int pointx = task->index_point.point_data[0];
+  //const int pointy = task->index_point.point_data[1];
+  //fprintf(stderr, "Initializing fields %d and %d for block (%d, %d) "
+      //"with region id %d...\n",
+      //fidx, fidy, pointx, pointy,
+      //task->regions[0].region.get_index_space().get_id());
 
   RegionAccessor<AccessorType::Generic, int> accx = 
     regions[0].get_field_accessor(fidx).typeify<int>();
@@ -585,6 +672,12 @@ void compute_task_angle(const Task *task,
   FieldID val_fid_x_diff = *(task->regions[0].privilege_fields.begin());
   FieldID val_fid_y_diff = *(task->regions[1].privilege_fields.begin());
   FieldID val_fid_curr = *(task->regions[2].privilege_fields.begin());
+
+  // Sleep the specified amount
+  ComputeArgs compute_args = *((ComputeArgs *)task->args);
+  //printf(" I am sleeping for base %d ms\n", compute_args.sleep_ms);
+  //printf(" I am sleeping for base %d ms, multiplier %f, for a final value of %d\n", compute_args.sleep_ms, compute_args.sleep_multiplier, compute_args.sleep_ms * compute_args.sleep_multiplier);
+  usleep(compute_args.sleep_ms * 1000);
 
   RegionAccessor<AccessorType::Generic, int> x_diff_acc = 
     regions[0].get_field_accessor(val_fid_x_diff).typeify<int>();
@@ -814,11 +907,20 @@ void check_task(const Task *task,
 void mapper_registration(Machine machine, Runtime *rt,
                           const std::set<Processor> &local_procs)
 {
+  int slice_side_length = 1;
+  const InputArgs &command_args = Runtime::get_input_args();
+  for (int i = 1; i < command_args.argc; i++)
+  {
+      if (!strcmp(command_args.argv[i],"-ssl"))
+      {
+        slice_side_length = atoi(command_args.argv[++i]);
+      }
+  }
   for (std::set<Processor>::const_iterator it = local_procs.begin();
         it != local_procs.end(); it++)
   {
     rt->replace_default_mapper(
-        new SliceMapper(machine, rt, *it), *it);
+        new SliceMapper(machine, rt, *it, slice_side_length), *it);
   }
 }
 
@@ -859,8 +961,30 @@ int main(int argc, char **argv)
     if (!strcmp(argv[i],"-sm"))
       Runtime::add_registration_callback(mapper_registration);
   }
+
   // Add the callback for the projection function
   HighLevelRuntime::set_registration_callback(registration_callback);
 
   return Runtime::start(argc, argv);
 }
+
+
+/*
+TIMING CODE:
+
+  double ts_start = Realm::Clock::current_time_in_microseconds();
+  for (int i = 0; i < MAX_ITERATION; i++)
+  {
+    iteration = i;
+    BFSTask bfs_task(graph.in_pointer_lp, graph.in_pointer,
+                     graph.in_vtx_lp, graph.in_vtx,
+                     graph.in_index_lp, graph.in_index,
+                     graph.dist_lp[(i+1)%2], graph.dist[(i+1)%2],
+                     graph.dist[i%2], task_space, local_args, &iteration);
+    fm = runtime->execute_index_space(ctx, bfs_task);
+  }
+  fm.wait_all_results();
+  double ts_end = Realm::Clock::current_time_in_microseconds();
+  double sim_time = 1e-6 * (ts_end - ts_start);
+  printf("ELAPSED TIME = %7.7f s\n", sim_time);
+*/

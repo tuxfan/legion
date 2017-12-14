@@ -17,7 +17,7 @@
 #include <cstdio>
 #include <cassert>
 #include <cstdlib>
-#include <unistd.h> // for sleep
+#include <unistd.h>  // for sleep and usleep
 #include "legion.h"
 
 #include "default_mapper.h"
@@ -60,6 +60,7 @@ struct RectDims {
 struct ComputeArgs {
   int angle;
   int parallel_length;
+  int sleep_ms;
 };
 
 // A new mapper to control how the index space is sliced
@@ -150,6 +151,7 @@ void top_level_task(const Task *task,
   int num_subregions_x = 4; // Assumed to divide side_length_x
   int num_subregions_y = 4; // Assumed to divide side_length_y
   int angle = 225; // angle is measured ccw from positive x-axis
+  int sleep_ms = 0; // how long each task should sleep in milliseconds
 
   // say it's disjoint by default,
   // give flag for toggling to force it to compute disjointedness
@@ -184,6 +186,8 @@ void top_level_task(const Task *task,
         partition_kind = COMPUTE_KIND;
       if (!strcmp(command_args.argv[i],"-a"))
         angle = atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-sms"))
+        sleep_ms = atoi(command_args.argv[++i]);
     }
   }
 
@@ -222,7 +226,7 @@ void top_level_task(const Task *task,
   }
   LogicalRegion top_lr = runtime->create_logical_region(ctx, is, fs);
 
-  int parallel_size;
+  int parallel_size = 0;
   // these may be needed later num_waves, subregions_per_wave, perp_size;
   if (angle == 180)
   {
@@ -285,10 +289,10 @@ void top_level_task(const Task *task,
 
   // Our launch domain will again be only include the data subregions
   // and not the dummy ones
-  Rect<2> launch_bounds(Point<2>(0,0),
-      Point<2>(num_subregions_x-1, num_subregions_y-1));
-  Domain launch_domain = Domain(launch_bounds);
-  ArgumentMap arg_map;
+  //Rect<2> launch_bounds(Point<2>(0,0),
+      //Point<2>(num_subregions_x-1, num_subregions_y-1));
+  //Domain launch_domain = Domain(launch_bounds);
+  //ArgumentMap arg_map;
 
   // First initialize the 'FID_X' and 'FID_Y' fields with some data
   for (int x = num_subregions_x - 1; x >= 0; --x)
@@ -312,6 +316,8 @@ void top_level_task(const Task *task,
   }
 
   // Now we launch the computation to calculate Pascal's triangle
+  double ts_start = Realm::Clock::current_time_in_microseconds();
+  Future f;
   for (int j = 0; j < num_iterations; j++)
   {
     for (int x = num_subregions_x - 1; x >= 0; --x)
@@ -325,13 +331,17 @@ void top_level_task(const Task *task,
             runtime->get_logical_subregion_by_color(grid_lp, cur_point);
         if (angle == 225)
         {
+          ComputeArgs compute_args;
+          compute_args.angle = angle; // unused, but might as well be correct
+          compute_args.parallel_length = 0; //unused
+          compute_args.sleep_ms = sleep_ms;
           LogicalRegion x_region =
               runtime->get_logical_subregion_by_color(grid_lp, onex);
           LogicalRegion y_region =
               runtime->get_logical_subregion_by_color(grid_lp, oney);
 
           TaskLauncher compute_launcher(COMPUTE_TASK_ANGLE_ID,
-              TaskArgument(NULL, 0));
+              TaskArgument(&compute_args, sizeof(ComputeArgs)));
           compute_launcher.add_region_requirement(
               RegionRequirement(x_region, READ_ONLY, EXCLUSIVE, top_lr));
           compute_launcher.add_region_requirement(
@@ -341,7 +351,7 @@ void top_level_task(const Task *task,
           compute_launcher.add_field(0, FID_VAL);
           compute_launcher.add_field(1, FID_VAL);
           compute_launcher.add_field(2, FID_VAL);
-          runtime->execute_task(ctx, compute_launcher);
+          f = runtime->execute_task(ctx, compute_launcher);
         }
         else
         {
@@ -359,6 +369,7 @@ void top_level_task(const Task *task,
           ComputeArgs compute_args;
           compute_args.angle = angle;
           compute_args.parallel_length = parallel_size;
+          compute_args.sleep_ms = sleep_ms;
           TaskLauncher compute_launcher(COMPUTE_TASK_AXIS_ALIGNED_ID,
               TaskArgument(&compute_args, sizeof(ComputeArgs)));
           compute_launcher.add_region_requirement(
@@ -367,11 +378,18 @@ void top_level_task(const Task *task,
               RegionRequirement(cur_region, READ_WRITE, EXCLUSIVE, top_lr));
           compute_launcher.add_field(0, FID_VAL);
           compute_launcher.add_field(1, FID_VAL);
-          runtime->execute_task(ctx, compute_launcher);
+          f = runtime->execute_task(ctx, compute_launcher);
         }
       }
     }
+    // This is not fair right now, does not allow the runtime to really get ahead
+    f.get_void_result();
   }
+
+  f.get_void_result();
+  double ts_end = Realm::Clock::current_time_in_microseconds();
+  double sim_time = 1e-6 * (ts_end - ts_start);
+  printf("ELAPSED TIME = %7.7f s\n", sim_time);
 
   // Finally, we launch a single task to check the results.
   RectDims rect_dims;
@@ -406,12 +424,12 @@ void init_field_task(const Task *task,
   FieldID fidx = *fields;
   FieldID fidy = *(++fields);
   FieldID fid_val_write = *(++fields);
-  const int pointx = task->index_point.point_data[0];
-  const int pointy = task->index_point.point_data[1];
-  fprintf(stderr, "Initializing fields %d and %d for block (%d, %d) "
-      "with region id %d...\n",
-      fidx, fidy, pointx, pointy,
-      task->regions[0].region.get_index_space().get_id());
+  //const int pointx = task->index_point.point_data[0];
+  //const int pointy = task->index_point.point_data[1];
+  //fprintf(stderr, "Initializing fields %d and %d for block (%d, %d) "
+      //"with region id %d...\n",
+      //fidx, fidy, pointx, pointy,
+      //task->regions[0].region.get_index_space().get_id());
 
   RegionAccessor<AccessorType::Generic, int> accx = 
     regions[0].get_field_accessor(fidx).typeify<int>();
@@ -452,6 +470,12 @@ void compute_task_angle(const Task *task,
   assert(task->regions[0].privilege_fields.size() == 1);
   assert(task->regions[1].privilege_fields.size() == 1);
   assert(task->regions[2].privilege_fields.size() == 1);
+
+  // Sleep the specified amount
+  ComputeArgs compute_args = *((ComputeArgs *)task->args);
+  //printf(" I am sleeping for base %d ms\n", compute_args.sleep_ms);
+  //printf(" I am sleeping for base %d ms, multiplier %f, for a final value of %d\n", compute_args.sleep_ms, compute_args.sleep_multiplier, compute_args.sleep_ms * compute_args.sleep_multiplier);
+  usleep(compute_args.sleep_ms * 1000);
   
   FieldID val_fid_x_diff = *(task->regions[0].privilege_fields.begin());
   FieldID val_fid_y_diff = *(task->regions[1].privilege_fields.begin());
@@ -477,7 +501,7 @@ void compute_task_angle(const Task *task,
   Point<2> lo = rect.lo;
   Point<2> hi = rect.hi;
   Point<2> cur_point;
-  printf("starting the compute task for point (%lld, %lld)\n", hi[0], hi[1]);
+  //printf("starting the compute task for point (%lld, %lld)\n", hi[0], hi[1]);
   int x_diff_val, y_diff_val;
   const Point<2> onex = Point<2>(1,0);
   const Point<2> oney = Point<2>(0,1);
@@ -528,7 +552,7 @@ void compute_task_angle(const Task *task,
       {
         computed_val = y_diff_val + 1;
       }
-      printf("x diff is %d, y diff is %d\n", x_diff_val, y_diff_val);
+      //printf("x diff is %d, y diff is %d\n", x_diff_val, y_diff_val);
       curr_acc.write(cur_point, computed_val);
     }
   }
@@ -666,14 +690,14 @@ void check_task(const Task *task,
     int expected = 1;
     expected = x + y + 1;
 
-    printf("At point (%lld, %lld)\n", (*pir)[0], (*pir)[1]);
-    printf("Checking for values %d and %d... expected %d, found %d\n",
-        x, y, expected, val);
+    //printf("At point (%lld, %lld)\n", (*pir)[0], (*pir)[1]);
+    //printf("Checking for values %d and %d... expected %d, found %d\n",
+        //x, y, expected, val);
     
     if (expected != val)
     {
       all_passed = false;
-    //  break;
+      break;
     }
   }
   if (all_passed)
