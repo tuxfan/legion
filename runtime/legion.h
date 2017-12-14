@@ -3062,6 +3062,28 @@ namespace Legion {
         s.add_const[1] = add_const_2;
         return s;
       }
+      static inline StructuredProjectionStep make_step(int mul_const_1,
+                                                       int var_id_1,
+                                                       int add_const_1,
+                                                       int mul_const_2,
+                                                       int var_id_2,
+                                                       int add_const_2,
+                                                       int mul_const_3,
+                                                       int var_id_3,
+                                                       int add_const_3)
+      {
+        StructuredProjectionStep s(2);
+        s.var_id[0] = var_id_1;
+        s.mul_const[0] = mul_const_1;
+        s.add_const[0] = add_const_1;
+        s.var_id[1] = var_id_2;
+        s.mul_const[1] = mul_const_2;
+        s.add_const[1] = add_const_2;
+        s.var_id[2] = var_id_3;
+        s.mul_const[2] = mul_const_3;
+        s.add_const[2] = add_const_3;
+        return s;
+      }
     public:
       DomainPoint evaluate(const DomainPoint &p);
     public:
