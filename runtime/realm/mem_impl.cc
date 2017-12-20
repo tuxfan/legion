@@ -104,10 +104,22 @@ namespace Realm {
 
     MemoryImpl::~MemoryImpl(void)
     {
+      for(std::vector<RegionInstanceImpl *>::iterator it = local_instances.instances.begin();
+	  it != local_instances.instances.end();
+	  ++it)
+	if(*it)
+	  delete *it;
+
       for(std::map<NodeID, InstanceList *>::const_iterator it = instances_by_creator.begin();
 	  it != instances_by_creator.end();
-	  ++it)
+	  ++it) {
+	for(std::vector<RegionInstanceImpl *>::iterator it2 = it->second->instances.begin();
+	    it2 != it->second->instances.end();
+	    ++it2)
+	  if(*it2)
+	    delete *it2;
 	delete it->second;
+      }
 
 #ifdef REALM_PROFILE_MEMORY_USAGE
       printf("Memory " IDFMT " usage: peak=%zd (%.1f MB) footprint=%zd (%.1f MB)\n",
@@ -368,7 +380,7 @@ namespace Realm {
     // attempt to allocate storage for the specified instance
     bool MemoryImpl::allocate_instance_storage(RegionInstance i,
 					       size_t bytes, size_t alignment,
-					       Event precondition)
+					       Event precondition, size_t offset /*=0*/)
     {
       // all allocation requests are handled by the memory's owning node for
       //  now - local caching might be possible though
@@ -377,7 +389,7 @@ namespace Realm {
 	MemStorageAllocRequest::send_request(target,
 					     me, i,
 					     bytes, alignment,
-					     precondition);
+					     precondition, offset);
 	return false /*asynchronous notification*/;
       }
 
@@ -386,9 +398,6 @@ namespace Realm {
 	precondition.wait();
       }
 
-      // TODO: ideally use something like (size_t)-2 here, but that will
-      //  currently confuse the file read/write path in dma land
-      size_t offset = (size_t)0; // this will be used for zero-size allocs
       bool ok;
       {
 	AutoHSLLock al(allocator_mutex);
@@ -503,7 +512,7 @@ namespace Realm {
 
   void *LocalCPUMemory::get_direct_ptr(off_t offset, size_t size)
   {
-    assert((offset >= 0) && ((size_t)(offset + size) <= this->size));
+//    assert((offset >= 0) && ((size_t)(offset + size) <= this->size));
     return (base + offset);
   }
 
@@ -838,13 +847,13 @@ namespace Realm {
 
     impl->allocate_instance_storage(args.inst,
 				    args.bytes, args.alignment,
-				    args.precondition);
+				    args.precondition, args.offset);
   }
 
   /*static*/ void MemStorageAllocRequest::send_request(NodeID target,
 						       Memory memory, RegionInstance inst,
 						       size_t bytes, size_t alignment,
-						       Event precondition)
+						       Event precondition, size_t offset)
   {
     RequestArgs args;
 
@@ -853,6 +862,7 @@ namespace Realm {
     args.bytes = bytes;
     args.alignment = alignment;
     args.precondition = precondition;
+    args.offset = offset;
 
     Message::request(target, args);
   }

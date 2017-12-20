@@ -357,6 +357,8 @@ namespace Legion {
           finder->second |= mask;
         valid_fields |= mask;
       }
+      if (pre.exists())
+        return pre;
       return RtEvent::NO_RT_EVENT;
     }
 
@@ -945,7 +947,7 @@ namespace Legion {
 #endif
       const FieldMask &split_mask = split_masks[depth];
       const FieldVersions &local_versions = field_versions[depth];
-      if (!split_prev || !!split_mask)
+      if (!split_prev || !split_mask)
       {
         // If we don't care about the split previous mask then we can
         // just copy over what we need
@@ -1595,7 +1597,7 @@ namespace Legion {
         else if (!!remaining_fields)
           (*it)->remove_acquisition(op, node, remaining_fields);
         if (!remaining_fields)
-          return;
+          break;
       }
       if (!to_delete.empty())
       {
@@ -1842,7 +1844,7 @@ namespace Legion {
         else if (!!remaining_fields)
           (*it)->remove_restriction(op, node, remaining_fields);
         if (!remaining_fields)
-          return;
+          break;
       }
       if (!to_delete.empty())
       {
@@ -4714,7 +4716,12 @@ namespace Legion {
       // Finally record any valid above views
       for (LegionMap<LogicalView*,FieldMask>::aligned::const_iterator it = 
             valid_above.begin(); it != valid_above.end(); it++)
+      {
         composite_view->record_valid_view(it->first, it->second);
+        // We also have to record these as dirty fields to make 
+        // sure that we issue copies from them if necessary
+        composite_view->record_dirty_fields(it->second);
+      }
     }
 
     //--------------------------------------------------------------------------

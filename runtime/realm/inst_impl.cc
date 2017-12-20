@@ -48,7 +48,6 @@ namespace Realm {
 	if(poisoned) {
 	  log_poison.info() << "poisoned deferred instance destruction skipped - POSSIBLE LEAK - inst=" << inst;
 	} else {
-	  log_inst.info() << "instance destroyed: inst=" << inst;
 	  inst.destroy();
 	  //get_runtime()->get_memory_impl(impl->memory)->destroy_instance(impl->me, true); 
 	}
@@ -161,6 +160,48 @@ namespace Realm {
       return ready_event;
     }
 
+    /*static*/ Event RegionInstance::create_external(RegionInstance &inst,
+                                                     Memory memory, uintptr_t base,
+                                                     InstanceLayoutGeneric *ilg,
+						     const ProfilingRequestSet& prs,
+						     Event wait_on)
+    {
+      MemoryImpl *m_impl = get_runtime()->get_memory_impl(memory);
+      RegionInstanceImpl *impl = m_impl->new_instance();
+
+      // This actually doesn't have any bytes used in realm land
+      ilg->bytes_used = 0;
+      impl->metadata.layout = ilg;
+      
+      if (!prs.empty()) {
+        impl->requests = prs;
+        impl->measurements.import_requests(impl->requests);
+        if(impl->measurements.wants_measurement<ProfilingMeasurements::InstanceTimeline>())
+          impl->timeline.record_create_time();
+      }
+
+      // This is a little scary because the result could be negative, but we know
+      // that unsigned undeflow produces correct results mod 2^64 so its ok
+      // Pray that we never have to debug this
+      unsigned char *impl_base = 
+        (unsigned char*)m_impl->get_direct_ptr(0/*offset*/, 0/*size*/);
+      size_t inst_offset = (size_t)(((unsigned char*)base) - impl_base);
+#ifndef NDEBUG
+      bool ok = 
+#endif
+        m_impl->allocate_instance_storage(impl->me,
+					  ilg->bytes_used,
+					  ilg->alignment_reqd,
+					  wait_on, 
+                                          inst_offset);
+      assert(ok);
+
+      inst = impl->me;
+      log_inst.info() << "external instance created: inst=" << inst;
+      log_inst.debug() << "external instance layout: inst=" << inst << " layout=" << *ilg;
+      return Event::NO_EVENT;
+    }
+
     void RegionInstance::destroy(Event wait_on /*= Event::NO_EVENT*/) const
     {
       // we can immediately turn this into a (possibly-preconditioned) request to
@@ -177,11 +218,14 @@ namespace Realm {
       // a poisoned precondition silently cancels the deletion - up to
       //  requestor to realize this has occurred since the deletion does
       //  not have its own completion event
-      if(!poisoned) {
-	// this does the right thing even though we're using an instance ID
-	MemoryImpl *mem_impl = get_runtime()->get_memory_impl(*this);
-	mem_impl->release_instance_storage(*this, wait_on);
-      }
+      if(poisoned)
+	return;
+
+      log_inst.info() << "instance destroyed: inst=" << *this;
+
+      // this does the right thing even though we're using an instance ID
+      MemoryImpl *mem_impl = get_runtime()->get_memory_impl(*this);
+      mem_impl->release_instance_storage(*this, wait_on);
     }
 
     void RegionInstance::destroy(const std::vector<DestroyedField>& destroyed_fields,
@@ -361,7 +405,11 @@ namespace Realm {
       metadata.layout = 0;
     }
 
-    RegionInstanceImpl::~RegionInstanceImpl(void) {}
+    RegionInstanceImpl::~RegionInstanceImpl(void)
+    {
+      if(metadata.is_valid())
+	delete metadata.layout;
+    }
 
     void RegionInstanceImpl::notify_allocation(bool success, size_t offset)
     {

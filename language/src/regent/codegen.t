@@ -6152,7 +6152,7 @@ local lift_unary_op_to_futures = terralib.memoize(
     task:set_conditions({})
     task:set_param_constraints(node.constraints)
     task:set_constraints({})
-    task:set_region_universe({})
+    task:set_region_universe(data.newmap())
     return codegen.entry(node)
   end)
 
@@ -6249,7 +6249,7 @@ local lift_binary_op_to_futures = terralib.memoize(
     task:set_conditions({})
     task:set_param_constraints(node.constraints)
     task:set_constraints({})
-    task:set_region_universe({})
+    task:set_region_universe(data.newmap())
     return codegen.entry(node)
   end)
 
@@ -6268,6 +6268,7 @@ function codegen.expr_unary(cx, node)
       },
       args = terralib.newlist({node.rhs}),
       conditions = terralib.newlist(),
+      replicable = false,
       expr_type = expr_type,
       annotations = node.annotations,
       span = node.span,
@@ -6359,6 +6360,7 @@ function codegen.expr_binary(cx, node)
       },
       args = terralib.newlist({node.lhs, node.rhs}),
       conditions = terralib.newlist(),
+      replicable = false,
       expr_type = expr_type,
       annotations = node.annotations,
       span = node.span,
@@ -7178,7 +7180,7 @@ function codegen.stat_for_list(cx, node)
       upper_bounds:insert(terralib.newsymbol(c.coord_t, "hi1"))
       body = quote
         var [symbol] = [symbol.type]{
-          __ptr = c.legion_ptr_t { value = [ indices[1] ] }
+          __ptr = [ptr]{ __ptr = c.legion_ptr_t { value = [ indices[1] ] } }
         }
         do
           [block]

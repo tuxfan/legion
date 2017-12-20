@@ -3161,28 +3161,29 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    InstanceManager* RegionTreeForest::create_file_instance(AttachOp *attach_op,
-                                                   const RegionRequirement &req)
+    InstanceManager* RegionTreeForest::create_external_instance(
+                             AttachOp *attach_op, const RegionRequirement &req,
+                             const std::vector<FieldID> &field_set)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
       assert(req.handle_type == SINGULAR);
 #endif
       RegionNode *attach_node = get_node(req.region);
-      return attach_node->column_source->create_file_instance(
-          req.privilege_fields, attach_node, attach_op);
+      return attach_node->column_source->create_external_instance(
+                                field_set, attach_node, attach_op);
     }
 
     //--------------------------------------------------------------------------
-    InstanceRef RegionTreeForest::attach_file(AttachOp *attach_op, 
-                                              unsigned index,
-                                              const RegionRequirement &req,
-                                              InstanceManager *file_instance,
-                                              VersionInfo &version_info,
-                                              std::set<RtEvent> &map_applied)
+    InstanceRef RegionTreeForest::attach_external(AttachOp *attach_op, 
+                                                 unsigned index,
+                                                 const RegionRequirement &req,
+                                                 InstanceManager *ext_instance,
+                                                 VersionInfo &version_info,
+                                                 std::set<RtEvent> &map_applied)
     //--------------------------------------------------------------------------
     {
-      DETAILED_PROFILER(runtime, REGION_TREE_PHYSICAL_ATTACH_FILE_CALL);
+      DETAILED_PROFILER(runtime, REGION_TREE_PHYSICAL_ATTACH_EXTERNAL_CALL);
 #ifdef DEBUG_LEGION
       assert(req.handle_type == SINGULAR);
 #endif
@@ -3191,14 +3192,14 @@ namespace Legion {
       RegionNode *attach_node = get_node(req.region);
       UniqueID logical_ctx_uid = attach_op->get_context()->get_context_uid();
       // Perform the attachment
-      return attach_node->attach_file(ctx.get_id(), context, logical_ctx_uid,  
-                                      file_instance->layout->allocated_fields, 
-                                      req, file_instance, 
-                                      version_info, map_applied);
+      return attach_node->attach_external(ctx.get_id(), context,logical_ctx_uid,
+                                        ext_instance->layout->allocated_fields, 
+                                        req, ext_instance, 
+                                        version_info, map_applied);
     }
 
     //--------------------------------------------------------------------------
-    ApEvent RegionTreeForest::detach_file(const RegionRequirement &req,
+    ApEvent RegionTreeForest::detach_external(const RegionRequirement &req,
                                           DetachOp *detach_op,
                                           unsigned index,
                                           VersionInfo &version_info,
@@ -3206,7 +3207,7 @@ namespace Legion {
                                           std::set<RtEvent> &map_applied_events)
     //--------------------------------------------------------------------------
     {
-      DETAILED_PROFILER(runtime, REGION_TREE_PHYSICAL_DETACH_FILE_CALL);
+      DETAILED_PROFILER(runtime, REGION_TREE_PHYSICAL_DETACH_EXTERNAL_CALL);
 #ifdef DEBUG_LEGION
       assert(req.handle_type == SINGULAR);
 #endif
@@ -3215,8 +3216,8 @@ namespace Legion {
       RegionNode *detach_node = get_node(req.region);
       UniqueID logical_ctx_uid = detach_op->get_context()->get_context_uid();
       // Perform the detachment
-      return detach_node->detach_file(ctx.get_id(), context, logical_ctx_uid, 
-                                      version_info, ref, map_applied_events);
+      return detach_node->detach_external(ctx.get_id(), context,logical_ctx_uid,
+                                          version_info, ref,map_applied_events);
     }
 
     //--------------------------------------------------------------------------
@@ -3689,7 +3690,8 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    IndexPartNode* RegionTreeForest::get_node(IndexPartition part)
+    IndexPartNode* RegionTreeForest::get_node(IndexPartition part,
+                                              RtEvent *defer/* = NULL*/)
     //--------------------------------------------------------------------------
     {
       if (!part.exists())
@@ -3732,16 +3734,24 @@ namespace Legion {
         else
           wait_on = wait_finder->second;
       }
-      // Wait for the event
-      wait_on.lg_wait();
-      AutoLock l_lock(lookup_lock,1,false/*exclusive*/);
-      std::map<IndexPartition,IndexPartNode*>::const_iterator finder = 
-        index_parts.find(part);
-      if (finder == index_parts.end())
-        REPORT_LEGION_ERROR(ERROR_UNABLE_FIND_ENTRY,
-          "Unable to find entry for index partition %x. "
-                        "This is definitely a runtime bug.", part.id)
-      return finder->second;
+      if (defer == NULL)
+      {
+        // Wait for the event
+        wait_on.lg_wait();
+        AutoLock l_lock(lookup_lock,1,false/*exclusive*/);
+        std::map<IndexPartition,IndexPartNode*>::const_iterator finder = 
+          index_parts.find(part);
+        if (finder == index_parts.end())
+          REPORT_LEGION_ERROR(ERROR_UNABLE_FIND_ENTRY,
+            "Unable to find entry for index partition %x. "
+                          "This is definitely a runtime bug.", part.id)
+        return finder->second;
+      }
+      else
+      {
+        *defer = wait_on;
+        return NULL;
+      }
     }
 
     //--------------------------------------------------------------------------
@@ -5203,12 +5213,13 @@ namespace Legion {
     bool IndexSpaceNode::has_color(const LegionColor c)
     //--------------------------------------------------------------------------
     {
-      IndexPartNode *child = get_child(c, true/*can fail*/);
+      IndexPartNode *child = get_child(c, NULL/*defer*/, true/*can fail*/);
       return (child != NULL);
     }
 
     //--------------------------------------------------------------------------
-    IndexPartNode* IndexSpaceNode::get_child(const LegionColor c, bool can_fail)
+    IndexPartNode* IndexSpaceNode::get_child(const LegionColor c, 
+                                             RtEvent *defer, bool can_fail)
     //--------------------------------------------------------------------------
     {
       // See if we have it locally if not go find it
@@ -5234,7 +5245,7 @@ namespace Legion {
       if (owner_space == context->runtime->address_space)
       {
         if (remote_handle.exists())
-          return context->get_node(remote_handle);
+          return context->get_node(remote_handle, defer);
         if (can_fail)
           return NULL;
         REPORT_LEGION_ERROR(ERROR_INVALID_PARTITION_COLOR,
@@ -5253,18 +5264,26 @@ namespace Legion {
         rez.serialize(ready_event);
       }
       context->runtime->send_index_space_child_request(owner_space, rez);
-      ready_event.lg_wait();
-      // Stupid volatile-ness
-      IndexPartition handle_copy = *handle_ptr;
-      if (!handle_copy.exists())
+      if (defer == NULL)
       {
-        if (can_fail)
-          return NULL;
-        REPORT_LEGION_ERROR(ERROR_INVALID_PARTITION_COLOR,
-          "Unable to find entry for color %lld in "
-                        "index space %x.", c, handle.id)
+        ready_event.lg_wait();
+        // Stupid volatile-ness
+        IndexPartition handle_copy = *handle_ptr;
+        if (!handle_copy.exists())
+        {
+          if (can_fail)
+            return NULL;
+          REPORT_LEGION_ERROR(ERROR_INVALID_PARTITION_COLOR,
+            "Unable to find entry for color %lld in "
+                          "index space %x.", c, handle.id)
+        }
+        return context->get_node(handle_copy);
       }
-      return context->get_node(handle_copy);
+      else
+      {
+        *defer = ready_event;
+        return NULL;
+      }
     }
 
     //--------------------------------------------------------------------------
@@ -5681,7 +5700,24 @@ namespace Legion {
       RtUserEvent to_trigger;
       derez.deserialize(to_trigger);
       IndexSpaceNode *parent = forest->get_node(handle);
-      IndexPartNode *child = parent->get_child(child_color, true/*can fail*/);
+      RtEvent defer;
+      IndexPartNode *child = 
+        parent->get_child(child_color, &defer, true/*can fail*/);
+      if (defer.exists())
+      {
+        // Build a continuation and run it when the node is 
+        // ready, we have to do this in order to avoid blocking
+        // the virtual channel for nested index tree requests
+        DeferChildArgs args;
+        args.proxy_this = parent;
+        args.child_color = child_color;
+        args.target = target;
+        args.to_trigger = to_trigger;
+        args.source = source;
+        forest->runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
+                                                 NULL/*op*/, defer);
+        return;
+      }
       if (child != NULL)
       {
         Serializer rez;
@@ -5695,6 +5731,29 @@ namespace Legion {
       }
       else // Failed so just trigger the result
         Runtime::trigger_event(to_trigger);
+    }
+
+    //--------------------------------------------------------------------------
+    /*static*/ void IndexSpaceNode::defer_node_child_request(const void *args)
+    //--------------------------------------------------------------------------
+    {
+      const DeferChildArgs *dargs = (const DeferChildArgs*)args;
+      IndexPartNode *child = 
+       dargs->proxy_this->get_child(dargs->child_color, NULL, true/*can fail*/);
+      if (child != NULL)
+      {
+        Serializer rez;
+        {
+          RezCheck z(rez);
+          rez.serialize(child->handle);
+          rez.serialize(dargs->target);
+          rez.serialize(dargs->to_trigger);
+        }
+        Runtime *runtime = dargs->proxy_this->context->runtime;
+        runtime->send_index_space_child_response(dargs->source, rez);
+      }
+      else // Failed so just trigger the result
+        Runtime::trigger_event(dargs->to_trigger);
     }
 
     //--------------------------------------------------------------------------
@@ -6101,7 +6160,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    IndexSpaceNode* IndexPartNode::get_child(const LegionColor c)
+    IndexSpaceNode* IndexPartNode::get_child(const LegionColor c,RtEvent *defer)
     //--------------------------------------------------------------------------
     {
       // First check to see if we can find it
@@ -6143,15 +6202,23 @@ namespace Legion {
         if (wait_on.exists())
         {
           // Someone else is already making it so just wait
-          wait_on.lg_wait();
-          AutoLock n_lock(node_lock,1,false/*exclusive*/);
-          std::map<LegionColor,IndexSpaceNode*>::const_iterator finder =
-            color_map.find(c);
+          if (defer == NULL)
+          {
+            wait_on.lg_wait();
+            AutoLock n_lock(node_lock,1,false/*exclusive*/);
+            std::map<LegionColor,IndexSpaceNode*>::const_iterator finder =
+              color_map.find(c);
 #ifdef DEBUG_LEGION
-          // It better be here when we wake up
-          assert(finder != color_map.end());
+            // It better be here when we wake up
+            assert(finder != color_map.end());
 #endif
-          return finder->second;
+            return finder->second;
+          }
+          else
+          {
+            *defer = wait_on;
+            return NULL;
+          }
         }
         else
         {
@@ -6207,12 +6274,20 @@ namespace Legion {
           rez.serialize(ready_event);
         }
         context->runtime->send_index_partition_child_request(owner_space, rez);
-        ready_event.lg_wait();
-        IndexSpace copy_handle = *handle_ptr;
+        if (defer == NULL)
+        {
+          ready_event.lg_wait();
+          IndexSpace copy_handle = *handle_ptr;
 #ifdef DEBUG_LEGION
-        assert(copy_handle.exists());
+          assert(copy_handle.exists());
 #endif
-        return context->get_node(copy_handle);
+          return context->get_node(copy_handle);
+        }
+        else
+        {
+          *defer = ready_event;
+          return NULL;
+        }
       }
     }
 
@@ -6775,15 +6850,49 @@ namespace Legion {
       RtUserEvent to_trigger;
       derez.deserialize(to_trigger);
       IndexPartNode *parent = forest->get_node(handle);
-      IndexSpaceNode *child = parent->get_child(child_color);
+      RtEvent defer;
+      IndexSpaceNode *child = parent->get_child(child_color, &defer);
+      // If we got a deferral event then we need to make a continuation
+      // to avoid blocking the virtual channel for nested index tree requests
+      if (defer.exists())
+      {
+        DeferChildArgs args;
+        args.proxy_this = parent;
+        args.child_color = child_color;
+        args.target = target;
+        args.to_trigger = to_trigger;
+        args.source = source;
+        forest->runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
+                                                 NULL/*op*/, defer);
+      }
+      else
+      {
+        Serializer rez;
+        {
+          RezCheck z(rez);
+          rez.serialize(child->handle);
+          rez.serialize(target);
+          rez.serialize(to_trigger);
+        }
+        forest->runtime->send_index_partition_child_response(source, rez);
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    /*static*/ void IndexPartNode::defer_node_child_request(const void *args)
+    //--------------------------------------------------------------------------
+    {
+      const DeferChildArgs *dargs = (const DeferChildArgs*)args;
+      IndexSpaceNode *child = dargs->proxy_this->get_child(dargs->child_color);
       Serializer rez;
       {
         RezCheck z(rez);
         rez.serialize(child->handle);
-        rez.serialize(target);
-        rez.serialize(to_trigger);
+        rez.serialize(dargs->target);
+        rez.serialize(dargs->to_trigger);
       }
-      forest->runtime->send_index_partition_child_response(source, rez);
+      Runtime *runtime = dargs->proxy_this->context->runtime;
+      runtime->send_index_partition_child_response(dargs->source, rez);
     }
 
     //--------------------------------------------------------------------------
@@ -8544,23 +8653,23 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    InstanceManager* FieldSpaceNode::create_file_instance(
-                                         const std::set<FieldID> &create_fields, 
+    InstanceManager* FieldSpaceNode::create_external_instance(
+                                         const std::vector<FieldID> &field_set,
                                          RegionNode *node, AttachOp *attach_op)
     //--------------------------------------------------------------------------
     {
-      std::vector<FieldID> field_set(create_fields.begin(),create_fields.end());
-      std::vector<size_t> field_sizes(create_fields.size());
-      std::vector<unsigned> mask_index_map(create_fields.size());
-      std::vector<CustomSerdezID> serdez(create_fields.size());
+      std::vector<size_t> field_sizes(field_set.size());
+      std::vector<unsigned> mask_index_map(field_set.size());
+      std::vector<CustomSerdezID> serdez(field_set.size());
       FieldMask file_mask;
       compute_field_layout(field_set, field_sizes, 
                            mask_index_map, serdez, file_mask);
       // Now make the instance, this should always succeed
+      ApEvent ready_event;
       LayoutConstraintSet constraints;
       PhysicalInstance inst = 
-        attach_op->create_instance(node->row_source,
-				   field_set, field_sizes, constraints);
+        attach_op->create_instance(node->row_source, field_set, field_sizes, 
+                                   constraints, ready_event);
       // Pull out the pointer constraint so that we can use it separately
       // and not have it included in the layout constraints
       PointerConstraint pointer_constraint = constraints.pointer_constraint;
@@ -8580,7 +8689,6 @@ namespace Legion {
       }
 #ifdef DEBUG_LEGION
       assert(layout != NULL);
-      assert(layout->constraints->specialized_constraint.is_file());
 #endif
       DistributedID did = context->runtime->get_available_distributed_id(false);
       MemoryManager *memory = 
@@ -8590,8 +8698,8 @@ namespace Legion {
                                          memory, inst, node->row_source, 
                                          false/*own*/, node, layout, 
                                          pointer_constraint,
-                                         true/*register now*/, 
-                                         ApEvent::NO_AP_EVENT,
+                                         true/*register now*/, ready_event,
+                                         true/*external instance*/,
                                          Reservation::create_reservation());
 #ifdef DEBUG_LEGION
       assert(result != NULL);
@@ -12230,6 +12338,26 @@ namespace Legion {
             return;
         }
       }
+      // Another check here to also see if we are already valid
+      // There can be races with read-only region requirements from
+      // different operations updating the same physical instance,
+      // we know that our mapping process is atomic with respect to
+      // those other region requirements so check to see if the version
+      // numbers on the physical instance match the ones we need, if
+      // they do then we know that it has already been updated and
+      // we don't have to issue any copies ourself
+      // (Except when we have restrictions, and we need the copies)
+      if (IS_READ_ONLY(info.req) && !restrict_info.has_restrictions())
+      {
+        FieldMask already_valid = copy_mask;
+        dst->filter_invalid_fields(already_valid, info.version_info);
+        if (!!already_valid)
+        {
+          copy_mask -= already_valid;
+          if (!copy_mask)
+            return;
+        }
+      }
       // To facilitate optimized copies in the low-level runtime, 
       // we gather all the information needed to issue gather copies 
       // from multiple instances into the data structures below, we then 
@@ -14958,13 +15086,14 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    InstanceRef RegionNode::attach_file(ContextID ctx, InnerContext *parent_ctx, 
-                                        const UniqueID logical_ctx_uid,
-                                        const FieldMask &attach_mask,
-                                        const RegionRequirement &req,
-                                        InstanceManager *instance_manager,
-                                        VersionInfo &version_info,
-                                        std::set<RtEvent> &map_applied_events)
+    InstanceRef RegionNode::attach_external(ContextID ctx, 
+                                          InnerContext *parent_ctx, 
+                                          const UniqueID logical_ctx_uid,
+                                          const FieldMask &attach_mask,
+                                          const RegionRequirement &req,
+                                          InstanceManager *instance_manager,
+                                          VersionInfo &version_info,
+                                          std::set<RtEvent> &map_applied_events)
     //--------------------------------------------------------------------------
     {
       // We're effectively writing to this region by doing the attach
@@ -14990,11 +15119,11 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    ApEvent RegionNode::detach_file(ContextID ctx, InnerContext *context, 
-                                    const UniqueID logical_ctx_uid,  
-                                    VersionInfo &version_info, 
-                                    const InstanceRef &ref,
-                                    std::set<RtEvent> &map_applied_events)
+    ApEvent RegionNode::detach_external(ContextID ctx, InnerContext *context, 
+                                        const UniqueID logical_ctx_uid,  
+                                        VersionInfo &version_info, 
+                                        const InstanceRef &ref,
+                                        std::set<RtEvent> &map_applied_events)
     //--------------------------------------------------------------------------
     {
       InstanceView *view = convert_reference(ref, context);
