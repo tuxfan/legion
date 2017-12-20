@@ -93,6 +93,7 @@ namespace Legion {
       inline IndexTreeID get_tree_id(void) const { return tid; }
       inline bool exists(void) const { return (id != 0); }
       inline TypeTag get_type_tag(void) const { return type_tag; }
+      inline int get_dim(void) const;
     protected:
       friend std::ostream& operator<<(std::ostream& os, 
                                       const IndexSpace& is);
@@ -148,6 +149,7 @@ namespace Legion {
       inline IndexTreeID get_tree_id(void) const { return tid; }
       inline bool exists(void) const { return (id != 0); }
       inline TypeTag get_type_tag(void) const { return type_tag; }
+      inline int get_dim(void) const;
     protected:
       friend std::ostream& operator<<(std::ostream& os, 
                                       const IndexPartition& ip);
@@ -245,6 +247,7 @@ namespace Legion {
       inline bool exists(void) const { return (tree_id != 0); } 
       inline TypeTag get_type_tag(void) const 
         { return index_space.get_type_tag(); }
+      inline int get_dim(void) const { return index_space.get_dim(); }
     protected:
       friend std::ostream& operator<<(std::ostream& os, 
                                       const LogicalRegion& lr);
@@ -313,6 +316,7 @@ namespace Legion {
       inline bool exists(void) const { return (tree_id != 0); }
       inline TypeTag get_type_tag(void) const 
         { return index_partition.get_type_tag(); }
+      inline int get_dim(void) const { return index_partition.get_dim(); }
     protected:
       friend std::ostream& operator<<(std::ostream& os, 
                                       const LogicalPartition& lp);
@@ -1901,9 +1905,14 @@ namespace Legion {
       inline void attach_hdf5(const char *file_name,
                               const std::map<FieldID,const char*> &field_map,
                               LegionFileMode mode);
-    public:
-      inline void add_field_pointer(FieldID fid, void *ptr);
-      inline void set_pitch(unsigned dim, size_t pitch);
+      // Helper methods for AOS and SOA arrays, but it is totally 
+      // acceptable to fill in the layout constraint set manually
+      inline void attach_array_aos(void *base, bool column_major,
+                                   const std::vector<FieldID> &fields,
+                                   Memory mem, size_t alignment = 16);
+      inline void attach_array_soa(void *base, bool column_major,
+                                   const std::vector<FieldID> &fields,
+                                   Memory mem, size_t alignment = 16);
     public:
       ExternalResource                              resource;
       LogicalRegion                                 handle;
@@ -1915,9 +1924,9 @@ namespace Legion {
       std::vector<FieldID>                          file_fields; // normal files
       std::map<FieldID,/*file name*/const char*>    field_files; // hdf5 files
     public:
-      // Data for arrays
-      std::map<FieldID,/*pointers*/void*>           field_pointers;
-      std::vector<size_t/*bytes*/>                  pitches;
+      // Data for external instances
+      LayoutConstraintSet                           constraints;
+      std::set<FieldID>                             privilege_fields;
     public:
       // Inform the runtime about any static dependences
       // These will be ignored outside of static traces
@@ -2579,7 +2588,7 @@ namespace Legion {
       bool                                speculated;
     public:
       // Parent task (only guaranteed to be good for one recursion)
-      Task*                               parent_task;
+      const Task*                         parent_task;
     };
 
     /**
@@ -2616,7 +2625,7 @@ namespace Legion {
       DomainPoint                       index_point;
     public:
       // Parent task for the copy operation
-      Task*                             parent_task;
+      const Task*                       parent_task;
     };
 
     /**
@@ -2648,7 +2657,7 @@ namespace Legion {
       LayoutConstraintID                layout_constraint_id; 
     public:
       // Parent task for the inline operation
-      Task*                             parent_task;
+      const Task*                       parent_task;
     };
 
     /**
@@ -2681,7 +2690,7 @@ namespace Legion {
       std::vector<PhaseBarrier>         arrive_barriers;
     public:
       // Parent task for the acquire operation
-      Task*                             parent_task;
+      const Task*                       parent_task;
     };
 
     /**
@@ -2714,7 +2723,7 @@ namespace Legion {
       std::vector<PhaseBarrier>         arrive_barriers;
     public:
       // Parent task for the release operation
-      Task*                             parent_task;
+      const Task*                       parent_task;
     };
 
     /**
@@ -2746,7 +2755,7 @@ namespace Legion {
       RegionRequirement                 requirement;
     public:
       // Parent task for the inline operation
-      Task*                             parent_task;
+      const Task*                       parent_task;
     };
 
     /**
@@ -2783,7 +2792,7 @@ namespace Legion {
       DomainPoint                       index_point;
     public:
       // Parent task for the fill operation
-      Task*                           parent_task;
+      const Task*                       parent_task;
     };
 
     /**
@@ -2828,7 +2837,7 @@ namespace Legion {
       DomainPoint                         index_point;
     public:
       // Parent task for the partition operation
-      Task*                               parent_task;
+      const Task*                         parent_task;
     };
 
     //==========================================================================
@@ -7149,6 +7158,10 @@ namespace Legion {
 }; // namespace Legion
 
 #include "legion/legion.inl"
+// Include this here so we get the mapper interface in the header file
+// We have to put it here though since the mapper interface depends
+// on the rest of the legion interface
+#include "legion/legion_mapping.h"
 
 #endif // __LEGION_RUNTIME_H__
 #endif // defined LEGION_ENABLE_CXX_BINDINGS

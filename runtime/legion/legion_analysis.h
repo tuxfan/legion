@@ -284,7 +284,7 @@ namespace Legion {
       std::vector<PhysicalState*>      physical_states;
       std::vector<FieldVersions>       field_versions;
       LegionVector<FieldMask>::aligned split_masks;
-    }; 
+    };
 
     /**
      * \class Restriction
@@ -443,20 +443,24 @@ namespace Legion {
      */
     class ProjectionExpression {
       public:
+        ProjectionExpression(void);
         ProjectionExpression(ExpressionType type,
             ProjectionExpression *lhs,
             ProjectionExpression *rhs);
         ProjectionExpression(ExpressionType type,
             int value);
       public:
+        void pack_expression(Serializer &rez) const;
+        void unpack_expression(Deserializer &derez);
+      public:
         static ProjectionExpression* from_linear(int mul_const, int var_id,
             int add_const);
         long int evaluate(DomainPoint &point) const;
         std::string stringify(void) const;
       public:
-        const ExpressionType expression_type;
-        const ProjectionExpression *lhs;
-        const ProjectionExpression *rhs;
+        ExpressionType expression_type;
+        ProjectionExpression *lhs;
+        ProjectionExpression *rhs;
         int value;
     };
 

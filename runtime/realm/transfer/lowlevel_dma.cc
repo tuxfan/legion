@@ -387,8 +387,6 @@ namespace Realm {
       }
 
       // <NEW_DMA>
-      ib_completion = GenEventImpl::create_genevent()->current_event();
-      ib_req = new IBAllocOp(ib_completion);
       ib_by_inst.clear();
       priority_ib_queue.clear();
       // </NEW_DMA>
@@ -421,8 +419,6 @@ namespace Realm {
       , before_copy(_before_copy)
     {
       // <NEW_DMA>
-      ib_completion = GenEventImpl::create_genevent()->current_event();
-      ib_req = new IBAllocOp(ib_completion);
       ib_by_inst.clear();
       priority_ib_queue.clear();
       // </NEW_DMA>
@@ -615,6 +611,7 @@ namespace Realm {
       OASVec& oasvec = (*oas_by_inst)[inst_pair];
       size_t ib_elmnt_size = 0, domain_size = 0;
       size_t serdez_pad = 0;
+      size_t min_granularity = 1;
       for(OASVec::const_iterator it = oasvec.begin(); it != oasvec.end(); it++) {
 	if(it->serdez_id != 0) {
 	  const CustomSerdezUntyped *serdez_op = get_runtime()->custom_serdez_table[it->serdez_id];
@@ -622,13 +619,28 @@ namespace Realm {
 	  ib_elmnt_size += serdez_op->max_serialized_size;
 	  if(serdez_op->max_serialized_size > serdez_pad)
 	    serdez_pad = serdez_op->max_serialized_size;
-	} else
+	} else {
 	  ib_elmnt_size += it->size;
+	  min_granularity = lcm(min_granularity, size_t(it->size));
+	}
       }
       domain_size = domain->volume();
 
-      size_t ib_size = std::min(domain_size * ib_elmnt_size + serdez_pad,
-				IB_MAX_SIZE);
+      size_t ib_size = domain_size * ib_elmnt_size + serdez_pad;
+      if(ib_size > IB_MAX_SIZE) {
+	// take up to IB_MAX_SIZE, respecting the min granularity
+	if(min_granularity > 1) {
+	  // (really) corner case: if min_granulary exceeds IB_MAX_SIZE, use it
+	  //  directly and hope it's ok
+	  if(min_granularity > IB_MAX_SIZE) {
+	    ib_size = min_granularity;
+	  } else {
+	    size_t extra = IB_MAX_SIZE % min_granularity;
+	    ib_size = IB_MAX_SIZE - extra;
+	  }
+	} else
+	  ib_size = IB_MAX_SIZE;
+      }
       //log_ib_alloc.info("alloc_ib: src_inst_id(%llx) dst_inst_id(%llx) idx(%d) size(%lu) memory(%llx)", inst_pair.first.id, inst_pair.second.id, idx, ib_size, tgt_mem.id);
       if (ID(tgt_mem).memory.owner_node == my_node_id) {
         // create local intermediate buffer
@@ -733,8 +745,6 @@ namespace Realm {
         Memory dst_mem = get_runtime()->get_instance_impl(oas_by_inst->begin()->first.second)->memory;
 	CustomSerdezID serdez_id = oas_by_inst->begin()->second[0].serdez_id;
         find_shortest_path(src_mem, dst_mem, serdez_id, mem_path);
-        ib_req->mark_ready();
-        ib_req->mark_started();
         // Pass 1: create IBInfo blocks
         for (OASByInst::iterator it = oas_by_inst->begin(); it != oas_by_inst->end(); it++) {
           AutoHSLLock al(ib_mutex);
@@ -761,9 +771,6 @@ namespace Realm {
         //    alloc_intermediate_buffer(it->first, mem_path[i], i - 1);
         //  }
         //}
-        ib_req->mark_finished(true);
-        // once we've marked the ib_req finished, we no longer own it - it will be deleted by the OperationTable
-        ib_req = 0;
         state = STATE_BEFORE_EVENT;
       }
 
@@ -815,13 +822,6 @@ namespace Realm {
         //if (priority_ib_queue.size() > 0)
           //log_ib_alloc.info("alloc complete: copy_request(%llx) all intermediate buffers allocated!", this);
         state = STATE_READY;
-        //if (ib_completion.has_triggered()) {
-        //  state = STATE_BEFORE_EVENT;
-        //} else {
-        //  if (just_check) return false;
-        //  waiter.sleep_on_event(ib_completion);
-        //  return false;
-        //}
       }
 
       if(state == STATE_READY) {

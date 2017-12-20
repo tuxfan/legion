@@ -357,6 +357,8 @@ namespace Legion {
           finder->second |= mask;
         valid_fields |= mask;
       }
+      if (pre.exists())
+        return pre;
       return RtEvent::NO_RT_EVENT;
     }
 
@@ -945,7 +947,7 @@ namespace Legion {
 #endif
       const FieldMask &split_mask = split_masks[depth];
       const FieldVersions &local_versions = field_versions[depth];
-      if (!split_prev || !!split_mask)
+      if (!split_prev || !split_mask)
       {
         // If we don't care about the split previous mask then we can
         // just copy over what we need
@@ -1595,7 +1597,7 @@ namespace Legion {
         else if (!!remaining_fields)
           (*it)->remove_acquisition(op, node, remaining_fields);
         if (!remaining_fields)
-          return;
+          break;
       }
       if (!to_delete.empty())
       {
@@ -1842,7 +1844,7 @@ namespace Legion {
         else if (!!remaining_fields)
           (*it)->remove_restriction(op, node, remaining_fields);
         if (!remaining_fields)
-          return;
+          break;
       }
       if (!to_delete.empty())
       {
@@ -1987,6 +1989,13 @@ namespace Legion {
     /////////////////////////////////////////////////////////////
 
     //--------------------------------------------------------------------------
+    ProjectionExpression::ProjectionExpression(void)
+      : expression_type(CONST), lhs(NULL), rhs(NULL), value(-1)
+    //--------------------------------------------------------------------------
+    {
+    }
+
+    //--------------------------------------------------------------------------
     ProjectionExpression::ProjectionExpression(
                       ExpressionType type,
                       ProjectionExpression *lhs,
@@ -2005,6 +2014,55 @@ namespace Legion {
     {
     }
 
+    //--------------------------------------------------------------------------
+    void ProjectionExpression::pack_expression(Serializer &rez) const
+    //--------------------------------------------------------------------------
+    {
+      rez.serialize(expression_type);
+      switch(expression_type)
+      {
+        case CONST:
+        case VAR:
+          rez.serialize(value);
+          break;
+        case ADD:
+        case SUB:
+        case MUL:
+        case DIV:
+          lhs->pack_expression(rez);
+          rhs->pack_expression(rez);
+          break;
+        case MOD:
+        default:
+          assert(0);
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    void ProjectionExpression::unpack_expression(Deserializer &derez)
+    //--------------------------------------------------------------------------
+    {
+      derez.deserialize(expression_type);
+      switch(expression_type)
+      {
+        case CONST:
+        case VAR:
+          derez.deserialize(value);
+          break;
+        case ADD:
+        case SUB:
+        case MUL:
+        case DIV:
+          lhs = new ProjectionExpression();
+          rhs = new ProjectionExpression();
+          lhs->unpack_expression(derez);
+          rhs->unpack_expression(derez);
+          break;
+        case MOD:
+        default:
+          assert(0);
+      }
+    }
 
     //--------------------------------------------------------------------------
     ProjectionExpression* ProjectionExpression::from_linear(
@@ -2122,6 +2180,67 @@ namespace Legion {
         lhs_exp(lhs_exp), rhs_exp(rhs_exp)
     //--------------------------------------------------------------------------
     {
+    }
+
+    //--------------------------------------------------------------------------
+    void ProjectionAnalysisConstraint::pack_constraint(Serializer &rez) const
+    //--------------------------------------------------------------------------
+    {
+      rez.serialize(constraint_type);
+      switch(constraint_type)
+      {
+        case EQ:
+        case NEQ:
+          lhs_exp->pack_expression(rez);
+          rhs_exp->pack_expression(rez);
+          break;
+        case NOT:
+          lhs->pack_constraint(rez);
+          break;
+        case AND:
+        case OR:
+          lhs->pack_constraint(rez);
+          rhs->pack_constraint(rez);
+          break;
+        case TRUE:
+        case FALSE:
+          break;
+        default:
+          assert(0);
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    void ProjectionAnalysisConstraint::unpack_constraint(Deserializer &derez)
+    //--------------------------------------------------------------------------
+    {
+      derez.deserialize(constraint_type);
+      switch(constraint_type)
+      {
+        case EQ:
+        case NEQ:
+          lhs_exp = new ProjectionExpression();
+          rhs_exp = new ProjectionExpression();
+          lhs_exp->unpack_expression(derez);
+          rhs_exp->unpack_expression(derez);
+          break;
+        case NOT:
+          lhs = new ProjectionAnalysisConstraint(TRUE);
+          lhs->unpack_constraint(derez);
+          break;
+        case AND:
+        case OR:
+          lhs = new ProjectionAnalysisConstraint(TRUE);
+          rhs = new ProjectionAnalysisConstraint(TRUE);
+          lhs->unpack_constraint(derez);
+          rhs->unpack_constraint(derez);
+          break;
+        case TRUE:
+        case FALSE:
+          break;
+        default:
+          assert(0);
+      }
     }
 
     //--------------------------------------------------------------------------
@@ -4597,7 +4716,12 @@ namespace Legion {
       // Finally record any valid above views
       for (LegionMap<LogicalView*,FieldMask>::aligned::const_iterator it = 
             valid_above.begin(); it != valid_above.end(); it++)
+      {
         composite_view->record_valid_view(it->first, it->second);
+        // We also have to record these as dirty fields to make 
+        // sure that we issue copies from them if necessary
+        composite_view->record_dirty_fields(it->second);
+      }
     }
 
     //--------------------------------------------------------------------------

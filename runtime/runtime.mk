@@ -23,8 +23,8 @@ CC_FLAGS += -DUSE_DISK
 endif
 
 # If using CUDA select a target GPU architecture
-GPU_ARCH ?= fermi
-#GPU_ARCH ?= kepler
+#GPU_ARCH ?= fermi
+GPU_ARCH ?= kepler
 #GPU_ARCH ?= k20
 #GPU_ARCH ?= pascal
 
@@ -217,6 +217,7 @@ ifeq ($(strip $(USE_PYTHON)),1)
       ifeq ($(PYTHON_EXE),)
         $(error cannot find python - set PYTHON_ROOT if not in PATH)
       endif
+      PYTHON_VERSION_MAJOR := $(shell $(PYTHON_EXE) -c 'import sys; print(sys.version_info.major)')
       PYTHON_ROOT := $(dir $(PYTHON_EXE))
     endif
 
@@ -244,7 +245,15 @@ ifeq ($(strip $(USE_PYTHON)),1)
       else
         CC_FLAGS += -DREALM_PYTHON_LIB="\"$(PYTHON_LIB)\""
       endif
+    else
+      CC_FLAGS += -DREALM_PYTHON_LIB="\"$(PYTHON_LIB)\""
     endif
+  endif
+
+  ifndef PYTHON_VERSION_MAJOR
+    $(error cannot auto-detect Python version - please set PYTHON_VERSION_MAJOR)
+  else
+    CC_FLAGS += -DREALM_PYTHON_VERSION_MAJOR=$(PYTHON_VERSION_MAJOR)
   endif
 
   CC_FLAGS += -DREALM_USE_PYTHON
@@ -435,14 +444,14 @@ endif
 
 #CC_FLAGS += -DUSE_MASKED_COPIES
 
-LOW_RUNTIME_SRC	?=
-HIGH_RUNTIME_SRC?=
+REALM_SRC	?=
+LEGION_SRC	?=
 GPU_RUNTIME_SRC	?=
 MAPPER_SRC	?=
 ASM_SRC		?=
 
 # Set the source files
-LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/runtime_impl.cc \
+REALM_SRC 	+= $(LG_RT_DIR)/realm/runtime_impl.cc \
 	           $(LG_RT_DIR)/realm/transfer/transfer.cc \
 	           $(LG_RT_DIR)/realm/transfer/channel.cc \
 	           $(LG_RT_DIR)/realm/transfer/channel_disk.cc \
@@ -468,35 +477,35 @@ LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/runtime_impl.cc \
 		   $(LG_RT_DIR)/realm/machine_impl.cc \
 		   $(LG_RT_DIR)/realm/sampling_impl.cc \
                    $(LG_RT_DIR)/realm/transfer/lowlevel_disk.cc
-LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/numa/numa_module.cc \
+REALM_SRC 	+= $(LG_RT_DIR)/realm/numa/numa_module.cc \
 		   $(LG_RT_DIR)/realm/numa/numasysif.cc
 ifeq ($(strip $(USE_OPENMP)),1)
-LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/openmp/openmp_module.cc \
+REALM_SRC 	+= $(LG_RT_DIR)/realm/openmp/openmp_module.cc \
 		   $(LG_RT_DIR)/realm/openmp/openmp_threadpool.cc \
 		   $(LG_RT_DIR)/realm/openmp/openmp_api.cc
 endif
-LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/procset/procset_module.cc
+REALM_SRC 	+= $(LG_RT_DIR)/realm/procset/procset_module.cc
 ifeq ($(strip $(USE_PYTHON)),1)
-LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/python/python_module.cc \
+REALM_SRC 	+= $(LG_RT_DIR)/realm/python/python_module.cc \
 		   $(LG_RT_DIR)/realm/python/python_source.cc
 endif
 ifeq ($(strip $(USE_CUDA)),1)
-LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/cuda/cuda_module.cc \
+REALM_SRC 	+= $(LG_RT_DIR)/realm/cuda/cuda_module.cc \
 		   $(LG_RT_DIR)/realm/cuda/cudart_hijack.cc
 endif
 ifeq ($(strip $(USE_LLVM)),1)
-LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/llvmjit/llvmjit_module.cc \
+REALM_SRC 	+= $(LG_RT_DIR)/realm/llvmjit/llvmjit_module.cc \
                    $(LG_RT_DIR)/realm/llvmjit/llvmjit_internal.cc
 endif
 ifeq ($(strip $(USE_HDF)),1)
-LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/hdf5/hdf5_module.cc \
+REALM_SRC 	+= $(LG_RT_DIR)/realm/hdf5/hdf5_module.cc \
 		   $(LG_RT_DIR)/realm/hdf5/hdf5_internal.cc \
 		   $(LG_RT_DIR)/realm/hdf5/hdf5_access.cc
 endif
-LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/activemsg.cc
+REALM_SRC 	+= $(LG_RT_DIR)/realm/activemsg.cc
 GPU_RUNTIME_SRC +=
 
-LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/logging.cc \
+REALM_SRC 	+= $(LG_RT_DIR)/realm/logging.cc \
 	           $(LG_RT_DIR)/realm/cmdline.cc \
 		   $(LG_RT_DIR)/realm/profiling.cc \
 	           $(LG_RT_DIR)/realm/codedesc.cc \
@@ -510,7 +519,7 @@ MAPPER_SRC	+= $(LG_RT_DIR)/mappers/default_mapper.cc \
 		   $(LG_RT_DIR)/mappers/debug_mapper.cc \
 		   $(LG_RT_DIR)/mappers/wrapper_mapper.cc
 
-HIGH_RUNTIME_SRC += $(LG_RT_DIR)/legion/legion.cc \
+LEGION_SRC 	+= $(LG_RT_DIR)/legion/legion.cc \
 		    $(LG_RT_DIR)/legion/legion_c.cc \
 		    $(LG_RT_DIR)/legion/legion_ops.cc \
 		    $(LG_RT_DIR)/legion/legion_tasks.cc \
@@ -547,64 +556,68 @@ endif
 SSH	:= ssh
 SCP	:= scp
 
-GEN_OBJS	:= $(GEN_SRC:.cc=.o)
-LOW_RUNTIME_OBJS:= $(LOW_RUNTIME_SRC:.cc=.o)
-HIGH_RUNTIME_OBJS:=$(HIGH_RUNTIME_SRC:.cc=.o)
-MAPPER_OBJS	:= $(MAPPER_SRC:.cc=.o)
-ASM_OBJS	:= $(ASM_SRC:.S=.o)
+GEN_OBJS	:= $(GEN_SRC:.cc=.cc.o)
+REALM_OBJS	:= $(REALM_SRC:.cc=.cc.o)
+LEGION_OBJS	:= $(LEGION_SRC:.cc=.cc.o)
+MAPPER_OBJS	:= $(MAPPER_SRC:.cc=.cc.o)
+ASM_OBJS	:= $(ASM_SRC:.S=.S.o)
 # Only compile the gpu objects if we need to 
 ifeq ($(strip $(USE_CUDA)),1)
-GEN_GPU_OBJS	:= $(GEN_GPU_SRC:.cu=.o)
-GPU_RUNTIME_OBJS:= $(GPU_RUNTIME_SRC:.cu=.o)
+GEN_GPU_OBJS	:= $(GEN_GPU_SRC:.cu=.cu.o)
+GPU_RUNTIME_OBJS:= $(GPU_RUNTIME_SRC:.cu=.cu.o)
 else
 GEN_GPU_OBJS	:=
 GPU_RUNTIME_OBJS:=
 endif
 
+# Provide build rules unless the user asks us not to
 ifndef NO_BUILD_RULES
+# Provide an all unless the user asks us not to
+ifndef NO_BUILD_ALL
 .PHONY: all
 all: $(OUTFILE)
+endif
 
 # If we're using CUDA we have to link with nvcc
 $(OUTFILE) : $(GEN_OBJS) $(GEN_GPU_OBJS) $(SLIB_LEGION) $(SLIB_REALM)
 	@echo "---> Linking objects into one binary: $(OUTFILE)"
 	$(CXX) -o $(OUTFILE) $(GEN_OBJS) $(GEN_GPU_OBJS) $(LD_FLAGS) $(LEGION_LIBS) $(LEGION_LD_FLAGS) $(GASNET_FLAGS)
 
-$(SLIB_LEGION) : $(HIGH_RUNTIME_OBJS) $(MAPPER_OBJS)
+$(SLIB_LEGION) : $(LEGION_OBJS) $(MAPPER_OBJS)
 	rm -f $@
 	$(AR) rc $@ $^
 
-$(SLIB_REALM) : $(LOW_RUNTIME_OBJS)
+$(SLIB_REALM) : $(REALM_OBJS)
 	rm -f $@
 	$(AR) rc $@ $^
 
-$(GEN_OBJS) : %.o : %.cc
+$(GEN_OBJS) : %.cc.o : %.cc
 	$(CXX) -o $@ -c $< $(CC_FLAGS) $(INC_FLAGS)
 
-$(ASM_OBJS) : %.o : %.S
+$(ASM_OBJS) : %.S.o : %.S
 	$(CXX) -o $@ -c $< $(CC_FLAGS) $(INC_FLAGS)
 
-$(LOW_RUNTIME_OBJS) : %.o : %.cc
+$(REALM_OBJS) : %.cc.o : %.cc
 	$(CXX) -o $@ -c $< $(CC_FLAGS) $(INC_FLAGS)
 
-$(HIGH_RUNTIME_OBJS) : %.o : %.cc
+$(LEGION_OBJS) : %.cc.o : %.cc
 	$(CXX) -o $@ -c $< $(CC_FLAGS) $(INC_FLAGS)
 
-$(MAPPER_OBJS) : %.o : %.cc
+$(MAPPER_OBJS) : %.cc.o : %.cc
 	$(CXX) -o $@ -c $< $(CC_FLAGS) $(INC_FLAGS)
 
-$(GEN_GPU_OBJS) : %.o : %.cu
+$(GEN_GPU_OBJS) : %.cu.o : %.cu
 	$(NVCC) -o $@ -c $< $(NVCC_FLAGS) $(INC_FLAGS)
 
-$(GPU_RUNTIME_OBJS): %.o : %.cu
+$(GPU_RUNTIME_OBJS): %.cu.o : %.cu
 	$(NVCC) -o $@ -c $< $(NVCC_FLAGS) $(INC_FLAGS)
 
 clean::
-	$(RM) -f $(OUTFILE) $(SLIB_LEGION) $(SLIB_REALM) $(GEN_OBJS) $(GEN_GPU_OBJS) $(LOW_RUNTIME_OBJS) $(HIGH_RUNTIME_OBJS) $(GPU_RUNTIME_OBJS) $(MAPPER_OBJS) $(ASM_OBJS)
+	$(RM) -f $(OUTFILE) $(SLIB_LEGION) $(SLIB_REALM) $(GEN_OBJS) $(GEN_GPU_OBJS) $(REALM_OBJS) $(LEGION_OBJS) $(GPU_RUNTIME_OBJS) $(MAPPER_OBJS) $(ASM_OBJS)
 
 endif
 
 ifeq ($(strip $(USE_LLVM)),1)
-llvmjit_internal.o : CC_FLAGS += $(LLVM_CXXFLAGS)
-%/llvmjit_internal.o : CC_FLAGS += $(LLVM_CXXFLAGS)
+llvmjit_internal.cc.o : CC_FLAGS += $(LLVM_CXXFLAGS)
+%/llvmjit_internal.cc.o : CC_FLAGS += $(LLVM_CXXFLAGS)
 endif

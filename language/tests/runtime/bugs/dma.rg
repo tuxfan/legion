@@ -12,16 +12,39 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
--- fails-with:
--- type_mismatch_partition_by_field4.rg:25: type mismatch in argument 1: expected region of ispace(ptr) but got region(ispace(int1d), int32)
--- var p = partition(r, c)
---                   ^
+-- runs-with:
+-- []
 
 import "regent"
 
-task f()
-  var r = region(ispace(int1d, 5), int)
-  var c = ispace(ptr, 3)
-  var p = partition(r, c)
+fspace fs
+{
+  field : int8;
+  payload : double[1678];
+}
+
+task init(r : region(ispace(int1d), fs))
+where
+  reads writes(r)
+do
 end
-f:compile()
+
+task compute(r : region(ispace(int1d), fs))
+where
+  reads(r)
+do
+end
+
+task toplevel()
+  var r = region(ispace(int1d, 9998), fs)
+
+  var is = ispace(int1d, 2)
+  var p = partition(equal, r, is)
+
+  init(r)
+  for c in is do
+    compute(p[c])
+  end
+end
+
+regentlib.start(toplevel)

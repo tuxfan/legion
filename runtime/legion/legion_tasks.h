@@ -171,11 +171,11 @@ namespace Legion {
     public:
       bool is_remote(void) const;
       inline bool is_stolen(void) const { return (steal_count > 0); }
-      inline bool is_locally_mapped(void) const { return map_locally; }
+      inline bool is_origin_mapped(void) const { return map_origin; }
     public:
       void set_current_proc(Processor current);
-      inline void set_locally_mapped(bool local) { map_locally = local; }
-      inline void set_target_proc(Processor next) { target_proc = next; }
+      inline void set_origin_mapped(bool origin) { map_origin = origin; }
+      inline void set_target_proc(Processor next) { target_proc = next; } 
     protected:
       void activate_task(void);
       void deactivate_task(void); 
@@ -272,6 +272,10 @@ namespace Legion {
       void unpack_projection_infos(Deserializer &derez,
                                    std::vector<ProjectionInfo> &infos,
                                    IndexSpace launch_space);
+      void pack_constraint_equations(Serializer &rez,
+                      std::vector<ProjectionAnalysisConstraint> &eqns);
+      void unpack_constraint_equations(Deserializer &derez,
+                      std::vector<ProjectionAnalysisConstraint> &eqns);
     public:
       // Tell the parent context that this task is in a ready queue
       void activate_outstanding_task(void);
@@ -320,7 +324,7 @@ namespace Legion {
       bool commit_received;
     protected:
       bool options_selected;
-      bool map_locally;
+      bool map_origin;
     protected:
       // For managing predication
       PredEvent true_guard;
@@ -570,7 +574,12 @@ namespace Legion {
       void initialize_reduction_state(void);
       void fold_reduction_future(const void *result, size_t result_size,
                                  bool owner, bool exclusive); 
-    public:
+    public: // Should also be protected
+      std::vector<ProjectionAnalysisConstraint> constraint_equations;
+      OrderingID oid;
+    public: //twarsz Change this back to protected.
+      // Map from point tasks to their runtime events used in structured launches
+      std::map<DomainPoint, RtEvent> point_task_events;
     protected:
       std::list<SliceTask*> slices;
       std::vector<VersionInfo> version_infos;
@@ -579,9 +588,6 @@ namespace Legion {
       bool sliced;
     public:
       Domain internal_domain; // twarsz change this back to protected
-    public: // Should also be protected
-      std::vector<ProjectionAnalysisConstraint*> constraint_equations;
-      OrderingID oid;
     protected:
       IndexSpace launch_space; // global set of points
       IndexSpace internal_space; // local set of points
@@ -737,6 +743,7 @@ namespace Legion {
         static const LgTaskID TASK_ID = LG_DEFER_POINT_MAP_AND_LAUNCH_TASK_ID;
       public:
         PointTask *proxy_this;
+        bool needs_versioning;
       };
     public:
       PointTask(Runtime *rt);
@@ -761,7 +768,7 @@ namespace Legion {
       virtual bool is_stealable(void) const;
       virtual RtEvent find_interlaunch_dependencies(void);
       virtual bool has_restrictions(unsigned idx, LogicalRegion handle);
-      virtual void map_and_launch(void);
+      virtual void map_and_launch(bool needs_versioning);
       virtual bool can_early_complete(ApUserEvent &chain_event);
       virtual VersionInfo& get_version_info(unsigned idx);
       virtual RestrictInfo& get_restrict_info(unsigned idx);
@@ -778,7 +785,7 @@ namespace Legion {
       virtual void trigger_task_complete(void);
       virtual void trigger_task_commit(void);
     public:
-      RtEvent defer_map_and_launch(RtEvent precondition);
+      RtEvent defer_map_and_launch(RtEvent precondition, bool needs_versioning);
     public:
       virtual void perform_physical_traversal(unsigned idx,
                                 RegionTreeContext ctx, InstanceSet &valid);
@@ -894,7 +901,7 @@ namespace Legion {
     public:
       virtual void record_reference_mutation_effect(RtEvent event);
     public:
-      void record_locally_mapped_slice(SliceTask *local_slice);
+      void record_origin_mapped_slice(SliceTask *local_slice);
     public:
       void return_slice_mapped(unsigned points, long long denom,
                                RtEvent applied_condition, 
@@ -924,14 +931,14 @@ namespace Legion {
       unsigned committed_points;
     protected:
       std::vector<RegionTreePath> privilege_paths;
-      std::deque<SliceTask*> locally_mapped_slices;
+      std::deque<SliceTask*> origin_mapped_slices;
     protected:
       std::set<RtEvent> map_applied_conditions;
       std::set<ApEvent> completion_preconditions;
       std::map<PhysicalManager*,std::pair<unsigned,bool> > acquired_instances;
-    public: //twarsz Change this back to protected.
+    //public: //twarsz Change this back to protected.
       // Map from point tasks to their runtime events used in structured launches
-      std::map<DomainPoint, RtEvent> point_task_events;
+      //std::map<DomainPoint, RtEvent> point_task_events;
     protected:
       // Whether we have to do intra-task alias analysis
       bool need_intra_task_alias_analysis;
@@ -1067,12 +1074,18 @@ namespace Legion {
       unsigned num_uncomplete_points;
       unsigned num_uncommitted_points;
     public:
+      inline RtUserEvent get_structured_slice_mapped_trigger(void) const
+        { return structured_slice_mapped_trigger; }
+      inline void set_structured_slice_mapped_trigger(RtUserEvent e)
+        { structured_slice_mapped_trigger = e; }
       inline RtEvent get_slice_deps_mapped_event(void) const
         { return slice_deps_mapped_event; }
       inline void set_slice_deps_mapped_event(RtEvent e)
         { slice_deps_mapped_event = e; }
     protected:
+      RtUserEvent structured_slice_mapped_trigger;
       RtEvent slice_deps_mapped_event;
+      RtEvent slice_deps_mapped_event_old;
     protected:
       // For knowing which fraction of the
       // domain we have (1/denominator)
@@ -1080,7 +1093,7 @@ namespace Legion {
       IndexTask *index_owner;
       ApEvent index_complete;
       UniqueID remote_unique_id;
-      bool locally_mapped;
+      bool origin_mapped;
       bool need_versioning_analysis;
       UniqueID remote_owner_uid;
     protected:

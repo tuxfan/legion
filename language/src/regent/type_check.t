@@ -59,8 +59,8 @@ function context:new_task_scope(expected_return_type)
   local cx = {
     type_env = self.type_env:new_local_scope(),
     privileges = data.newmap(),
-    constraints = {},
-    region_universe = {},
+    constraints = data.new_recursive_map(2),
+    region_universe = data.newmap(),
     expected_return_type = {expected_return_type},
     fixup_nodes = terralib.newlist(),
     must_epoch = false,
@@ -980,6 +980,7 @@ function type_check.expr_call(cx, node)
     fn = fn,
     args = args,
     conditions = conditions,
+    replicable = false,
     expr_type = expr_type,
     annotations = node.annotations,
     span = node.span,
@@ -1415,7 +1416,7 @@ function type_check.expr_region(cx, node)
   std.add_privilege(cx, std.writes, region, data.newtuple())
   -- Freshly created regions are, by definition, disjoint from all
   -- other regions.
-  for other_region, _ in pairs(cx.region_universe) do
+  for other_region, _ in cx.region_universe:items() do
     assert(not std.type_eq(region, other_region))
     -- But still, don't bother litering the constraint space with
     -- trivial constraints.
@@ -1577,11 +1578,6 @@ function type_check.expr_partition_by_field(cx, node)
 
   local colors = type_check.expr(cx, node.colors)
   local colors_type = std.check_read(cx, colors)
-
-  if not region_type:is_opaque() then
-    report.error(node, "type mismatch in argument 1: expected region of ispace(ptr) but got " ..
-                tostring(region_type))
-  end
 
   if #region.fields ~= 1 then
     report.error(node, "type mismatch in argument 1: expected 1 field but got " ..
@@ -2044,7 +2040,7 @@ function type_check.expr_list_duplicate_partition(cx, node)
   std.add_privilege(cx, std.writes, expr_type, data.newtuple())
   -- Freshly created regions are, by definition, disjoint from all
   -- other regions.
-  for other_region, _ in pairs(cx.region_universe) do
+  for other_region, _ in cx.region_universe:items() do
     assert(not std.type_eq(expr_type, other_region))
     -- But still, don't bother litering the constraint space with
     -- trivial constraints.
