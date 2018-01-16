@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1773,7 +1773,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     CopyLauncher::CopyLauncher(Predicate pred /*= Predicate::TRUE_PRED*/,
                                MapperID mid /*=0*/, MappingTagID t /*=0*/)
-      : predicate(pred), map_id(mid), tag(t), static_dependences(NULL),
+      : predicate(pred), map_id(mid), tag(t), static_dependences(NULL), 
         silence_warnings(false)
     //--------------------------------------------------------------------------
     {
@@ -1807,7 +1807,7 @@ namespace Legion {
                                     Predicate pred /*= Predicate::TRUE_PRED*/,
                                     MapperID mid /*=0*/, MappingTagID t /*=0*/) 
       : launch_domain(Domain::NO_DOMAIN), launch_space(space), predicate(pred),
-        map_id(mid),tag(t), static_dependences(NULL), silence_warnings(false)
+        map_id(mid), tag(t), static_dependences(NULL), silence_warnings(false)
     //--------------------------------------------------------------------------
     {
     }
@@ -2565,6 +2565,14 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       impl->fail_bounds_check(p, fid, mode);
+    }
+
+    //--------------------------------------------------------------------------
+    void PhysicalRegion::fail_bounds_check(Domain d, FieldID fid,
+                                           PrivilegeMode mode) const
+    //--------------------------------------------------------------------------
+    {
+      impl->fail_bounds_check(d, fid, mode);
     }
 
 #ifdef __GNUC__

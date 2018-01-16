@@ -1,5 +1,5 @@
-/* Copyright 2016 Stanford University
- * Copyright 2016 Los Alamos National Laboratory
+/* Copyright 2018 Stanford University
+ * Copyright 2018 Los Alamos National Laboratory
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -379,6 +379,8 @@ namespace Realm {
 	  
 	  TransferIterator::AddressInfo src_info, dst_info;
 	  size_t read_bytes, write_bytes, read_seq, write_seq;
+	  size_t write_pad_bytes = 0;
+	  size_t read_pad_bytes = 0;
 
 	  // handle serialization-only and deserialization-only cases 
 	  //  specially, because they have uncertainty in how much data
@@ -401,8 +403,7 @@ namespace Realm {
 	       src_serdez_op->max_serialized_size)
 	      break;
 
-	    // some sort of per-channel max request size?
-	    size_t max_bytes = 1 << 20;
+	    size_t max_bytes = max_req_size;
 
 	    size_t src_bytes = src_iter->step(max_bytes, src_info, flags,
 					      true /*tentative*/);
@@ -488,8 +489,7 @@ namespace Realm {
 	      }
 	    }
 
-	    // some sort of per-channel max request size?
-	    size_t max_bytes = 1 << 20;
+	    size_t max_bytes = max_req_size;
 
 	    size_t dst_bytes = dst_iter->step(max_bytes, dst_info, flags,
 					      !input_data_done);
@@ -555,8 +555,7 @@ namespace Realm {
 	  } else {
 	    // either no serialization or simultaneous serdez
 
-	    // some sort of per-channel max request size?
-	    size_t max_bytes = 1 << 20;
+	    size_t max_bytes = max_req_size;
 
 	    // if we're not the first in the chain, and we know the total bytes
 	    //  written by the predecessor, don't exceed that
@@ -621,9 +620,32 @@ namespace Realm {
 					      dimension_mismatch_possible);
 	    if(dst_bytes == 0) {
 	      // not enough space for even one element
-	      src_iter->cancel_step();
-	      // TODO: put this XD to sleep until we do have data
-	      break;
+
+	      // if this happens when the input is an IB, the output is not,
+	      //  and the input doesn't seem to be limited by max_bytes, this
+	      //  is (probably?) the case that requires padding on the input
+	      //  side
+	      if((pre_xd_guid != XFERDES_NO_GUID) &&
+		 (next_xd_guid == XFERDES_NO_GUID) &&
+		 (src_bytes < max_bytes)) {
+		log_xd.info() << "padding input buffer by " << src_bytes << " bytes";
+		src_info.bytes_per_chunk = 0;
+		src_info.num_lines = 1;
+		src_info.num_planes = 1;
+		dst_info.bytes_per_chunk = 0;
+		dst_info.num_lines = 1;
+		dst_info.num_planes = 1;
+		read_pad_bytes = src_bytes;
+		src_bytes = 0;
+		dimension_mismatch_possible = false;
+		// src iterator will be confirmed below
+		//src_iter->confirm_step();
+		// dst didn't actually take a step, so we don't need to cancel it
+	      } else {
+		src_iter->cancel_step();
+		// TODO: put this XD to sleep until we do have data
+		break;
+	      }
 	    }
 
 	    // does source now need to be shrunk?
@@ -634,6 +656,33 @@ namespace Realm {
 	      //  posisble
 	      src_bytes = src_iter->step(dst_bytes, src_info, flags,
 					 dimension_mismatch_possible);
+	      if(src_bytes == 0) {
+		// corner case that should occur only with a destination 
+		//  intermediate buffer - no transfer, but pad to boundary
+		//  destination wants as long as we're not being limited by
+		//  max_bytes
+		assert((pre_xd_guid == XFERDES_NO_GUID) &&
+		       (next_xd_guid != XFERDES_NO_GUID));
+		if(dst_bytes < max_bytes) {
+		  log_xd.info() << "padding output buffer by " << dst_bytes << " bytes";
+		  src_info.bytes_per_chunk = 0;
+		  src_info.num_lines = 1;
+		  src_info.num_planes = 1;
+		  dst_info.bytes_per_chunk = 0;
+		  dst_info.num_lines = 1;
+		  dst_info.num_planes = 1;
+		  write_pad_bytes = dst_bytes;
+		  dst_bytes = 0;
+		  dimension_mismatch_possible = false;
+		  // src didn't actually take a step, so we don't need to cancel it
+		  dst_iter->confirm_step();
+		} else {
+		  // retry later
+		  // src didn't actually take a step, so we don't need to cancel it
+		  dst_iter->cancel_step();
+		  break;
+		}
+	      }
 	      // a mismatch is still possible if the source is 2+D and the
 	      //  destination wants to stop mid-span
 	      if(src_bytes < dst_bytes) {
@@ -739,12 +788,12 @@ namespace Realm {
 				src_info.num_lines *
 				src_info.num_planes);
 	    read_seq = read_bytes_total;
-	    read_bytes = act_bytes;
-	    read_bytes_total += act_bytes;
+	    read_bytes = act_bytes + read_pad_bytes;
+	    read_bytes_total += read_bytes;
 
 	    write_seq = write_bytes_total;
-	    write_bytes = act_bytes;
-	    write_bytes_total += act_bytes;
+	    write_bytes = act_bytes + write_pad_bytes;
+	    write_bytes_total += write_bytes;
 	    write_bytes_cons = write_bytes_total; // completion detection uses this
 	  }
 
@@ -1701,8 +1750,7 @@ namespace Realm {
 	  assert(src_serdez_op == 0);
 	  assert(dst_serdez_op == 0);
 
-	  // some sort of per-channel max request size?
-	  size_t max_bytes = 1 << 20;
+	  size_t max_bytes = max_req_size;
 
 	  // if we're not the first in the chain, and we know the total bytes
 	  //  written by the predecessor, don't exceed that
@@ -2958,6 +3006,8 @@ namespace Realm {
 	    unsigned bw = 0; // TODO
 	    unsigned latency = 0;
 	    add_path(fbm, fbm, bw, latency, false, false);
+
+	    break;
 	  }
 
 	case XferDes::XFER_GPU_PEER_FB:
@@ -3832,6 +3882,11 @@ namespace Realm {
           case XferDes::XFER_GPU_TO_FB:
           case XferDes::XFER_GPU_IN_FB:
           case XferDes::XFER_GPU_PEER_FB:
+	    // special case - IN_FB transfers ignore the max_req_size and pick
+	    //   a large enough value to do copies in a single try
+	    // consider changing this if/when a GPU can prioritize work streams
+	    if(_kind == XferDes::XFER_GPU_IN_FB)
+	      _max_req_size = 1ULL << 40; // 1 TB
             xd = new GPUXferDes(_dma_request, _launch_node,
 				_guid, _pre_xd_guid, _next_xd_guid,
 				_next_max_rw_gap,

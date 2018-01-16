@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,7 +64,8 @@ namespace Realm {
 
       Event request_metadata(void) { return metadata.request_data(ID(me).instance.creator_node, me.id); }
 
-      void finalize_instance(void);
+      // called once storage has been released and all remote metadata is invalidated
+      void recycle_instance(void);
 
     public: //protected:
       friend class RegionInstance;

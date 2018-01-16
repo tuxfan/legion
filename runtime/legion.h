@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,6 +55,10 @@
 
 // temporary helper macro to turn link errors into runtime errors
 #define UNIMPLEMENTED_METHOD(retval) do { assert(0); return retval; } while(0)
+
+// There will be a new implementation of this for control replication
+#define LEGION_PRINT_ONCE(runtime, ctx, file, fmt, ...)   \
+  fprintf(file, fmt, ##__VA_ARGS__);            
 
 /**
  * \namespace Legion
@@ -1590,14 +1594,22 @@ namespace Legion {
       inline void add_src_field(unsigned idx, FieldID fid, bool inst = true);
       inline void add_dst_field(unsigned idx, FieldID fid, bool inst = true);
     public:
+      // Specify gather/scatter region requirements (must have exactly 1 field)
+      inline void add_gather_field(const RegionRequirement &gather_req,
+                                   FieldID gather_fid, bool inst = true);
+      inline void add_scatter_field(const RegionRequirement &scatter_req,
+                                    FieldID scatter_fid, bool inst = true);
+    public:
       inline void add_grant(Grant g);
       inline void add_wait_barrier(PhaseBarrier bar);
       inline void add_arrival_barrier(PhaseBarrier bar);
       inline void add_wait_handshake(MPILegionHandshake handshake);
-      inline void add_arrival_handshake(MPILegionHandshake handshake);
+      inline void add_arrival_handshake(MPILegionHandshake handshake); 
     public:
       std::vector<RegionRequirement>  src_requirements;
       std::vector<RegionRequirement>  dst_requirements;
+      std::vector<RegionRequirement>  gather_requirements;
+      std::vector<RegionRequirement>  scatter_requirements;
       std::vector<Grant>              grants;
       std::vector<PhaseBarrier>       wait_barriers;
       std::vector<PhaseBarrier>       arrive_barriers;
@@ -1636,6 +1648,12 @@ namespace Legion {
       inline void add_src_field(unsigned idx, FieldID fid, bool inst = true);
       inline void add_dst_field(unsigned idx, FieldID fid, bool inst = true);
     public:
+      // Specify gather/scatter region requirements (must have exactly 1 field)
+      inline void add_gather_field(const RegionRequirement &gather_req,
+                                   FieldID gather_fid, bool inst = true);
+      inline void add_scatter_field(const RegionRequirement &scatter_req,
+                                    FieldID scatter_fid, bool inst = true);
+    public:
       inline void add_grant(Grant g);
       inline void add_wait_barrier(PhaseBarrier bar);
       inline void add_arrival_barrier(PhaseBarrier bar);
@@ -1644,6 +1662,8 @@ namespace Legion {
     public:
       std::vector<RegionRequirement>  src_requirements;
       std::vector<RegionRequirement>  dst_requirements;
+      std::vector<RegionRequirement>  gather_requirements;
+      std::vector<RegionRequirement>  scatter_requirements;
       std::vector<Grant>              grants;
       std::vector<PhaseBarrier>       wait_barriers;
       std::vector<PhaseBarrier>       arrive_barriers;
@@ -1652,98 +1672,6 @@ namespace Legion {
       Predicate                       predicate;
       MapperID                        map_id;
       MappingTagID                    tag;
-    public:
-      // Inform the runtime about any static dependences
-      // These will be ignored outside of static traces
-      const std::vector<StaticDependence> *static_dependences;
-    public:
-      bool                            silence_warnings;
-    };
-
-    /**
-     * \struct GatherLauncher
-     * A gather launcher is used to perform a gather from an explicit 
-     * gather copy from a number of source logical regions into a 
-     * single destination logical region by indirecting through a
-     * mapping stored in a field.
-     */
-    struct GatherLauncher {
-    public:
-      GatherLauncher(LogicalRegion indirect_region, 
-                     FieldID indirect_fid,
-                     LogicalRegion indirect_parent,
-                     Predicate pred = Predicate::TRUE_PRED,
-                     MapperID id = 0, MappingTagID tag = 0);
-    public:
-      inline GatherLauncher& add_src_requirement(const RegionRequirement &req);
-      inline void set_destination_requirement(const RegionRequirement &req);
-    public:
-      inline void add_src_field(unsigned idx, FieldID fid, bool inst = true);
-      inline void add_dst_field(FieldID fid, bool inst = true);
-    public:
-      inline void add_grant(Grant g);
-      inline void add_wait_barrier(PhaseBarrier bar);
-      inline void add_arrival_barrier(PhaseBarrier bar);
-      inline void add_wait_handshake(MPILegionHandshake handshake);
-      inline void add_arrival_handshake(MPILegionHandshake handshake);
-    public:
-      LogicalRegion                   indirect_region;
-      FieldID                         indirect_field;
-      LogicalRegion                   indirect_parent;
-      std::vector<RegionRequirement>  src_requirements;
-      RegionRequirement               dst_requirement;
-      std::vector<Grant>              grants;
-      std::vector<PhaseBarrier>       wait_barriers;
-      std::vector<PhaseBarrier>       arrive_barriers;
-      Predicate                       predicate;
-      MapperID                        map_id;
-      MappingTagID                    tag;
-      DomainPoint                     point;
-    public:
-      // Inform the runtime about any static dependences
-      // These will be ignored outside of static traces
-      const std::vector<StaticDependence> *static_dependences;
-    public:
-      bool                            silence_warnings;
-    };
-
-    /**
-     * A scatter launcher is used to perform an explicit scatter 
-     * copy from a single logical region out to many other logical
-     * regions using a mapping stored in a field.
-     */
-    struct ScatterLauncher {
-    public:
-      ScatterLauncher(LogicalRegion indirect_region, 
-                      FieldID indirect_fid,
-                      LogicalRegion indirect_parent,
-                      Predicate pred = Predicate::TRUE_PRED,
-                      MapperID id = 0, MappingTagID tag = 0);
-    public:
-      inline void set_src_requirement(const RegionRequirement &req);
-      inline ScatterLauncher& add_dst_requirement(const RegionRequirement &req);
-    public:
-      inline void add_src_field(FieldID fid, bool inst = true);
-      inline void add_dst_field(unsigned idx, FieldID fid, bool inst = true);
-    public:
-      inline void add_grant(Grant g);
-      inline void add_wait_barrier(PhaseBarrier bar);
-      inline void add_arrival_barrier(PhaseBarrier bar);
-      inline void add_wait_handshake(MPILegionHandshake handshake);
-      inline void add_arrival_handshake(MPILegionHandshake handshake);
-    public:
-      LogicalRegion                   indirect_region;
-      FieldID                         indirect_field;
-      LogicalRegion                   indirect_parent;
-      RegionRequirement               src_requirement;
-      std::vector<RegionRequirement>  dst_requirements;
-      std::vector<Grant>              grants;
-      std::vector<PhaseBarrier>       wait_barriers;
-      std::vector<PhaseBarrier>       arrive_barriers;
-      Predicate                       predicate;
-      MapperID                        map_id;
-      MappingTagID                    tag;
-      DomainPoint                     point;
     public:
       // Inform the runtime about any static dependences
       // These will be ignored outside of static traces
@@ -2043,6 +1971,7 @@ namespace Legion {
       inline void set_leaf(bool is_leaf = true);
       inline void set_inner(bool is_inner = true);
       inline void set_idempotent(bool is_idempotent = true);
+      inline void set_replicable(bool is_replicable = true);
     public:
       TaskID                            task_id;
       GeneratorContext                  generator;
@@ -2055,6 +1984,7 @@ namespace Legion {
       bool                              leaf_variant;
       bool                              inner_variant;
       bool                              idempotent_variant;
+      bool                              replicable_variant;
     };
 
     //==========================================================================
@@ -2243,6 +2173,8 @@ namespace Legion {
                                               ReductionOpID redop = 0) const;
       void fail_bounds_check(DomainPoint p, FieldID fid,
                              PrivilegeMode mode) const;
+      void fail_bounds_check(Domain d, FieldID fid,
+                             PrivilegeMode mode) const;
     protected:
       void get_bounds(void *realm_is, TypeTag type_tag) const;
     };
@@ -2258,12 +2190,14 @@ namespace Legion {
      * READ_ONLY
      *  - FT read(const Point<N,T>&) const
      *  - const FT* ptr(const Point<N,T>&) const (Affine Accessor only)
+     *  - const FT* ptr(const Rect<N,T>&) const (Affine Accessor only)
      *  - const FT& operator[](const Point<N,T>&) const (Affine Accessor only)
      *
      * READ_WRITE
      *  - FT read(const Point<N,T>&) const
      *  - void write(const Point<N,T>&, FT val) const
      *  - FT* ptr(const Point<N,T>&) const (Affine Accessor only)
+     *  - FT* ptr(const Rect<N,T>&) const (Affine Accessor only)
      *  - FT& operator[](const Point<N,T>&) const (Affine Accessor only)
      *  - template<typename REDOP> void reduce(const Point<N,T>&, REDOP::RHS);
      *    (Affine Accessor only)
@@ -2271,6 +2205,7 @@ namespace Legion {
      *  WRITE_DISCARD
      *  - void write(const Point<N,T>&, FT val) const
      *  - FT* ptr(const Point<N,T>&) const (Affine Accessor only)
+     *  - FT* ptr(const Rect<N,T>&) const (Affine Accessor only)
      *  - FT& operator[](const Point<N,T>&) const (Affine Accessor only)
      *
      * REDUCE
@@ -2288,7 +2223,9 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
-                    size_t element_count = 1,// number of FT elements in field
+                    // The actual field size in case it is different from the 
+                    // one being used in FT and we still want to check it
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
                     bool check_field_size = true,
 #else

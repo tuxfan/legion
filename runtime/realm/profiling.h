@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -162,6 +162,7 @@ namespace Realm {
 	DESTROYED_SUCCESSFULLY,
 	CORRUPTED,
 	MEMORY_LOST,
+	INSTANCE_COUNT_EXCEEDED,
       };
 
       Result result;
@@ -312,6 +313,9 @@ namespace Realm {
     void import_requests(const ProfilingRequestSet& prs);
     void send_responses(const ProfilingRequestSet& prs);
     void clear(void);
+
+    // clears only recorded measurements (keeps request info)
+    void clear_measurements(void);
 
     template <typename T>
     bool wants_measurement(void) const;

@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -436,16 +436,17 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -480,10 +481,11 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -491,7 +493,7 @@ namespace Legion {
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -533,16 +535,17 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -570,10 +573,11 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -581,7 +585,7 @@ namespace Legion {
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -614,16 +618,17 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -663,10 +668,11 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -674,7 +680,7 @@ namespace Legion {
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -723,16 +729,17 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -764,10 +771,11 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -775,7 +783,7 @@ namespace Legion {
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -815,16 +823,17 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -864,10 +873,11 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -875,7 +885,7 @@ namespace Legion {
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -923,16 +933,17 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -963,10 +974,11 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -974,7 +986,7 @@ namespace Legion {
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -1018,16 +1030,17 @@ namespace Legion {
       __CUDA_HD__
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -1042,6 +1055,20 @@ namespace Legion {
       inline const FT* ptr(const Point<N,T>& p) const
         { 
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline const FT* ptr(const Rect<N,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+          }
+          return accessor.ptr(r.lo);
         }
       __CUDA_HD__
       inline const FT& operator[](const Point<N,T>& p) const
@@ -1070,10 +1097,11 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -1082,7 +1110,7 @@ namespace Legion {
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -1121,6 +1149,32 @@ namespace Legion {
             field_region.fail_bounds_check(DomainPoint(p), field, READ_ONLY);
 #endif
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline const FT* ptr(const Rect<N,T>& r) const
+        {
+#ifdef __CUDA_ARCH__
+          if (gpu_warning)
+          {
+            if (!bounds.dense())
+              printf("WARNING: GPU bounds check is imprecise\n");
+            gpu_warning = false;
+          }
+          assert(bounds.bounds.contains(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(DomainPoint(r), field, READ_ONLY);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+          }
+          return accessor.ptr(r.lo);
         }
       __CUDA_HD__
       inline const FT& operator[](const Point<N,T>& p) const
@@ -1165,16 +1219,17 @@ namespace Legion {
       __CUDA_HD__
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -1189,6 +1244,20 @@ namespace Legion {
       inline const FT* ptr(const Point<1,T>& p) const
         { 
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline const FT* ptr(const Rect<1,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+          }
+          return accessor.ptr(r.lo); 
         }
       __CUDA_HD__
       inline const FT& operator[](const Point<1,T>& p) const
@@ -1208,10 +1277,11 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -1220,7 +1290,7 @@ namespace Legion {
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -1259,6 +1329,32 @@ namespace Legion {
             field_region.fail_bounds_check(DomainPoint(p), field, READ_ONLY);
 #endif
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline const FT* ptr(const Rect<1,T>& r) const
+        {
+#ifdef __CUDA_ARCH__
+          if (gpu_warning)
+          {
+            if (!bounds.dense())
+              printf("WARNING: GPU bounds check is imprecise\n");
+            gpu_warning = false;
+          }
+          assert(bounds.bounds.contains(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(DomainPoint(r), field, READ_ONLY);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+          }
+          return accessor.ptr(r.lo);
         }
       __CUDA_HD__
       inline const FT& operator[](const Point<1,T>& p) const
@@ -1293,16 +1389,17 @@ namespace Legion {
       __CUDA_HD__
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -1322,6 +1419,20 @@ namespace Legion {
       inline FT* ptr(const Point<N,T>& p) const
         { 
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+          }
+          return accessor.ptr(r.lo);
         }
       __CUDA_HD__
       inline FT& operator[](const Point<N,T>& p) const
@@ -1356,10 +1467,11 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -1368,7 +1480,7 @@ namespace Legion {
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -1424,6 +1536,32 @@ namespace Legion {
             field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
 #endif
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r) const
+        {
+#ifdef __CUDA_ARCH__
+          if (gpu_warning)
+          {
+            if (!bounds.dense())
+              printf("WARNING: GPU bounds check is imprecise\n");
+            gpu_warning = false;
+          }
+          assert(bounds.bounds.contains(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+          }
+          return accessor.ptr(r.lo);
         }
       __CUDA_HD__
       inline FT& operator[](const Point<N,T>& p) const
@@ -1486,16 +1624,17 @@ namespace Legion {
       __CUDA_HD__
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -1515,6 +1654,20 @@ namespace Legion {
       inline FT* ptr(const Point<1,T>& p) const
         { 
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+          }
+          return accessor.ptr(r.lo);
         }
       __CUDA_HD__
       inline FT& operator[](const Point<1,T>& p) const
@@ -1540,10 +1693,11 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -1552,7 +1706,7 @@ namespace Legion {
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -1608,6 +1762,32 @@ namespace Legion {
             field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
 #endif
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r) const
+        {
+#ifdef __CUDA_ARCH__
+          if (gpu_warning)
+          {
+            if (!bounds.dense())
+              printf("WARNING: GPU bounds check is imprecise\n");
+            gpu_warning = false;
+          }
+          assert(bounds.bounds.contains(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+          }
+          return accessor.ptr(r.lo);
         }
       __CUDA_HD__
       inline FT& operator[](const Point<1,T>& p) const
@@ -1660,16 +1840,17 @@ namespace Legion {
       __CUDA_HD__
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -1689,6 +1870,20 @@ namespace Legion {
       inline FT* ptr(const Point<N,T>& p) const
         { 
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+          }
+          return accessor.ptr(r);
         }
       __CUDA_HD__
       inline FT& operator[](const Point<N,T>& p) const
@@ -1717,10 +1912,11 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -1729,7 +1925,7 @@ namespace Legion {
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -1785,6 +1981,32 @@ namespace Legion {
             field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
 #endif
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r) const 
+        {
+#ifdef __CUDA_ARCH__
+          if (gpu_warning)
+          {
+            if (!bounds.dense())
+              printf("WARNING: GPU bounds check is imprecise\n");
+            gpu_warning = false;
+          }
+          assert(bounds.bounds.contains(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+          }
+          return accessor.ptr(r.lo);
         }
       __CUDA_HD__
       inline FT& operator[](const Point<N,T>& p) const
@@ -1829,16 +2051,17 @@ namespace Legion {
       __CUDA_HD__
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -1860,6 +2083,20 @@ namespace Legion {
           return accessor.ptr(p); 
         }
       __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
       inline FT& operator[](const Point<1,T>& p) const
         { 
           return accessor[p]; 
@@ -1877,10 +2114,11 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -1889,7 +2127,7 @@ namespace Legion {
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -1945,6 +2183,32 @@ namespace Legion {
             field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
 #endif
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r) const
+        {
+#ifdef __CUDA_ARCH__
+          if (gpu_warning)
+          {
+            if (!bounds.dense())
+              printf("WARNING: GPU bounds check is imprecise\n");
+            gpu_warning = false;
+          }
+          assert(bounds.bounds.contains(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+          }
+          return accessor.ptr(r.lo);
         }
       __CUDA_HD__
       inline FT& operator[](const Point<1,T>& p) const
@@ -2160,6 +2424,20 @@ namespace Legion {
       inline FT* ptr(const Point<N,T> &p) const
         {
           return accessor.ptr(p);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+          }
+          return accessor.ptr(r.lo);
         }
       __CUDA_HD__
       inline FT& operator[](const Point<N,T> &p) const
@@ -3242,6 +3520,24 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    inline void CopyLauncher::add_gather_field(const RegionRequirement &req,
+                                               FieldID gather_field, bool inst)
+    //--------------------------------------------------------------------------
+    {
+      gather_requirements.push_back(req);
+      gather_requirements.back().add_field(gather_field, inst);
+    }
+
+    //--------------------------------------------------------------------------
+    inline void CopyLauncher::add_scatter_field(const RegionRequirement &req,
+                                                FieldID scatter_field,bool inst)
+    //--------------------------------------------------------------------------
+    {
+      scatter_requirements.push_back(req);
+      scatter_requirements.back().add_field(scatter_field, inst);
+    }
+
+    //--------------------------------------------------------------------------
     inline void CopyLauncher::add_grant(Grant g)
     //--------------------------------------------------------------------------
     {
@@ -3313,6 +3609,24 @@ namespace Legion {
       assert(idx < dst_requirements.size());
 #endif
       dst_requirements[idx].add_field(fid, inst);
+    }
+
+    //--------------------------------------------------------------------------
+    inline void IndexCopyLauncher::add_gather_field(const RegionRequirement &r,
+                                               FieldID gather_field, bool inst)
+    //--------------------------------------------------------------------------
+    {
+      gather_requirements.push_back(r);
+      gather_requirements.back().add_field(gather_field, inst);
+    }
+
+    //--------------------------------------------------------------------------
+    inline void IndexCopyLauncher::add_scatter_field(const RegionRequirement &r,
+                                                FieldID scatter_field,bool inst)
+    //--------------------------------------------------------------------------
+    {
+      scatter_requirements.push_back(r);
+      scatter_requirements.back().add_field(scatter_field, inst);
     }
 
     //--------------------------------------------------------------------------
@@ -3850,6 +4164,13 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       idempotent_variant = is_idemp;
+    }
+
+    //--------------------------------------------------------------------------
+    inline void TaskVariantRegistrar::set_replicable(bool is_repl/*= true*/)
+    //--------------------------------------------------------------------------
+    {
+      replicable_variant = is_repl;
     }
 
     //--------------------------------------------------------------------------

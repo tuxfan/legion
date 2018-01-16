@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -5707,10 +5707,11 @@ namespace Legion {
       {
 #ifdef DEBUG_LEGION
         // Need to make the deserializer happy in debug mode
-        derez.advance_pointer(derez.get_remaining_bytes());
+        // 2 *sizeof(size_t) since we're two DerezChecks deep
+        derez.advance_pointer(derez.get_remaining_bytes() - 2*sizeof(size_t));
 #endif
         // If we were sent back then mark that we are no longer remote
-        sent_remotely = false;
+        orig_task->sent_remotely = false;
         // Put the original instance back on the mapping queue and
         // deactivate this version of the task
         runtime->add_to_ready_queue(current_proc, orig_task);

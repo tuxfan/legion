@@ -1,4 +1,4 @@
-# Copyright 2017 Stanford University
+# Copyright 2018 Stanford University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -52,7 +52,7 @@ override CC_FLAGS := $(filter-out -DBOUNDS_CHECKS, \
                      $(filter-out -DLEGION_SPY, \
                        $(CC_FLAGS))))
 
-TESTS := serializing test_profiling ctxswitch barrier_reduce taskreg memspeed idcheck
+TESTS := serializing test_profiling ctxswitch barrier_reduce taskreg memspeed idcheck inst_reuse
 TESTS_SINGLENODE := proc_group
 TESTS += deppart
 
