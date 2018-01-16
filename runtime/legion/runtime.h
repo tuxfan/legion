@@ -1555,6 +1555,7 @@ namespace Legion {
       void register_static_variants(void);
       void register_static_constraints(void);
       void register_static_projections(void);
+      void register_static_ordering_functors(void);
       void initialize_legion_prof(void);
       void initialize_mappers(void);
       void startup_mappers(void);
@@ -1942,6 +1943,8 @@ namespace Legion {
       ProjectionFunction* find_projection_function(ProjectionID pid);
     public:
       void register_ordering_functor(OrderingID oid,
+                                     OrderingFunctor *func);
+      static void preregister_ordering_functor(OrderingID oid,
                                      OrderingFunctor *func);
       OrderingFunctor* find_ordering_functor(OrderingID oid);
     public:
@@ -2977,6 +2980,8 @@ namespace Legion {
                                 get_pending_constraint_table(void);
       static std::map<ProjectionID,ProjectionFunctor*>&
                                 get_pending_projection_table(void);
+      static std::map<OrderingID,OrderingFunctor*>&
+                                get_pending_ordering_table(void);
       static TaskID& get_current_static_task_id(void);
       static TaskID generate_static_task_id(void);
       static VariantID preregister_variant(

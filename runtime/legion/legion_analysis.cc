@@ -2377,7 +2377,34 @@ namespace Legion {
       int point_order = ord_func->get_order_value(point);
       if (yes_subset.size() != 0)
       {
-        DomainPoint new_point(point);
+        DomainPoint bounding_lo;
+        DomainPoint bounding_hi;
+        switch (dim)
+        {
+          case 1:
+          {
+            LegionRuntime::Arrays::Rect<1> bounding_rect = bounding_domain.get_rect<1>();
+            bounding_lo = DomainPoint::from_point<1>(bounding_rect.lo);
+            bounding_hi = DomainPoint::from_point<1>(bounding_rect.hi);
+            break;
+          }
+          case 2:
+          {
+            LegionRuntime::Arrays::Rect<2> bounding_rect = bounding_domain.get_rect<2>();
+            bounding_lo = DomainPoint::from_point<2>(bounding_rect.lo);
+            bounding_hi = DomainPoint::from_point<2>(bounding_rect.hi);
+            break;
+          }
+          case 3:
+          {
+            LegionRuntime::Arrays::Rect<3> bounding_rect = bounding_domain.get_rect<3>();
+            bounding_lo = DomainPoint::from_point<3>(bounding_rect.lo);
+            bounding_hi = DomainPoint::from_point<3>(bounding_rect.hi);
+            break;
+          }
+          default:
+            assert(0); // invalid dimension
+        }
         for (unsigned idx = 0; idx < yes_subset.size(); idx++)
         {
           SolutionSet solver_helper = yes_subset[idx];
@@ -2385,28 +2412,63 @@ namespace Legion {
           assert(!(solver_helper.first_wildcard &&
               solver_helper.second_wildcard && solver_helper.third_wildcard));
 #endif
-          // copy the point to get the right dimensions
-          new_point[0] = solver_helper.first_value;
-          if (dim == 2)
+
+          DomainPoint lo_point(point);
+          DomainPoint hi_point(point);
+          if (solver_helper.first_wildcard)
           {
-            new_point[1] = solver_helper.second_value;
+            lo_point[0] = bounding_lo[0];
+            hi_point[0] = bounding_hi[0];
+          }
+          else
+          {
+            lo_point[0] = solver_helper.first_value;
+            hi_point[0] = solver_helper.first_value;
+          }
+          if (dim >= 2)
+          {
+            if (solver_helper.second_wildcard)
+            {
+              lo_point[1] = bounding_lo[1];
+              hi_point[1] = bounding_hi[1];
+            }
+            else
+            {
+              lo_point[1] = solver_helper.second_value;
+              hi_point[1] = solver_helper.second_value;
+            }
           }
           if (dim == 3)
           {
-            new_point[2] = solver_helper.second_value;
+            if (solver_helper.third_wildcard)
+            {
+              lo_point[2] = bounding_lo[2];
+              hi_point[2] = bounding_hi[2];
+            }
+            else
+            {
+              lo_point[2] = solver_helper.third_value;
+              hi_point[2] = solver_helper.third_value;
+            }
           }
-          int new_point_order = ord_func->get_order_value(new_point);
-          if (new_point != point && bounding_domain.contains(new_point) &&
-              new_point_order < point_order)
+
+          Domain points_to_check(lo_point, hi_point);
+
+          for (Domain::DomainPointIterator itr(points_to_check); itr; itr++)
           {
-            dep_points.push_back(new_point);
-          }
+            int new_point_order = ord_func->get_order_value(itr.p);
+            if (itr.p != point && bounding_domain.contains(itr.p) &&
+                new_point_order < point_order)
+            {
+              dep_points.push_back(itr.p);
+            }
 #ifdef DEBUG_LEGION
-          // Two points with a potential dependency should never have the same
-          // value
-          assert(new_point == point || !bounding_domain.contains(new_point) ||
-              new_point_order != point_order);
+            // Two points with a potential dependency should never have the same
+            // value
+            assert(itr.p == point || !bounding_domain.contains(itr.p) ||
+                new_point_order != point_order);
 #endif
+          }
         }
       }
       else {

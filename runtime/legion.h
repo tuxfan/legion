@@ -3081,7 +3081,7 @@ namespace Legion {
                                                        int var_id_3,
                                                        int add_const_3)
       {
-        StructuredProjectionStep s(2);
+        StructuredProjectionStep s(3);
         s.var_id[0] = var_id_1;
         s.mul_const[0] = mul_const_1;
         s.add_const[0] = add_const_1;
@@ -6323,6 +6323,14 @@ namespace Legion {
        */
       void register_ordering_functor(OrderingID oid,
                                      OrderingFunctor *functor);
+
+      /**
+       * Register a ordering functor before the runtime has started only.
+       * @param oid the ordering ID to use for the registration
+       * @param functor the object to register for defining the ordering
+       */
+      static void preregister_ordering_functor(OrderingID oid,
+                                               OrderingFunctor *functor);
     public:
       //------------------------------------------------------------------------
       // Start-up Operations

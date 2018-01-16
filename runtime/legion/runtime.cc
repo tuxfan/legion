@@ -9660,6 +9660,20 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    void Runtime::register_static_ordering_functors(void)
+    //--------------------------------------------------------------------------
+    {
+      std::map<OrderingID,OrderingFunctor*> &pending_ordering_functors =
+        get_pending_ordering_table();
+      for (std::map<OrderingID,OrderingFunctor*>::const_iterator it =
+            pending_ordering_functors.begin(); it !=
+            pending_ordering_functors.end(); it++)
+      {
+        register_ordering_functor(it->first, it->second);
+      }
+    }
+
+    //--------------------------------------------------------------------------
     void Runtime::initialize_legion_prof(void)
     //--------------------------------------------------------------------------
     {
@@ -12266,6 +12280,26 @@ namespace Legion {
         exit(ERROR_DUPLICATE_ORDERING_ID);
       }
       ordering_functors[oid] = functor;
+    }
+
+    //--------------------------------------------------------------------------
+    /*static*/ void Runtime::preregister_ordering_functor(OrderingID oid,
+                                                 OrderingFunctor *functor)
+    //--------------------------------------------------------------------------
+    {
+      if (runtime_started)
+        REPORT_LEGION_ERROR(ERROR_STATIC_CALL_POST_RUNTIME_START,
+                      "Illegal call to 'preregister_ordering_functor' after "
+                      "the runtime has started!")
+      std::map<OrderingID,OrderingFunctor*> &pending_ordering_functors =
+        get_pending_ordering_table();
+      std::map<OrderingID,OrderingFunctor*>::const_iterator finder =
+        pending_ordering_functors.find(oid);
+      if (finder != pending_ordering_functors.end())
+        REPORT_LEGION_ERROR(ERROR_DUPLICATE_ORDERING_ID,
+                      "OrderingID %d has already been used in "
+                      "the region ordering table\n", oid)
+      pending_ordering_functors[oid] = functor;
     }
 
     //--------------------------------------------------------------------------
@@ -19204,6 +19238,15 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    /*static*/ std::map<OrderingID,OrderingFunctor*>&
+                                     Runtime::get_pending_ordering_table(void)
+    //--------------------------------------------------------------------------
+    {
+      static std::map<OrderingID,OrderingFunctor*> pending_ordering_table;
+      return pending_ordering_table;
+    }
+
+    //--------------------------------------------------------------------------
     /*static*/ TaskID& Runtime::get_current_static_task_id(void)
     //--------------------------------------------------------------------------
     {
@@ -19688,6 +19731,7 @@ namespace Legion {
       local_rt->register_static_variants();
       local_rt->register_static_constraints();
       local_rt->register_static_projections();
+      local_rt->register_static_ordering_functors();
       // Initialize our one virtual manager, do this after we register
       // the static constraints so we get a valid layout constraint ID
       VirtualManager::initialize_virtual_instance(local_rt, 

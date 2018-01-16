@@ -6359,6 +6359,14 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    /*static*/ void Runtime::preregister_ordering_functor(OrderingID oid,
+                                                 OrderingFunctor *func)
+    //--------------------------------------------------------------------------
+    {
+      Internal::Runtime::preregister_ordering_functor(oid, func);
+    }
+
+    //--------------------------------------------------------------------------
     void Runtime::attach_semantic_information(TaskID task_id, SemanticTag tag,
                                    const void *buffer, size_t size, bool is_mut)
     //--------------------------------------------------------------------------

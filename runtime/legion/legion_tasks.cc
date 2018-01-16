@@ -4143,6 +4143,7 @@ namespace Legion {
       version_infos.clear();
       restrict_infos.clear();
       projection_infos.clear();
+      constraint_equations.clear();
       if (predicate_false_result != NULL)
       {
         legion_free(PREDICATE_ALLOC, predicate_false_result, 
@@ -4381,6 +4382,8 @@ namespace Legion {
         }
         return;
       }
+      Domain internal_domain;
+      runtime->forest->find_launch_space_domain(internal_space,internal_domain);
       int dim = internal_domain.get_dim();
       for(std::list<SliceTask*>::const_iterator it1 = slices.begin();
           it1 != slices.end(); ++it1)
@@ -4389,6 +4392,10 @@ namespace Legion {
         runtime->forest->find_launch_space_domain(slice->internal_space,
           slice->internal_domain);
         slice->set_structured_slice_mapped_trigger(Runtime::create_rt_user_event());
+      }
+      if (slices.size() == 1)
+      {
+        return;
       }
       for(std::list<SliceTask*>::const_iterator it1 = slices.begin();
           it1 != slices.end(); ++it1)
@@ -4451,8 +4458,84 @@ namespace Legion {
             break;
           }
           case 3:
-            assert(false);  // To be removed, want to start testing with case 2
+          {
+            LegionRuntime::Arrays::Rect<3> rect = slice->internal_domain.
+                get_rect<3>();
+            DomainPoint p1 = DomainPoint::from_point<3>(rect.lo);
+            DomainPoint p2 = DomainPoint::from_point<3>(
+                LegionRuntime::Arrays::make_point(rect.lo[0],
+                                                  rect.lo[1],
+                                                  rect.hi[2]));
+            DomainPoint p3 = DomainPoint::from_point<3>(
+                LegionRuntime::Arrays::make_point(rect.lo[0],
+                                                  rect.hi[1],
+                                                  rect.lo[2]));
+            DomainPoint p4 = DomainPoint::from_point<3>(
+                LegionRuntime::Arrays::make_point(rect.hi[0],
+                                                  rect.lo[1],
+                                                  rect.lo[2]));
+            DomainPoint p5 = DomainPoint::from_point<3>(
+                LegionRuntime::Arrays::make_point(rect.lo[0],
+                                                  rect.hi[1],
+                                                  rect.hi[2]));
+            DomainPoint p6 = DomainPoint::from_point<3>(
+                LegionRuntime::Arrays::make_point(rect.hi[0],
+                                                  rect.lo[1],
+                                                  rect.hi[2]));
+            DomainPoint p7 = DomainPoint::from_point<3>(
+                LegionRuntime::Arrays::make_point(rect.hi[0],
+                                                  rect.hi[1],
+                                                  rect.lo[2]));
+            DomainPoint p8 = DomainPoint::from_point<3>(rect.hi);
+            std::vector<DomainPoint> dependent_points;
+
+            for (unsigned idx_p = 0; idx_p < constraint_equations.size();
+                idx_p++)
+            {
+              ProjectionAnalysisConstraint constraintEq =
+                  constraint_equations[idx_p];
+              OrderingFunctor *ordering_func =
+                runtime->find_ordering_functor(oid);
+                // make this into a domain point
+              constraintEq.get_dependent_points(p1,
+                  internal_domain, ordering_func, dependent_points);
+              constraintEq.get_dependent_points(p2,
+                  internal_domain, ordering_func, dependent_points);
+              constraintEq.get_dependent_points(p3,
+                  internal_domain, ordering_func, dependent_points);
+              constraintEq.get_dependent_points(p4,
+                  internal_domain, ordering_func, dependent_points);
+              constraintEq.get_dependent_points(p5,
+                  internal_domain, ordering_func, dependent_points);
+              constraintEq.get_dependent_points(p6,
+                  internal_domain, ordering_func, dependent_points);
+              constraintEq.get_dependent_points(p7,
+                  internal_domain, ordering_func, dependent_points);
+              constraintEq.get_dependent_points(p8,
+                  internal_domain, ordering_func, dependent_points);
+            }
+            for (unsigned idx_p = 0; idx_p < dependent_points.size(); idx_p++)
+            {
+              for(std::list<SliceTask*>::const_iterator it2 = slices.begin();
+                  it2 != slices.end(); ++it2)
+              {
+                if (it2 == it1)
+                  continue;
+                const SliceTask *other_slice = *it2;
+                if (other_slice->internal_domain.contains(
+                  dependent_points[idx_p]))
+                {
+                  LegionRuntime::Arrays::Rect<3> other_rect = other_slice->internal_domain.get_rect<3>();
+                  slice_dependency_events.insert(
+                      other_slice->get_structured_slice_mapped_trigger());
+                  break;
+                }
+              }
+            }
+            slice->set_slice_deps_mapped_event(
+                Runtime::merge_events(slice_dependency_events));
             break;
+          }
           default:
             // note this should also catch the 0 (unstructured) case
             assert(false);
@@ -7075,82 +7158,130 @@ namespace Legion {
     void IndexTask::perform_structured_dependence_analysis()
     //--------------------------------------------------------------------------
     {
-      std::vector<RegionRequirement> proj_reqs;
-      std::vector<ProjectionFunction*> proj_funcs;
-      proj_reqs.reserve(regions.size());
-      proj_funcs.reserve(regions.size());
+      std::vector<std::vector<RegionRequirement> > proj_reqs_by_tree;
+      std::vector<std::vector<ProjectionFunction*> > proj_funcs_by_tree;
+      //std::vector<ProjectionFunction*> proj_funcs;
+      //proj_reqs.reserve(regions.size());
       for (unsigned idx = 0; idx < regions.size(); idx++)
       {
         if (regions[idx].handle_type != SINGULAR)
         {
-          proj_reqs.push_back(regions[idx]);
-          proj_funcs.push_back(
-              runtime->find_projection_function(regions[idx].projection));
+          RegionTreeID cur_tree_id;
+          if (regions[idx].handle_type == REG_PROJECTION)
+            cur_tree_id = regions[idx].region.get_tree_id();
+          if (regions[idx].handle_type == PART_PROJECTION)
+            cur_tree_id = regions[idx].partition.get_tree_id();
+          bool found_tree = false;
+          for (unsigned tree_i = 0; tree_i < proj_reqs_by_tree.size(); ++tree_i)
+          {
+            ProjectionType handle_type = proj_reqs_by_tree[tree_i][0].handle_type;
+            RegionTreeID tree_id;
+            if (handle_type == REG_PROJECTION)
+              tree_id = proj_reqs_by_tree[tree_i][0].region.get_tree_id();
+            if (handle_type == PART_PROJECTION)
+              tree_id = proj_reqs_by_tree[tree_i][0].partition.get_tree_id();
+
+            if (tree_id == cur_tree_id)
+            {
+              proj_reqs_by_tree[tree_i].push_back(regions[idx]);
+              proj_funcs_by_tree[tree_i].push_back(
+                  runtime->find_projection_function(regions[idx].projection));
+              found_tree = true;
+              break;
+            }
+          }
+
+          if (!found_tree)
+          {
+            proj_reqs_by_tree.push_back(std::vector<RegionRequirement>());
+            proj_funcs_by_tree.push_back(std::vector<ProjectionFunction*>());
+            unsigned size = proj_reqs_by_tree.size();
+            proj_reqs_by_tree[size-1].push_back(regions[idx]);
+            proj_funcs_by_tree[size-1].push_back(
+                runtime->find_projection_function(regions[idx].projection));
+          }
         }
       }
-      if (proj_reqs.size() == 0)
+      if (proj_reqs_by_tree.size() == 0)
       {
         return;
       }
 
-      bool structured = proj_funcs[0]->functor->is_structured();
-      for (unsigned idx = 1; idx < proj_funcs.size(); idx++)
+      bool structured = false;
+      for (unsigned tree_i = 0; tree_i < proj_funcs_by_tree.size(); tree_i++)
       {
-        assert(proj_funcs[idx]->functor->is_structured() == structured);
+        bool tree_structured =
+            proj_funcs_by_tree[tree_i][0]->functor->is_structured();
+        structured = structured || tree_structured;
+        for (unsigned idx = 1; idx < proj_funcs_by_tree[tree_i].size(); idx++)
+        {
+          assert(proj_funcs_by_tree[tree_i][idx]->functor->is_structured() ==
+              tree_structured);
+        }
       }
       if (!structured)
         return;
 
-      std::vector<StructuredProjection> structured_funcs;
-      structured_funcs.reserve(proj_funcs.size());
-      for (unsigned idx = 0; idx < proj_funcs.size(); idx++)
-      {
-        StructuredProjectionFunctor* proj_func =
-          (StructuredProjectionFunctor*) (proj_funcs[idx]->functor);
-        structured_funcs.push_back(
-            proj_func->project_structured(DUMMY_CONTEXT));
-      }
-
-      unsigned structured_depth = structured_funcs[0].steps.size();
-      ProjectionType handle_type = proj_reqs[0].handle_type;
-      for (unsigned idx = 1; idx < proj_reqs.size(); idx++)
-      {
-        assert(structured_depth == structured_funcs[idx].steps.size());
-        assert(handle_type == proj_reqs[idx].handle_type);
-        if (handle_type == REG_PROJECTION)
-          assert(proj_reqs[0].region == proj_reqs[idx].region);
-        if (handle_type == PART_PROJECTION)
-          assert(proj_reqs[0].partition == proj_reqs[idx].partition);
-      }
-      Domain::DomainPointIterator itr(internal_domain);
-      const DomainPoint first_point = itr.p;
       std::vector<ProjectionAnalysisConstraint> constraints;
-      RegionTreeNode *upper_bound;
-      if (handle_type == REG_PROJECTION)
-        upper_bound = runtime->forest->get_node(proj_reqs[0].region);
-      else
-        upper_bound = runtime->forest->get_node(proj_reqs[0].partition);
-      for (unsigned idx1 = 0; idx1 < proj_reqs.size(); idx1++)
+      for (unsigned tree_i = 0; tree_i < proj_funcs_by_tree.size(); tree_i++)
       {
-        RegionUsage usage1(proj_reqs[idx1]);
-        StructuredProjection proj1 = structured_funcs[idx1];
-        for (unsigned idx2 = idx1; idx2 < proj_reqs.size(); idx2++)
+        if (!proj_funcs_by_tree[tree_i][0]->functor->is_structured())
+          continue;
+
+        std::vector<StructuredProjection> structured_funcs;
+        structured_funcs.reserve(proj_funcs_by_tree[tree_i].size());
+        for (unsigned idx = 0; idx < proj_funcs_by_tree[tree_i].size(); idx++)
         {
-          RegionUsage usage2(proj_reqs[idx2]);
-          StructuredProjection proj2 = structured_funcs[idx2];
-          DependenceType dtype = check_dependence_type(usage1, usage2);
-          if (dtype != TRUE_DEPENDENCE && dtype != ANTI_DEPENDENCE)
+          StructuredProjectionFunctor* proj_func =
+            (StructuredProjectionFunctor*) (proj_funcs_by_tree[tree_i][idx]->functor);
+          structured_funcs.push_back(
+              proj_func->project_structured(DUMMY_CONTEXT));
+        }
+
+        unsigned structured_depth = structured_funcs[0].steps.size();
+        ProjectionType handle_type = proj_reqs_by_tree[tree_i][0].handle_type;
+        for (unsigned idx = 1; idx < structured_funcs.size(); idx++)
+        {
+          assert(structured_depth == structured_funcs[idx].steps.size());
+          assert(handle_type == proj_reqs_by_tree[tree_i][idx].handle_type);
+          if (handle_type == REG_PROJECTION)
+            assert(proj_reqs_by_tree[tree_i][0].region == proj_reqs_by_tree[tree_i][idx].region);
+          if (handle_type == PART_PROJECTION)
+            assert(proj_reqs_by_tree[tree_i][0].partition == proj_reqs_by_tree[tree_i][idx].partition);
+        }
+
+        Domain internal_domain;
+        runtime->forest->find_launch_space_domain(internal_space,internal_domain);
+        Domain::DomainPointIterator itr(internal_domain);
+        const DomainPoint first_point = itr.p;
+        RegionTreeNode *upper_bound;
+        if (handle_type == REG_PROJECTION)
+          upper_bound = runtime->forest->get_node(proj_reqs_by_tree[tree_i][0].region);
+        else
+          upper_bound = runtime->forest->get_node(proj_reqs_by_tree[tree_i][0].partition);
+        for (unsigned idx1 = 0; idx1 < structured_funcs.size(); idx1++)
+        {
+          RegionUsage usage1(proj_reqs_by_tree[tree_i][idx1]);
+          StructuredProjection proj1 = structured_funcs[idx1];
+          for (unsigned idx2 = idx1; idx2 < structured_funcs.size(); idx2++)
           {
-            continue;
+            RegionUsage usage2(proj_reqs_by_tree[tree_i][idx2]);
+            StructuredProjection proj2 = structured_funcs[idx2];
+            DependenceType dtype = check_dependence_type(usage1, usage2);
+            if (dtype != TRUE_DEPENDENCE && dtype != ANTI_DEPENDENCE)
+            {
+              continue;
+            }
+            LogicalRegion sample_region = runtime->forest->evaluate_projection(
+                proj1, first_point, upper_bound);
+            ProjectionAnalysisConstraint *constraint =
+              runtime->forest->compute_proj_constraint(proj1, proj2,
+                  sample_region)->simplify();
+            constraints.push_back(*constraint);
           }
-          LogicalRegion sample_region = runtime->forest->evaluate_projection(
-              proj1, first_point, upper_bound);
-          ProjectionAnalysisConstraint *constraint =
-            runtime->forest->compute_proj_constraint(proj1, proj2,
-                sample_region)->simplify();
-          constraints.push_back(*constraint);
         }
       }
+
       constraint_equations = constraints;
     }
 

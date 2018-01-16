@@ -1393,7 +1393,6 @@ namespace Legion {
         RegionTreeNode *upper_bound)
     //--------------------------------------------------------------------------
     {
-
       RegionTreeNode *cur_node = upper_bound;
       for (unsigned idx = 0; idx < proj.steps.size(); idx++)
       {
