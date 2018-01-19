@@ -3347,6 +3347,14 @@ namespace Legion {
       else
         executing_call = result;
       Runtime::release_reservation(mapper_lock);
+      // If we have a precondition and we're not the first invocation then we 
+      // know we're already in a continuation so we can just wait here 
+      // because we've now given up our lock so there is nothing else to do
+      if (precondition.exists() && !first_invocation)
+      {
+        precondition.lg_wait();
+        precondition = RtEvent::NO_RT_EVENT;
+      }
       return result;
     }
 
@@ -3753,8 +3761,9 @@ namespace Legion {
     {
       ContinuationArgs args;
       args.continuation = this;
+      // Give this resource priority in case we are holding the mapper lock
       RtEvent wait_on = runtime->issue_runtime_meta_task(args,
-                       LG_LATENCY_PRIORITY, op, precondition);
+                         LG_RESOURCE_PRIORITY, op, precondition);
       wait_on.lg_wait();
     }
 

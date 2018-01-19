@@ -291,8 +291,8 @@ namespace Legion {
         DisjointnessArgs args;
         args.handle = pid;
         args.ready = disjointness_event;
-        runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY, NULL,
-                                 Runtime::protect_event(partition_ready));
+        runtime->issue_runtime_meta_task(args, LG_LATENCY_WORK_PRIORITY, NULL,
+                                     Runtime::protect_event(partition_ready));
       }
       return parent_notified;
     }
@@ -1278,21 +1278,6 @@ namespace Legion {
       // If we have a restriction, then record it on the region requirement
       if (restrict_info.has_restrictions())
         req.flags |= RESTRICTED_FLAG;
-    }
-
-    //--------------------------------------------------------------------------
-    void RegionTreeForest::perform_fence_analysis(RegionTreeContext ctx,
-                                                  Operation *fence,
-                                                  LogicalRegion handle,
-                                                  bool dominate)
-    //--------------------------------------------------------------------------
-    {
-      DETAILED_PROFILER(runtime, REGION_TREE_LOGICAL_FENCE_CALL);
-      // Register dependences for this fence on all users in the tree
-      RegionNode *top_node = get_node(handle);
-      LogicalRegistrar registrar(ctx.get_id(), fence, 
-                       FieldMask(LEGION_FIELD_MASK_FIELD_ALL_ONES), dominate);
-      top_node->visit_node(&registrar);
     }
 
     //--------------------------------------------------------------------------
@@ -5144,8 +5129,8 @@ namespace Legion {
           args.proxy_this = this;
           args.tag = tag;
           args.source = source;
-          context->runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                                    NULL/*op*/, precondition);
+          context->runtime->issue_runtime_meta_task(args, 
+              LG_LATENCY_WORK_PRIORITY, NULL/*op*/, precondition);
         }
       }
       else
@@ -5366,7 +5351,7 @@ namespace Legion {
               Runtime::merge_events(left->partition_ready,
                                     right->partition_ready));
           ready = context->runtime->issue_runtime_meta_task(args,
-                                      LG_LATENCY_PRIORITY, NULL, pre);
+                                      LG_LATENCY_WORK_PRIORITY, NULL, pre);
           pending_tests[key] = ready;
           pending_tests[std::pair<LegionColor,LegionColor>(c2,c1)] = ready;
         }
@@ -5701,8 +5686,8 @@ namespace Legion {
         args.target = target;
         args.to_trigger = to_trigger;
         args.source = source;
-        forest->runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                                 NULL/*op*/, defer);
+        forest->runtime->issue_runtime_meta_task(args, 
+            LG_LATENCY_DEFERRED_PRIORITY, NULL/*op*/, defer);
         return;
       }
       if (child != NULL)
@@ -6087,8 +6072,8 @@ namespace Legion {
           args.proxy_this = this;
           args.tag = tag;
           args.source = source;
-          context->runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                                    NULL/*op*/, precondition);
+          context->runtime->issue_runtime_meta_task(args, 
+              LG_LATENCY_WORK_PRIORITY, NULL/*op*/, precondition);
         }
       }
       else
@@ -6435,7 +6420,7 @@ namespace Legion {
           args.right = right;
           ApEvent pre = Runtime::merge_events(left_pre, right_pre);
           ready_event = context->runtime->issue_runtime_meta_task(args, 
-                    LG_LATENCY_PRIORITY, NULL, Runtime::protect_event(pre));
+                  LG_LATENCY_WORK_PRIORITY, NULL, Runtime::protect_event(pre));
           pending_tests[key] = ready_event;
           pending_tests[std::pair<LegionColor,LegionColor>(c2,c1)] =ready_event;
         }
@@ -6595,8 +6580,8 @@ namespace Legion {
         args.parent = this;
         args.pending_child = child_color;
         // Don't remove the pending child until the handle is ready
-        context->runtime->issue_runtime_meta_task(args,LG_LATENCY_PRIORITY,NULL,
-                                          Runtime::protect_event(domain_ready));
+        context->runtime->issue_runtime_meta_task(args,
+          LG_LATENCY_WORK_PRIORITY, NULL, Runtime::protect_event(domain_ready));
       }
     }
 
@@ -6849,8 +6834,8 @@ namespace Legion {
         args.target = target;
         args.to_trigger = to_trigger;
         args.source = source;
-        forest->runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                                 NULL/*op*/, defer);
+        forest->runtime->issue_runtime_meta_task(args, 
+            LG_LATENCY_DEFERRED_PRIORITY, NULL/*op*/, defer);
       }
       else
       {
@@ -7557,8 +7542,8 @@ namespace Legion {
           args.proxy_this = this;
           args.tag = tag;
           args.source = source;
-          context->runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                                    NULL/*op*/, precondition);
+          context->runtime->issue_runtime_meta_task(args, 
+              LG_LATENCY_WORK_PRIORITY, NULL/*op*/, precondition);
         }
       }
       else
@@ -7615,8 +7600,8 @@ namespace Legion {
           args.fid = fid;
           args.tag = tag;
           args.source = source;
-          context->runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                                    NULL/*op*/, precondition);
+          context->runtime->issue_runtime_meta_task(args, 
+              LG_LATENCY_WORK_PRIORITY, NULL/*op*/, precondition);
         }
       }
       else
@@ -15323,8 +15308,8 @@ namespace Legion {
           args.proxy_this = this;
           args.tag = tag;
           args.source = source;
-          context->runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                                    NULL/*op*/, precondition);
+          context->runtime->issue_runtime_meta_task(args, 
+              LG_LATENCY_WORK_PRIORITY, NULL/*op*/, precondition);
         }
       }
       else
@@ -16339,8 +16324,8 @@ namespace Legion {
           args.proxy_this = this;
           args.tag = tag;
           args.source = source;
-          context->runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                                    NULL/*op*/, precondition);
+          context->runtime->issue_runtime_meta_task(args, 
+              LG_LATENCY_WORK_PRIORITY, NULL/*op*/, precondition);
         }
       }
       else
