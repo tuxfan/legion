@@ -18,6 +18,8 @@
 from __future__ import print_function
 import argparse, datetime, glob, json, multiprocessing, os, platform, shutil, subprocess, sys, traceback, tempfile
 
+make_exe = os.environ.get('MAKE', 'make')
+
 # Find physical core count of the machine.
 if platform.system() == 'Linux':
     lines = subprocess.check_output(['lscpu', '--parse=core'])
@@ -26,6 +28,10 @@ if platform.system() == 'Linux':
 elif platform.system() == 'Darwin':
     physical_cores = int(
         subprocess.check_output(['sysctl', '-n', 'hw.physicalcpu']))
+elif platform.system() == 'FreeBSD':
+    physical_cores = int(
+        subprocess.check_output(['sysctl', '-n', 'hw.ncpu']))
+    make_exe = os.environ.get('MAKE', 'gmake')  # default needs to be GNU make
 else:
     raise Exception('Unknown platform: %s' % platform.system())
 
@@ -144,7 +150,7 @@ def run_cxx(tests, flags, launcher, root_dir, bin_dir, env, thread_count):
             test_path = os.path.join(bin_dir, os.path.basename(test_file))
         else:
             test_path = os.path.join(root_dir, test_file)
-            cmd(['make', '-C', test_dir, '-j', str(thread_count)], env=env)
+            cmd([make_exe, '-C', test_dir, '-j', str(thread_count)], env=env)
         cmd(launcher + [test_path] + flags + test_flags, env=env, cwd=test_dir)
         # after a successful run, clean up libraries/executables to keep disk
         #  usage down
@@ -207,16 +213,16 @@ def run_test_fuzzer(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
 
 def run_test_realm(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
     test_dir = os.path.join(root_dir, 'test/realm')
-    cmd(['make', '-C', test_dir, 'DEBUG=0', 'USE_CUDA=0', 'USE_GASNET=0', 'clean'], env=env)
-    cmd(['make', '-C', test_dir, 'DEBUG=0', 'USE_CUDA=0', 'USE_GASNET=0', 'run_all'], env=env)
+    cmd([make_exe, '-C', test_dir, 'DEBUG=0', 'USE_CUDA=0', 'USE_GASNET=0', 'clean'], env=env)
+    cmd([make_exe, '-C', test_dir, 'DEBUG=0', 'USE_CUDA=0', 'USE_GASNET=0', 'run_all'], env=env)
 
 def run_test_external(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
     flags = ['-logfile', 'out_%.log']
 
     # Realm perf test (move back to perf test when integrated with perf.py)
     perf_dir = os.path.join(root_dir, 'test/performance/realm')
-    cmd(['make', '-C', perf_dir, 'DEBUG=0', 'clean_all'], env=env)
-    cmd(['make', '-C', perf_dir, 'DEBUG=0', 'RUNMODE=short', 'run_all'], env=env)
+    cmd([make_exe, '-C', perf_dir, 'DEBUG=0', 'clean_all'], env=env)
+    cmd([make_exe, '-C', perf_dir, 'DEBUG=0', 'RUNMODE=short', 'run_all'], env=env)
 
     # Fast Direct Solver
     # Contact: Chao Chen <cchen10@stanford.edu>
@@ -241,7 +247,7 @@ def run_test_external(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
          ' -DRADIUS=2 -DRESTRICT_KEYWORD -DDISABLE_BARRIER_MIGRATION'),
     ])
     makefile = os.path.join(root_dir, 'apps/Makefile.template')
-    cmd(['make', '-f', makefile, '-C', stencil_dir, '-j', str(thread_count)], env=stencil_env)
+    cmd([make_exe, '-f', makefile, '-C', stencil_dir, '-j', str(thread_count)], env=stencil_env)
     stencil = os.path.join(stencil_dir, 'stencil')
     cmd([stencil, '4', '10', '1000'])
 
@@ -264,7 +270,7 @@ def run_test_private(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
     miniaero_dir = os.path.join(tmp_dir, 'miniaero-spmd')
     cmd(['git', 'clone', '-b', 'spmd_flattened_superblocks',
          'git@github.com:magnatelee/miniaero-spmd.git', miniaero_dir])
-    cmd(['make', '-C', miniaero_dir, '-j', str(thread_count)], env=env,
+    cmd([make_exe, '-C', miniaero_dir, '-j', str(thread_count)], env=env,
         cwd=miniaero_dir)
     for test in ['3D_Sod', '3D_Sod_2nd_Order'
                  # These tests take a long time so skip them by default.
@@ -291,8 +297,8 @@ def run_test_private(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
     ])
     makefile = os.path.join(root_dir, 'apps/Makefile.template')
     # Previous build uses -DASSUME_UNALLOCABLE. Clean first to get a fresh environment.
-    cmd(['make', '-f', makefile, '-C', pennant_dir, 'clean'], env=pennant_env)
-    cmd(['make', '-f', makefile, '-C', pennant_dir, '-j', str(thread_count)], env=pennant_env)
+    cmd([make_exe, '-f', makefile, '-C', pennant_dir, 'clean'], env=pennant_env)
+    cmd([make_exe, '-f', makefile, '-C', pennant_dir, '-j', str(thread_count)], env=pennant_env)
     pennant = os.path.join(pennant_dir, 'pennant')
     cmd([pennant, str(app_cores), 'test/sedovsmall/sedovsmall.pnt', '-ll:cpu', str(app_cores)],
         cwd=pennant_dir)
@@ -505,8 +511,8 @@ def build_cmake(root_dir, tmp_dir, env, thread_count,
     cmdline.append(root_dir)
 
     cmd(cmdline, env=env, cwd=build_dir)
-    cmd(['make', '-C', build_dir, '-j', str(thread_count)], env=env)
-    cmd(['make', '-C', build_dir, 'install'], env=env)
+    cmd([make_exe, '-C', build_dir, '-j', str(thread_count)], env=env)
+    cmd([make_exe, '-C', build_dir, 'install'], env=env)
     return os.path.join(build_dir, 'bin')
 
 def clean_cxx(tests, root_dir, env, thread_count):
@@ -515,7 +521,7 @@ def clean_cxx(tests, root_dir, env, thread_count):
     ])
     for test_file, test_flags in tests:
         test_dir = os.path.dirname(os.path.join(root_dir, test_file))
-        cmd(['make', '-C', test_dir, 'clean'], env=env)
+        cmd([make_exe, '-C', test_dir, 'clean'], env=env)
 
 def build_make_clean(root_dir, env, thread_count, test_legion_cxx, test_perf,
                      test_external, test_private):
