@@ -150,8 +150,8 @@ void SliceMapper::slice_task(const MapperContext      ctx,
           {
             Point<2> slice_lo(x * slice_side_length, y * slice_side_length);
             Point<2> slice_hi((x+1) * slice_side_length - 1, (y+1) * slice_side_length - 1);
-            //printf("x = %u, y = %u, slice goes from (%lld, %lld) to (%lld, %lld)\n",
-              //x, y, slice_lo[0], slice_lo[1], slice_hi[0], slice_hi[1]);
+            //printf("x = %u, y = %u, slice goes from (%lld, %lld) to (%lld, %lld), mapped to %lu\n",
+              //x, y, slice_lo[0], slice_lo[1], slice_hi[0], slice_hi[1], x % cached_procs.size());
             Rect<2> slice(slice_lo, slice_hi);
             output.slices[idx] = TaskSlice(slice, cached_procs[x % cached_procs.size()],
               false/*recurse*/, true/*stealable*/);
@@ -652,6 +652,9 @@ void compute_task_angle(const Task *task,
                         const std::vector<PhysicalRegion> &regions,
                         Context ctx, Runtime *runtime)
 {
+  //const int pointx = task->index_point.point_data[0];
+  //const int pointy = task->index_point.point_data[1];
+  //printf("Starting the compute task at point (%d, %d) in wave %d at time %lld\n", pointx, pointy, pointx + pointy, Realm::Clock::current_time_in_microseconds());
   /* UNCOMMENT BELOW FOR DEBUG PRINT STATEMENTS
 
   fprintf(stderr, "Starting the compute task.\n");
