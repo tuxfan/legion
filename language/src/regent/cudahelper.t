@@ -68,15 +68,9 @@ local DriverAPI = {
   cuCtxGetDevice = ef("cuCtxGetDevice",{&int32} -> uint32);
   cuDeviceGet = ef("cuDeviceGet",{&int32,int32} -> uint32);
   cuCtxCreate_v2 = ef("cuCtxCreate_v2",{&&CUctx_st,uint32,int32} -> uint32);
+  cuCtxDestroy = ef("cuCtxDestroy",{&CUctx_st} -> uint32);
   cuDeviceComputeCapability = ef("cuDeviceComputeCapability",
     {&int32,&int32,int32} -> uint32);
-  cuLinkCreate_v2 = ef("cuLinkCreate_v2",
-    {uint32,&uint32,&&opaque,&&CUlinkState_st} -> uint32);
-  cuLinkAddData_v2 = ef("cuLinkAddData_v2",
-    {&CUlinkState_st,uint32,&opaque,uint64,&int8,uint32,&uint32,&&opaque} -> uint32);
-  cuLinkComplete = ef("cuLinkComplete",
-    {&CUlinkState_st,&&opaque,&uint64} -> uint32);
-  cuLinkDestroy = ef("cuLinkDestroy", {&CUlinkState_st} -> uint32);
 }
 
 local dlfcn = terralib.includec("dlfcn.h")
@@ -115,29 +109,31 @@ local terra assert(x : bool, message : rawstring)
   end
 end
 
-local terra init_cuda() : int32
+local terra get_cuda_version() : uint64
   var cx : &CUctx_st
+  var cx_created = false
   var r = DriverAPI.cuCtxGetCurrent(&cx)
   assert(r == 0, "CUDA error in cuCtxGetCurrent")
-  var d : int32
+  var device : int32
   if cx ~= nil then
-    r = DriverAPI.cuCtxGetDevice(&d)
+    r = DriverAPI.cuCtxGetDevice(&device)
     assert(r == 0, "CUDA error in cuCtxGetDevice")
   else
-    r = DriverAPI.cuDeviceGet(&d, 0)
+    r = DriverAPI.cuDeviceGet(&device, 0)
     assert(r == 0, "CUDA error in cuDeviceGet")
-    r = DriverAPI.cuCtxCreate_v2(&cx, 0, d)
+    r = DriverAPI.cuCtxCreate_v2(&cx, 0, device)
     assert(r == 0, "CUDA error in cuCtxCreate_v2")
+    cx_created = true
   end
 
-  return d
-end
-
-local terra get_cuda_version(device : int) : uint64
   var major : int, minor : int
-  var r = DriverAPI.cuDeviceComputeCapability(&major, &minor, device)
+  r = DriverAPI.cuDeviceComputeCapability(&major, &minor, device)
   assert(r == 0, "CUDA error in cuDeviceComputeCapability")
-  return [uint64](major * 10 + minor)
+  var version = [uint64](major * 10 + minor)
+  if cx_created then
+    DriverAPI.cuCtxDestroy(cx)
+  end
+  return version
 end
 
 --
@@ -183,8 +179,7 @@ function cudahelper.jit_compile_kernels_and_register(kernels)
   for k, v in pairs(kernels) do
     module[v.name] = v.kernel
   end
-  local device = init_cuda()
-  local version = get_cuda_version(device)
+  local version = get_cuda_version()
   local libdevice = find_device_library(tonumber(version))
   local llvmbc = terralib.linkllvm(libdevice)
   externcall_builtin = function(name, ftype)
@@ -208,7 +203,7 @@ function cudahelper.jit_compile_kernels_and_register(kernels)
   return register
 end
 
-function cudahelper.codegen_kernel_call(kernel_id, counts, args)
+function cudahelper.codegen_kernel_call(kernel_id, count, args)
   local setupArguments = terralib.newlist()
 
   local offset = 0
@@ -223,45 +218,25 @@ function cudahelper.codegen_kernel_call(kernel_id, counts, args)
 
   local grid = terralib.newsymbol(RuntimeAPI.dim3, "grid")
   local block = terralib.newsymbol(RuntimeAPI.dim3, "block")
-  local launch_domain_init
 
   local function round_exp(v, n)
     return `((v + (n - 1)) / n)
   end
 
-  -- TODO: Make this handle different thread block sizes and access strides
-  if #counts == 1 then
-    local threadSizeX = 128
-    launch_domain_init = quote
+  local THREAD_BLOCK_SIZE = 128
+  local MAX_NUM_BLOCK = 32768
+  local launch_domain_init = quote
+    [block].x, [block].y, [block].z = THREAD_BLOCK_SIZE, 1, 1
+    var num_blocks = [round_exp(count, THREAD_BLOCK_SIZE)]
+    if num_blocks <= MAX_NUM_BLOCK then
+      [grid].x, [grid].y, [grid].z = num_blocks, 1, 1
+    elseif [count] / MAX_NUM_BLOCK <= MAX_NUM_BLOCK then
       [grid].x, [grid].y, [grid].z =
-        [round_exp(counts[1], threadSizeX)], 1, 1
-      [block].x, [block].y, [block].z =
-        threadSizeX, 1, 1
-    end
-  elseif #counts == 2 then
-    local threadSizeX = 16
-    local threadSizeY = 16
-    launch_domain_init = quote
+        MAX_NUM_BLOCK, [round_exp(num_blocks, MAX_NUM_BLOCK)], 1
+    else
       [grid].x, [grid].y, [grid].z =
-        [round_exp(counts[1], threadSizeX)],
-        [round_exp(counts[2], threadSizeY)], 1
-      [block].x, [block].y, [block].z =
-        [threadSizeX], [threadSizeY], 1
+        MAX_NUM_BLOCK, MAX_NUM_BLOCK, [round_exp(num_blocks, MAX_NUM_BLOCK, MAX_NUM_BLOCK)]
     end
-  elseif #counts == 3 then
-    local threadSizeX = 16
-    local threadSizeY = 8
-    local threadSizeZ = 2
-    launch_domain_init = quote
-      [grid].x, [grid].y, [grid].z =
-        [round_exp(counts[1], threadSizeX)],
-        [round_exp(counts[2], threadSizeY)],
-        [round_exp(counts[3], threadSizeZ)]
-      [block].x, [block].y, [block].z =
-        [threadSizeX], [threadSizeY], [threadSizeZ]
-    end
-  else
-    assert(false, "Indexspaces more than 3 dimensions are not supported")
   end
 
   return quote

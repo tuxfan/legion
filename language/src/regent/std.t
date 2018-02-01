@@ -1282,9 +1282,17 @@ local deserialize_helper = terralib.memoize(function(value_type)
   local fixed_ptr = terralib.newsymbol(&opaque, "fixed_ptr")
   local data_ptr = terralib.newsymbol(&&uint8, "data_ptr")
   local actions, result = deserialize_inner(value_type, fixed_ptr, data_ptr)
+  -- Force unaligned access because malloc does not provide
+  -- blocks aligned for all purposes (e.g. AVX vectors).
+  local value_type_alignment = 1 -- data.min(terralib.sizeof(value_type),8)
   local terra deserialize([fixed_ptr], [data_ptr])
     [actions];
-    return [result]
+    -- FIXME: Terra on PowerPC has buggy support returning structs, so
+    -- work around it by mallocing the result and returning a pointer.
+    var result_data = [&value_type](c.malloc([terralib.sizeof(value_type)]))
+    std.assert(result_data ~= nil, "malloc failed in deserialize")
+    terralib.attrstore(result_data, [result], { align = [value_type_alignment] })
+    return result_data
   end
   deserialize:setinlined(false)
   return deserialize
@@ -1293,8 +1301,13 @@ end)
 function std.deserialize(value_type, fixed_ptr, data_ptr)
   local helper = deserialize_helper(value_type)
   local result = terralib.newsymbol(value_type, "result")
+  -- Force unaligned access because malloc does not provide
+  -- blocks aligned for all purposes (e.g. AVX vectors).
+  local value_type_alignment = 1 -- data.min(terralib.sizeof(value_type),8)
   local actions = quote
-    var [result] = helper([fixed_ptr], [data_ptr])
+    var result_data = helper([fixed_ptr], [data_ptr])
+    var [result] = terralib.attrload(result_data, { align = [value_type_alignment] })
+    c.free(result_data)
   end
   return actions, result
 end
@@ -1912,6 +1925,8 @@ function std.index_type(base_type, displayname)
         return `([to]{ __ptr = c.legion_ptr_t { value = [expr] } })
       elseif not to:is_opaque() and std.validate_implicit_cast(from, to.base_type) then
         return `([to]{ __ptr = [expr] })
+      elseif to:is_opaque() and std.type_eq(from, c.legion_ptr_t) then
+        return `([to]{ __ptr = expr })
       end
     elseif std.is_index_type(from) then
       if std.type_eq(to, c.legion_domain_point_t) then
@@ -3479,7 +3494,11 @@ end
 function std.saveobj(main_task, filename, filetype, extra_setup_thunk, link_flags)
   assert(std.is_task(main_task))
   local main, names = std.setup(main_task, extra_setup_thunk)
-  local lib_dir = os.getenv("LG_RT_DIR") .. "/../bindings/terra"
+  local use_cmake = os.getenv("USE_CMAKE") == "1"
+  local lib_dir = os.getenv("LG_RT_DIR") .. "/../bindings/regent"
+  if use_cmake then
+    lib_dir = os.getenv("CMAKE_BUILD_DIR") .. "/lib"
+  end
 
   local flags = terralib.newlist()
   if os.getenv('CRAYPE_VERSION') then
@@ -3496,7 +3515,10 @@ function std.saveobj(main_task, filename, filetype, extra_setup_thunk, link_flag
     end
     flags:insert("-ludreg")
   end
-  flags:insertall({"-L" .. lib_dir, "-llegion_terra"})
+  flags:insertall({"-L" .. lib_dir, "-lregent"})
+  if use_cmake then
+    flags:insertall({"-llegion", "-lrealm"})
+  end
   if filetype ~= nil then
     terralib.saveobj(filename, filetype, names, flags)
   else
@@ -3591,7 +3613,11 @@ function std.save_tasks(header_filename, filename, filetype,
   assert(header_filename and filename)
   local registration_name, task_impl = write_header(header_filename)
   local _, names = std.setup(nil, extra_setup_thunk, registration_name)
-  local lib_dir = os.getenv("LG_RT_DIR") .. "/../bindings/terra"
+  local use_cmake = os.getenv("USE_CMAKE") == "1"
+  local lib_dir = os.getenv("LG_RT_DIR") .. "/../bindings/regent"
+  if use_cmake then
+    lib_dir = os.getenv("CMAKE_BUILD_DIR") .. "/lib"
+  end
 
   -- Export task interface implementations
   for k, v in pairs(task_impl) do
@@ -3600,7 +3626,10 @@ function std.save_tasks(header_filename, filename, filetype,
 
   local flags = terralib.newlist()
   if link_flags then flags:insertall(link_flags) end
-  flags:insertall({"-L" .. lib_dir, "-llegion_terra"})
+  flags:insertall({"-L" .. lib_dir, "-lregent"})
+  if use_cmake then
+    flags:insertall({"-llegion", "-lrealm"})
+  end
   if filetype ~= nil then
     terralib.saveobj(filename, filetype, names, flags)
   else
@@ -3684,10 +3713,17 @@ end
 
 do
   local intrinsic_names = {}
-  intrinsic_names[vector(float,  4)] = "llvm.x86.sse.%s.ps"
-  intrinsic_names[vector(double, 2)] = "llvm.x86.sse2.%s.pd"
-  intrinsic_names[vector(float,  8)] = "llvm.x86.avx.%s.ps.256"
-  intrinsic_names[vector(double, 4)] = "llvm.x86.avx.%s.pd.256"
+  if os.execute("bash -c \"[ `uname` == 'Linux' ]\"") == 0 and
+    os.execute("grep POWER8 /proc/cpuinfo > /dev/null") == 0
+  then
+    intrinsic_names[vector(float,  4)] = "llvm.ppc.altivec.v%sfp"
+    intrinsic_names[vector(double, 2)] = "llvm.ppc.vsx.xv%sdp"
+  else
+    intrinsic_names[vector(float,  4)] = "llvm.x86.sse.%s.ps"
+    intrinsic_names[vector(double, 2)] = "llvm.x86.sse2.%s.pd"
+    intrinsic_names[vector(float,  8)] = "llvm.x86.avx.%s.ps.256"
+    intrinsic_names[vector(double, 4)] = "llvm.x86.avx.%s.pd.256"
+  end
 
   local function math_binary_op_factory(fname)
     return terralib.memoize(function(arg_type)
