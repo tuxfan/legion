@@ -968,7 +968,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     void VersionInfo::get_field_versions(RegionTreeNode *node, bool split_prev,
                                          const FieldMask &needed_fields,
-                                         FieldVersions &result_versions)
+                                         FieldVersions &result_versions) 
     //--------------------------------------------------------------------------
     {
       const unsigned depth = node->get_depth();

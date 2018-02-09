@@ -15,6 +15,7 @@
 
 // configuration settings that control how Realm is built
 // this is expected to become an auto-generated file at some point
+//#define REALM_USE_EXCEPTIONS //ksmurthy to ensure that we return the errors to the profiling interface
 
 #ifndef REALM_CONFIG_H
 #define REALM_CONFIG_H
@@ -38,6 +39,7 @@
 #define REALM_USE_DLADDR
 
 // can Realm use exceptions to propagate errors back to the profiling interace?
+//ksmurthy moved this define outside 
 #define REALM_USE_EXCEPTIONS
 
 // runtime configuration settings

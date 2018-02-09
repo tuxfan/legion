@@ -440,6 +440,7 @@ void spmd_task(const Task *task,
     }
   }
 
+#if 1//ksmurthy
   // now check our results
   {
     TaskLauncher check_launcher(CHECK_TASK_ID,
@@ -450,12 +451,17 @@ void spmd_task(const Task *task,
     check_launcher.add_field(0, FID_DERIV);
     Future f = runtime->execute_task(ctx, check_launcher);
     int errors = f.get_result<int>();
+#if 1
     if(errors > 0) {
+			//FILE *error_file = stdout;//fopen("errors.txt","w");
       printf("Errors detected in check task!\n");
-      sleep(1); // let other tasks also report errors if they wish
+      sleep(5); // let other tasks also report errors if they wish
+			//fclose(error_file);
       exit(1);
     }
+#endif
   }
+#endif 
 
   runtime->destroy_logical_region(ctx, local_lr);
   runtime->destroy_field_space(ctx, local_fs);
@@ -492,6 +498,12 @@ void stencil_task(const Task *task,
                   const std::vector<PhysicalRegion> &regions,
                   Context ctx, Runtime *runtime)
 {
+  //volatile int debug_wait = 0;
+	//while(debug_wait != 1);
+	//FieldID xxxx = 1/0; //ksmurthy 2017
+	printf("\nabout to throw the exception\n");
+  throw std::exception();
+	printf("\ndone throwing the exception\n");
   assert(regions.size() == 4);
   assert(task->regions.size() == 4);
   for (int idx = 0; idx < 4; idx++)
@@ -636,8 +648,10 @@ int check_task(const Task *task,
  	                         (act_value == 0));
 
     if(!ok) {
+#if 0 //ksmurthy
       printf("ERROR: check for location %lld failed: expected=%g, actual=%g\n",
 	     pir.p[0], exp_value, act_value);
+#endif
       errors++;
     }
   }

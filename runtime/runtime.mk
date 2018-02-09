@@ -434,6 +434,7 @@ GPU_RUNTIME_SRC +=
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/logging.cc \
 	           $(LG_RT_DIR)/realm/cmdline.cc \
 		   $(LG_RT_DIR)/realm/profiling.cc \
+		   $(LG_RT_DIR)/realm/resiliency.cc \
 	           $(LG_RT_DIR)/realm/codedesc.cc \
 		   $(LG_RT_DIR)/realm/timers.cc
 
@@ -457,6 +458,7 @@ HIGH_RUNTIME_SRC += $(LG_RT_DIR)/legion/legion.cc \
 		    $(LG_RT_DIR)/legion/legion_trace.cc \
 		    $(LG_RT_DIR)/legion/legion_spy.cc \
 		    $(LG_RT_DIR)/legion/legion_profiling.cc \
+		    $(LG_RT_DIR)/legion/legion_resilience.cc \
 		    $(LG_RT_DIR)/legion/legion_profiling_serializer.cc \
 		    $(LG_RT_DIR)/legion/legion_instances.cc \
 		    $(LG_RT_DIR)/legion/legion_views.cc \

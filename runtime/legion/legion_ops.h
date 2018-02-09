@@ -293,6 +293,7 @@ namespace Legion {
       // The function to call when commit the operation is
       // ready to commit
       virtual void trigger_commit(void);
+
       // Helper function for deferring complete operations
       // (only used in a limited set of operations and not
       // part of the default pipeline)

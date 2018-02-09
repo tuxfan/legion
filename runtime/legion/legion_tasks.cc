@@ -1,3 +1,4 @@
+//sri
 /* Copyright 2017 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -3040,7 +3041,7 @@ namespace Legion {
             if(!runtime->retrieve_semantic_information(
                 regions[idx].region.get_field_space(), *it, NAME_SEMANTIC_TAG,
                 name, name_size, true/*can fail*/, false))
-	          name = "(no name)";
+            name = "(no name)";
             MessageDescriptor MISSING_INSTANCE_FIELD(1518, "undefined");
             log_run.error(MISSING_INSTANCE_FIELD.id(),
                           "Missing instance for field %s (FieldID: %d)",
@@ -3873,6 +3874,130 @@ namespace Legion {
       }
     } 
 
+/////ksmurthy BEGIN
+//
+
+    //--------------------------------------------------------------------------
+    void SingleTask::quash_operation(GenerationID gen, bool restart)
+    //--------------------------------------------------------------------------
+    {
+      //this operation will be called from realm based on the success/failure
+      //of the task
+      //this function will then determine if the recovery can take place here
+      //if it can, then it calls trigger_recover
+      //else it will call quash operation on the parent.
+
+
+      //volatile int debug_wait = 0;
+      //while(debug_wait == 0);
+
+      //check whether all the inputs to this task are at their latest versions
+      //if they are then we can re-execute this task, else go back up to the 
+      //incoming
+
+      //for(std::map<Operation*, GenerationID>::const_iterator it = outgoing.begin();
+      //    it != outgoing.end(); it++) {
+      //  
+      //}
+      if(trigger_recover()) {
+          if(true) { 
+            //launch_task(); relaunching task
+
+            VariantImpl *variant = runtime->find_variant_impl(task_id, selected_variant);
+            execution_context = new LeafContext(runtime, this);
+            execution_context->add_reference();
+            Processor launch_processor = target_processors[0];
+            if (target_processors.size() > 1)
+              launch_processor = runtime->find_processor_group(target_processors);
+            Realm::ProfilingRequestSet profiling_requests;
+            ApEvent start_condition = ApEvent::NO_AP_EVENT;
+            if (!atomic_locks.empty()) {
+              for (std::map<Reservation,bool>::const_iterator it = atomic_locks.begin(); it != atomic_locks.end(); it++) {
+                start_condition = Runtime::acquire_ap_reservation(it->first, it->second, start_condition);
+              }
+            }
+            ApEvent task_launch_event = variant->dispatch_task(launch_processor, this,
+                                 execution_context, start_condition, true_guard, 
+                                 task_priority, profiling_requests);
+            if (!atomic_locks.empty()) {
+              for (std::map<Reservation,bool>::const_iterator it = atomic_locks.begin(); it != atomic_locks.end(); it++) {
+                Runtime::release_reservation(it->first);
+              }
+            }
+          }
+      } else {
+        
+      }          
+    }
+
+
+    //--------------------------------------------------------------------------
+    bool SingleTask::trigger_recover(void)
+    //--------------------------------------------------------------------------
+    {
+      //look at every physical instance captured as input for this task
+      //if those are still in their latest versions, then fine, re-execute
+      std::deque<InstanceSet> all_physical_instances = get_physical_instances();
+      //lets diginto each of these physical instances
+
+      for(unsigned idx = 0; idx < all_physical_instances.size(); ++idx)
+      if(all_physical_instances[idx].is_virtual_mapping())
+        assert(0); //ideally trigger_recover on each of the incoming edges
+
+      bool recover_here = true;
+      const std::vector<VersionInfo>* prefail_version_info=get_version_infos();
+      for(unsigned idx = 0; idx < all_physical_instances.size(); ++idx) {
+      
+        if(all_physical_instances[idx].size() == 1) {
+           InstanceRef iref = all_physical_instances[idx][0];
+           PhysicalManager *mgr = all_physical_instances[idx][0].get_manager();
+           FieldMask msk = all_physical_instances[idx][0].get_valid_fields();
+           //AutoLock v_lock(view_lock);
+           std::map<PhysicalManager*, InstanceView*>::const_iterator finder =  get_context()->instance_top_views.find(mgr);
+           InstanceView * iview = finder->second;
+           //at this point iview if not null should be the materializedview
+           if(iview != NULL) {
+            if(iview->is_materialized_view()) { 
+              MaterializedView *mview = static_cast<MaterializedView *>(iview);
+              //ideally this should be in try catch TODO
+              LegionMap<VersionID,FieldMask,PHYSICAL_VERSION_ALLOC>::track_aligned &fields_curr = mview->current_versions;
+              //FieldVersions &fields_curr = mview->current_versions;
+              //mview->get_field_versions(mview->logical_node, false, msk, fields_curr);
+              /*for(unsigned idx=0; idx<regions.size();idx++)*/ {
+                FieldVersions fields_cached;
+                VersionInfo &preInfo = const_cast<VersionInfo &>((*prefail_version_info)[idx]);
+                preInfo.get_field_versions(preInfo.get_upper_bound_node(), false, msk, fields_cached);
+                for(unsigned idy=0; idy<fields_cached.size(); idy++) {
+                  LegionMap<VersionID, FieldMask>::aligned::const_iterator it_bck= fields_cached.begin();
+                  LegionMap<VersionID, FieldMask>::aligned::const_iterator it_cur= fields_curr.begin();
+                  for(;it_bck!=fields_cached.end() && it_cur!=fields_curr.end(); ++it_bck,++it_cur) {
+                    if(it_bck->second != it_cur->second && it_bck->first != it_cur->first) { 
+                      recover_here = false; 
+                    } else {
+                      recover_here = true;
+                    } 
+                  }
+                }
+              }
+             }
+           }
+        } else {
+          #if 0
+            for(unsigned idy = 0; idy < all_physical_instances[idx].refs.multi->vector.size(); ++idy) {
+              InstanceRef *iref = all_physical_instances[idx].refs.multi->vector[idy];
+              version_info->get_field_versions(iview->logical_node, false, msk, needed_fields);
+            }
+          #endif
+        } 
+      }
+      return recover_here;
+    }
+
+//if one wants to get to permissions
+//regions[idx].privilege, regions[idx].prop (e.g., simultaneous)
+//runtime->forest->create_coherence_restriction(regions[idx], phsycail_instances[idx])
+/////ksmurthy END
+
     //--------------------------------------------------------------------------
     void SingleTask::launch_task(void)
     //--------------------------------------------------------------------------
@@ -3919,7 +4044,7 @@ namespace Legion {
       }
       for (unsigned idx = 0; idx < wait_barriers.size(); idx++)
       {
-	ApEvent e = 
+        ApEvent e = 
           Runtime::get_previous_phase(wait_barriers[idx].phase_barrier);
         wait_on_events.insert(e);
       }
@@ -4344,11 +4469,11 @@ namespace Legion {
         // Check to make sure the domain is not empty
         const Domain &d = slice.domain;
         bool empty = false;
-	size_t volume = d.get_volume();
-	if (volume == 0)
-	  empty = true;
-	else
-	  total_points += volume;
+  size_t volume = d.get_volume();
+  if (volume == 0)
+    empty = true;
+  else
+    total_points += volume;
         if (empty)
         {
           MessageDescriptor INVALID_MAPPER_OUTPUT33(1547, "undefined");
@@ -5397,6 +5522,15 @@ namespace Legion {
     void IndividualTask::trigger_task_commit(void)
     //--------------------------------------------------------------------------
     {
+
+      //ksmurthy : lets try debugging resilience stuff here
+      static bool bad_debugging_strategy = true;
+      if(bad_debugging_strategy) {
+        quash_operation(get_generation(), false);//should call the quash inside singleTask
+        bad_debugging_strategy=false;
+        return;
+      }
+
       DETAILED_PROFILER(runtime, INDIVIDUAL_TRIGGER_COMMIT_CALL);
       if (is_remote())
       {
@@ -6894,7 +7028,7 @@ namespace Legion {
         {
           case 1:
             {
-	      LegionRuntime::Arrays::Rect<1> rect = index_domain.get_rect<1>();
+        LegionRuntime::Arrays::Rect<1> rect = index_domain.get_rect<1>();
               LegionSpy::log_launch_index_space_rect<1>(unique_op_id,
                                                         rect.lo.x, rect.hi.x);
               break;
@@ -7335,7 +7469,7 @@ namespace Legion {
       }
       for (unsigned idx = 0; idx < wait_barriers.size(); idx++)
       {
-	ApEvent e = 
+  ApEvent e = 
           Runtime::get_previous_phase(wait_barriers[idx].phase_barrier);
         wait_on_events.insert(e);
       }

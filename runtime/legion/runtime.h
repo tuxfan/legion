@@ -1,3 +1,4 @@
+//sri
 /* Copyright 2017 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +24,7 @@
 #include "mapper_manager.h"
 #include "legion_utilities.h"
 #include "legion_profiling.h"
+#include "legion_resilience.h"
 #include "legion_allocation.h"
 #include "garbage_collection.h"
 
@@ -811,8 +813,11 @@ namespace Legion {
         FINAL_MESSAGE,
       };
     public:
+			//ksmurthy 2017 should the virtual channel contain a legionresilient obj?
+			//yes, some of these messages might be checkpointed, writing this note
+			//at a very preliminary stage
       VirtualChannel(VirtualChannelKind kind,AddressSpaceID local_address_space,
-                     size_t max_message_size, LegionProfiler *profiler);
+                     size_t max_message_size, LegionProfiler *profiler, LegionResilient *resilent); 
       VirtualChannel(const VirtualChannel &rhs);
       ~VirtualChannel(void);
     public:
@@ -851,6 +856,7 @@ namespace Legion {
       bool observed_recent;
     private:
       LegionProfiler *const profiler;
+      LegionResilient *const resilient;
     }; 
 
     /**
@@ -2577,6 +2583,10 @@ namespace Legion {
                           const void *args, size_t arglen, 
 			  const void *userdata, size_t userlen,
 			  Processor p);
+      /*ksmurthy 2016*/ static void resilience_runtime_task(
+                          const void *args, size_t arglen, 
+			  const void *userdata, size_t userlen,
+			  Processor p);
       static void profiling_mapper_task(
                           const void *args, size_t arglen, 
 			  const void *userdata, size_t userlen,
@@ -2601,6 +2611,7 @@ namespace Legion {
       // after the find the right runtime instance to call
       void process_schedule_request(Processor p);
       void process_profiling_task(Processor p, const void *args, size_t arglen);
+      /*ksmurthy 2017*/ void process_resilience_task(Processor p, const void *args, size_t arglen);
       void process_message_task(const void *args, size_t arglen);
     public:
       // The Runtime wrapper for this class
@@ -2613,6 +2624,7 @@ namespace Legion {
       const unsigned total_address_spaces;
       const unsigned runtime_stride; // stride for uniqueness
       LegionProfiler *profiler;
+      LegionResilient *resilient;
       RegionTreeForest *const forest;
       Processor utility_group;
       const bool has_explicit_utility_procs;

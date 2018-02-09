@@ -877,15 +877,26 @@ namespace Legion {
         trigger_commit();
     }
 
+/////ksmurthy BEGIN
     //--------------------------------------------------------------------------
     void Operation::quash_operation(GenerationID gen, bool restart)
     //--------------------------------------------------------------------------
     {
       // TODO: actually handle quashing of operations
-      assert(false);
+      //ksmurthy this was the only line: assert(false);
+      //ok some notes, there are two things to do
+      //get the error code to determine whether we can recover here
+      //get the list of physical instances on which the task depended on
+      //and see what are the current available physical instance
+      //see which are read and write
+      //then determine that I should restart execution from here
+      //else call the parent
+      //this should be done in the inherited classes, e.g., TaskOp that inherit
+      //s from this class, and singleTask that inherits from TaskOp
     }
+/////ksmurthy END
 
-    //--------------------------------------------------------------------------
+    //--------------------------------------------------------------------
     void Operation::request_early_commit(void)
     //--------------------------------------------------------------------------
     {

@@ -1,3 +1,4 @@
+//sri
 /* Copyright 2017 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -241,7 +242,10 @@ namespace Legion {
       LG_LAUNCH_TOP_LEVEL_ID  = Realm::Processor::TASK_ID_FIRST_AVAILABLE+3,
       LG_MPI_INTEROP_ID       = Realm::Processor::TASK_ID_FIRST_AVAILABLE+4,
       LG_MPI_SYNC_ID          = Realm::Processor::TASK_ID_FIRST_AVAILABLE+5,
-      TASK_ID_AVAILABLE       = Realm::Processor::TASK_ID_FIRST_AVAILABLE+6,
+			//ksmurthy: 2017 enabling resilience 
+      LG_LEGION_RESILIENCE_ID  = Realm::Processor::TASK_ID_FIRST_AVAILABLE+6,
+			//ksmurthy
+      TASK_ID_AVAILABLE       = Realm::Processor::TASK_ID_FIRST_AVAILABLE+7,
     };
 
     // Enumeration of Legion runtime tasks

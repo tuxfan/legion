@@ -114,6 +114,7 @@ list(APPEND LOW_RUNTIME_SRC
   realm/processor.inl
   realm/profiling.h        realm/profiling.cc
   realm/profiling.inl
+  realm/resiliency.h        realm/resiliency.cc
   realm/realm_config.h
   realm/realm.h
   realm/redop.h

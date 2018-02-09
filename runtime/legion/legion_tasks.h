@@ -448,6 +448,10 @@ namespace Legion {
     public:
       // Override these methods from operation class
       virtual void trigger_mapping(void); 
+			//ksmurthy begin
+			virtual void quash_operation(GenerationID, bool);
+			virtual bool trigger_recover(void);
+			//ksmurthy end
     protected:
       virtual void trigger_task_complete(void) = 0;
       virtual void trigger_task_commit(void) = 0;
