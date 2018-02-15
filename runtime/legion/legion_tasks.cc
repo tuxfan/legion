@@ -8314,9 +8314,12 @@ namespace Legion {
                                                      ready_events,
                                                      partial_traversal);
       }
-      // Now do the analysis for each of our points
-      //for (unsigned idx = 0; idx < points.size(); idx++)
-        //points[idx]->perform_versioning_analysis(ready_events);
+      // Now do the analysis for each of our points if no constraints
+      if (constraint_equations.size() == 0)
+      {
+        for (unsigned idx = 0; idx < points.size(); idx++)
+          points[idx]->perform_versioning_analysis(ready_events);
+      }
       if (!ready_events.empty())
         return Runtime::merge_events(ready_events);
       return RtEvent::NO_RT_EVENT;
@@ -8480,7 +8483,7 @@ namespace Legion {
       // Copy the points onto the stack to avoid them being
       // cleaned up while we are still iterating through the loop
       std::vector<PointTask*> local_points(points);
-      std::set<RtEvent> ready_events;
+      bool needs_versioning = constraint_equations.size() > 0;
       for (std::vector<PointTask*>::const_iterator it = local_points.begin();
             it != local_points.end(); it++)
       {
@@ -8491,17 +8494,7 @@ namespace Legion {
           next_point->defer_map_and_launch(dep_event, true);
         }
         else {
-          next_point->perform_versioning_analysis(ready_events);
-          RtEvent map_event = next_point->perform_mapping();
-          // Once we call this function on the last point it
-          // is possible that this slice task object can be recycled
-          if (map_event.exists() && !map_event.has_triggered())
-          {
-            next_point->defer_launch_task(map_event);
-          }
-          else {
-            next_point->launch_task();
-          }
+          next_point->map_and_launch(needs_versioning);
         }
       }
     }
