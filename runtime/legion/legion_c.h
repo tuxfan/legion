@@ -46,7 +46,6 @@ extern "C" {
 #define NEW_OPAQUE_TYPE(T) typedef struct T { void *impl; } T
   NEW_OPAQUE_TYPE(legion_runtime_t);
   NEW_OPAQUE_TYPE(legion_context_t);
-  NEW_OPAQUE_TYPE(legion_generator_context_t);
   NEW_OPAQUE_TYPE(legion_domain_point_iterator_t);
   NEW_OPAQUE_TYPE(legion_coloring_t);
   NEW_OPAQUE_TYPE(legion_domain_coloring_t);
@@ -67,7 +66,6 @@ extern "C" {
   NEW_OPAQUE_TYPE(legion_release_launcher_t);
   NEW_OPAQUE_TYPE(legion_attach_launcher_t);
   NEW_OPAQUE_TYPE(legion_must_epoch_launcher_t);
-  NEW_OPAQUE_TYPE(legion_task_generator_arguments_t);
   NEW_OPAQUE_TYPE(legion_physical_region_t);
   NEW_OPAQUE_TYPE(legion_accessor_array_1d_t);
   NEW_OPAQUE_TYPE(legion_accessor_array_2d_t);
@@ -148,6 +146,31 @@ extern "C" {
     int dim;
     coord_t point_data[MAX_POINT_DIM];
   } legion_domain_point_t;
+
+  /**
+   * @see Legion::Transform
+   */
+  typedef struct legion_domain_transform_t {
+    int m, n;
+// Hack: Python CFFI isn't smart enough to do constant folding so we
+// have to do this by hand here. To avoid this bitrotting, at least
+// make the preprocessor check that the value is equal to what we
+// expect.
+#define MAX_MATRIX_DIM 9
+#if MAX_MATRIX_DIM != LEGION_MAX_POINT_DIM * LEGION_MAX_POINT_DIM // sanity check
+#error Mismatch in MAX_MATRIX_DIM
+#endif
+    coord_t matrix[MAX_MATRIX_DIM];
+#undef MAX_MATRIX_DIM
+  } legion_domain_transform_t;
+
+  /**
+   * @see Legion::DomainAffineTransform
+   */
+  typedef struct legion_domain_affine_transform_t {
+    legion_domain_transform_t transform;
+    legion_domain_point_t offset;
+  } legion_domain_affine_transform_t;
 
   /**
    * @see Legion::IndexSpace
@@ -292,15 +315,6 @@ extern "C" {
       legion_runtime_t /* runtime */,
       const legion_processor_t * /* local_procs */,
       unsigned /* num_local_procs */);
-
-  /**
-   * Interface for a Legion C task generator.
-   */
-  typedef
-    void (*legion_generator_pointer_t)(
-      legion_generator_context_t /* context */,
-      legion_task_generator_arguments_t /* args */,
-      legion_runtime_t /* runtime */);
 
   /**
    * Interface for a Legion C task that is wrapped (i.e. this is the Realm
@@ -1081,14 +1095,30 @@ extern "C" {
     int color /* = AUTO_GENERATE_ID */);
 
   /**
-   * @see LegionRuntime::HighLevel::Runtime::is_index_partition_disjoint()
+   * @return Caller takes ownership of return value.
+   *
+   * @see Legion::Runtime::create_partition_by_restriction()
+   */
+  legion_index_partition_t
+  legion_index_partition_create_by_restriction(
+    legion_runtime_t runtime,
+    legion_context_t ctx,
+    legion_index_space_t parent,
+    legion_index_space_t color_space,
+    legion_domain_transform_t transform,
+    legion_domain_t extent,
+    legion_partition_kind_t part_kind /* = COMPUTE_KIND */,
+    int color /* = AUTO_GENERATE_ID */);
+
+  /**
+   * @see Legion::Runtime::is_index_partition_disjoint()
    */
   bool
   legion_index_partition_is_disjoint(legion_runtime_t runtime,
                                      legion_index_partition_t handle);
 
   /**
-   * @see LegionRuntime::HighLevel::Runtime::is_index_partition_complete()
+   * @see Legion::Runtime::is_index_partition_complete()
    */
   bool
   legion_index_partition_is_complete(legion_runtime_t runtime,
@@ -1674,7 +1704,7 @@ extern "C" {
                                legion_phase_barrier_t handle);
 
   /**
-   * @see LegionRuntime::HighLevel::PhaseBarrier::alter_arrival_count()
+   * @see Legion::PhaseBarrier::alter_arrival_count()
    */
   legion_phase_barrier_t
   legion_phase_barrier_alter_arrival_count(legion_runtime_t runtime,
@@ -1683,7 +1713,7 @@ extern "C" {
                                            int delta);
 
   /**
-   * @see LegionRuntime::HighLevel::PhaseBarrier::arrive()
+   * @see Legion::PhaseBarrier::arrive()
    */
   void
   legion_phase_barrier_arrive(legion_runtime_t runtime,
@@ -1692,7 +1722,7 @@ extern "C" {
                               unsigned count /* = 1 */);
 
   /**
-   * @see LegionRuntime::HighLevel::PhaseBarrier::wait()
+   * @see Legion::PhaseBarrier::wait()
    */
   void
   legion_phase_barrier_wait(legion_runtime_t runtime,
@@ -1737,7 +1767,7 @@ extern "C" {
                                     legion_dynamic_collective_t handle);
 
   /**
-   * @see LegionRuntime::HighLevel::DynamicCollective::alter_arrival_count()
+   * @see Legion::DynamicCollective::alter_arrival_count()
    */
   legion_dynamic_collective_t
   legion_dynamic_collective_alter_arrival_count(
@@ -3468,50 +3498,18 @@ extern "C" {
     const void *retval,
     size_t retsize);
 
-  /**
-   * @see Legion::Runtime::register_task_generator()
-   */
-  legion_task_id_t
-  legion_runtime_register_task_generator_fnptr(
-    legion_runtime_t runtime,
-    legion_generator_id_t id /* = AUTO_GENERATE_ID */,
-    legion_task_id_t task_id /* = AUTO_GENERATE_ID */,
-    const char *task_name /* = NULL*/,
-    bool global,
-    legion_execution_constraint_set_t execution_constraints,
-    legion_task_layout_constraint_set_t layout_constraints,
-    legion_task_config_options_t options,
-    legion_generator_pointer_t generator_pointer,
-    const void *userdata,
-    size_t userlen);
-
-  /**
-   * @see Legion::Runtime::preregister_task_generator()
-   */
-  legion_task_id_t
-  legion_runtime_preregister_task_generator_fnptr(
-    legion_generator_id_t id /* = AUTO_GENERATE_ID */,
-    legion_task_id_t task_id /* = AUTO_GENERATE_ID */,
-    const char *task_name /* = NULL*/,
-    legion_execution_constraint_set_t execution_constraints,
-    legion_task_layout_constraint_set_t layout_constraints,
-    legion_task_config_options_t options,
-    legion_generator_pointer_t generator_pointer,
-    const void *userdata,
-    size_t userlen);
-
   // -----------------------------------------------------------------------
   // Timing Operations
   // -----------------------------------------------------------------------
 
   /**
-   * @see LegionRuntime::TimeStamp::get_current_time_in_micros()
+   * @see Realm::Clock::get_current_time_in_micros()
    */
   unsigned long long
   legion_get_current_time_in_micros(void);
 
   /**
-   * @see LegionRuntime::TimeStamp::get_current_time_in_nanos()
+   * @see Realm::Clock::get_current_time_in_nanos()
    */
   unsigned long long
   legion_get_current_time_in_nanos(void);

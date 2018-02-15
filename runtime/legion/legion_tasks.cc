@@ -413,6 +413,9 @@ namespace Legion {
       rez.serialize(args,arglen);
       rez.serialize(map_id);
       rez.serialize(tag);
+      rez.serialize(mapper_data_size);
+      if (mapper_data_size > 0)
+        rez.serialize(mapper_data, mapper_data_size);
       rez.serialize(is_index_space);
       rez.serialize(must_epoch_task);
       rez.serialize(index_domain);
@@ -491,6 +494,21 @@ namespace Legion {
       }
       derez.deserialize(map_id);
       derez.deserialize(tag);
+      derez.deserialize(mapper_data_size);
+      if (mapper_data_size > 0)
+      {
+        // If we already have mapper data, then we are going to replace it
+        if (mapper_data != NULL)
+          free(mapper_data);
+        mapper_data = malloc(mapper_data_size);
+        derez.deserialize(mapper_data, mapper_data_size);
+      }
+      else if (mapper_data != NULL)
+      {
+        // If we freed it remotely then we can free it here too
+        free(mapper_data);
+        mapper_data = NULL;
+      }
       derez.deserialize(is_index_space);
       derez.deserialize(must_epoch_task);
       derez.deserialize(index_domain);
@@ -771,6 +789,12 @@ namespace Legion {
         local_args = NULL;
         local_arglen = 0;
       }
+      if (mapper_data != NULL)
+      {
+        free(mapper_data);
+        mapper_data = NULL;
+        mapper_data_size = 0;
+      }
       early_mapped_regions.clear();
       atomic_locks.clear(); 
       parent_req_indexes.clear();
@@ -875,7 +899,7 @@ namespace Legion {
       {
         case INDIVIDUAL_TASK_KIND:
           {
-            IndividualTask *task = rt->get_available_individual_task(false);
+            IndividualTask *task = rt->get_available_individual_task();
             std::set<RtEvent> ready_events;
             if (task->unpack_task(derez, current, ready_events))
             {
@@ -898,7 +922,7 @@ namespace Legion {
           }
         case SLICE_TASK_KIND:
           {
-            SliceTask *task = rt->get_available_slice_task(false);
+            SliceTask *task = rt->get_available_slice_task();
             std::set<RtEvent> ready_events;
             if (task->unpack_task(derez, current, ready_events))
             {
@@ -1862,6 +1886,15 @@ namespace Legion {
       }
       this->map_id = rhs->map_id;
       this->tag = rhs->tag;
+      if (rhs->mapper_data_size > 0)
+      {
+#ifdef DEBUG_LEGION
+        assert(rhs->mapper_data != NULL);
+#endif
+        this->mapper_data_size = rhs->mapper_data_size;
+        this->mapper_data = malloc(this->mapper_data_size);
+        memcpy(this->mapper_data, rhs->mapper_data, this->mapper_data_size);
+      }
       this->is_index_space = rhs->is_index_space;
       this->orig_proc = rhs->orig_proc;
       this->current_proc = rhs->current_proc;
@@ -4944,7 +4977,7 @@ namespace Legion {
         perform_privilege_checks();
       // Get a future from the parent context to use as the result
       result = Future(new FutureImpl(runtime, true/*register*/,
-            runtime->get_available_distributed_id(!top_level_task), 
+            runtime->get_available_distributed_id(), 
             runtime->address_space, this));
       check_empty_field_requirements(); 
       if (Runtime::legion_spy_enabled)
@@ -6869,7 +6902,7 @@ namespace Legion {
         initialize_predicate(launcher.predicate_false_future,
                              launcher.predicate_false_result);
       future_map = FutureMap(new FutureMapImpl(ctx, this, runtime,
-            runtime->get_available_distributed_id(true/*needs continuation*/),
+            runtime->get_available_distributed_id(),
             runtime->address_space));
 #ifdef DEBUG_LEGION
       future_map.impl->add_valid_domain(index_domain);
@@ -6954,7 +6987,7 @@ namespace Legion {
         initialize_predicate(launcher.predicate_false_future,
                              launcher.predicate_false_result);
       reduction_future = Future(new FutureImpl(runtime,
-            true/*register*/, runtime->get_available_distributed_id(true), 
+            true/*register*/, runtime->get_available_distributed_id(), 
             runtime->address_space, this));
       check_empty_field_requirements();
       if (check_privileges)
@@ -7738,7 +7771,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       DETAILED_PROFILER(runtime, INDEX_CLONE_AS_SLICE_CALL);
-      SliceTask *result = runtime->get_available_slice_task(false); 
+      SliceTask *result = runtime->get_available_slice_task(); 
       result->initialize_base_task(parent_ctx, false/*track*/, NULL/*deps*/,
                                    Predicate::TRUE_PRED, this->task_id);
       result->clone_multi_from(this, is, p, recurse, stealable);
@@ -8661,7 +8694,7 @@ namespace Legion {
       }
       for (unsigned idx = 0; idx < num_points; idx++)
       {
-        PointTask *point = runtime->get_available_point_task(false); 
+        PointTask *point = runtime->get_available_point_task(); 
         point->slice_owner = this;
         point->unpack_task(derez, current, ready_events);
         point->parent_ctx = parent_ctx;
@@ -8703,7 +8736,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       DETAILED_PROFILER(runtime, SLICE_CLONE_AS_SLICE_CALL);
-      SliceTask *result = runtime->get_available_slice_task(false); 
+      SliceTask *result = runtime->get_available_slice_task(); 
       result->initialize_base_task(parent_ctx,  false/*track*/, NULL/*deps*/,
                                    Predicate::TRUE_PRED, this->task_id);
       result->clone_multi_from(this, is, p, recurse, stealable);
@@ -8782,7 +8815,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       DETAILED_PROFILER(runtime, SLICE_CLONE_AS_POINT_CALL);
-      PointTask *result = runtime->get_available_point_task(false);
+      PointTask *result = runtime->get_available_point_task();
       result->initialize_base_task(parent_ctx, false/*track*/, NULL/*deps*/,
                                    Predicate::TRUE_PRED, this->task_id);
       result->clone_task_op_from(this, this->target_proc, 
