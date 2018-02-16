@@ -63,6 +63,10 @@ enum OrderIDs {
   FROM_TOP_RIGHT = 1,
 };
 
+enum TraceIDS {
+  MAIN_LOOP_TRACE_ID = 1,
+};
+
 struct RectDims {
   int side_length_x;
   int side_length_y;
@@ -82,6 +86,13 @@ class SliceMapper : public DefaultMapper {
 public:
   SliceMapper(Machine machine, Runtime *rt, Processor local, int sl);
 public:
+  virtual LogicalRegion default_policy_select_instance_region(
+                          MapperContext ctx,
+                          Memory target_memory,
+                          const RegionRequirement &req,
+                          const LayoutConstraintSet &layout_constraints,
+                          bool force_new_instances,
+                          bool meets_constraints);
   virtual void slice_task(const MapperContext ctx,
                           const Task& task,
                           const SliceTaskInput& input,
@@ -100,6 +111,17 @@ SliceMapper::SliceMapper(Machine m, Runtime *rt, Processor p, int sl)
   cached(false)
 {
 }
+
+LogicalRegion SliceMapper::default_policy_select_instance_region(
+                MapperContext ctx,
+                Memory target_memory,
+                const RegionRequirement &req,
+                const LayoutConstraintSet &layout_constraints,
+                bool force_new_instances,
+                bool meets_constraints)
+{
+  return req.region;
+} 
 
 void SliceMapper::slice_task(const MapperContext      ctx,
                              const Task&              task,
@@ -525,6 +547,7 @@ void top_level_task(const Task *task,
   int task_idx = 0;
   for (int j = 0; j < num_iterations; j++)
   {
+    runtime->begin_trace(ctx, MAIN_LOOP_TRACE_ID);
     if (angle == 225)
     {
       ComputeArgs compute_args;
@@ -582,6 +605,7 @@ void top_level_task(const Task *task,
       fm = runtime->execute_index_space(ctx, compute_launcher);
     }
     task_idx++;
+    runtime->end_trace(ctx, MAIN_LOOP_TRACE_ID);
   }
 
   fm.wait_all_results();
