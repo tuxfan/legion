@@ -485,6 +485,7 @@ namespace Legion {
       SELECT_TUNABLE_VALUE_CALL,
       MAP_MUST_EPOCH_CALL,
       MAP_DATAFLOW_GRAPH_CALL,
+      MEMOIZE_OPERATION_CALL,
       SELECT_TASKS_TO_MAP_CALL,
       SELECT_STEAL_TARGETS_CALL,
       PERMIT_STEAL_REQUEST_CALL,
@@ -537,6 +538,7 @@ namespace Legion {
       "select_tunable_value",                       \
       "map_must_epoch",                             \
       "map_dataflow_graph",                         \
+      "memoize_operation",                          \
       "select_tasks_to_map",                        \
       "select_steal_targets",                       \
       "permit_steal_request",                       \
@@ -1024,6 +1026,9 @@ namespace Legion {
       REDUCTION_VIEW_FIND_COPY_PRECONDITIONS_CALL,
       REDUCTION_VIEW_FIND_USER_PRECONDITIONS_CALL,
       REDUCTION_VIEW_FILTER_LOCAL_USERS_CALL,
+      PHYSICAL_TRACE_EXECUTE_CALL,
+      PHYSICAL_TRACE_PRECONDITION_CHECK_CALL,
+      PHYSICAL_TRACE_OPTIMIZE_CALL,
       LAST_RUNTIME_CALL_KIND, // This one must be last
     };
 
@@ -1182,6 +1187,9 @@ namespace Legion {
       "Reduction View Find Copy Preconditions",                       \
       "Reduction View Find User Preconditions",                       \
       "Reduction View Filter Local Users",                            \
+      "Physical Trace Execute",                                       \
+      "Physical Trace Precondition Check",                            \
+      "Physical Trace Optimize",                                      \
     };
 
     enum SemanticInfoKind {
@@ -1298,6 +1306,7 @@ namespace Legion {
     class DetachOp;
     class TimingOp;
     class TaskOp;
+    class Memoizable;
 
     // legion_tasks.h
     class ExternalTask;
@@ -1350,6 +1359,21 @@ namespace Legion {
     class DynamicTrace;
     class TraceCaptureOp;
     class TraceCompleteOp;
+    class TraceReplayOp;
+    class PhysicalTrace;
+    struct PhysicalTemplate;
+    struct Instruction;
+    struct GetTermEvent;
+    struct CreateApUserEvent;
+    struct TriggerEvent;
+    struct MergeEvent;
+    struct AssignFenceCompletion;
+    struct IssueCopy;
+    struct IssueFill;
+    struct SetReadyEvent;
+    struct GetCopyTermEvent;
+    struct SetCopySyncEvent;
+    struct TriggerCopyCompletion;
 
     // region_tree.h
     class RegionTreeForest;

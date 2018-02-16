@@ -331,6 +331,7 @@ namespace Legion {
           const std::vector<CopySrcDstField> &dst_fields,
           RegionTreeNode *dst, ApEvent precondition, PredEvent pred_guard,
           bool reduction_fold, bool precise_domain, 
+          PhysicalTraceInfo &trace_info,
           RegionTreeNode *intersect) = 0;
       virtual Domain get_pointer_space(void) const = 0;
     public:
@@ -401,7 +402,8 @@ namespace Legion {
           const std::vector<CopySrcDstField> &src_fields,
           const std::vector<CopySrcDstField> &dst_fields,
           RegionTreeNode *dst, ApEvent precondition, PredEvent pred_guard,
-          bool reduction_fold, bool precise_domain, RegionTreeNode *intersect);
+          bool reduction_fold, bool precise_domain,
+          PhysicalTraceInfo &trace_info, RegionTreeNode *intersect);
       virtual Domain get_pointer_space(void) const;
     protected:
       const Domain ptr_space;
@@ -445,7 +447,8 @@ namespace Legion {
           const std::vector<CopySrcDstField> &src_fields,
           const std::vector<CopySrcDstField> &dst_fields,
           RegionTreeNode *dst, ApEvent precondition, PredEvent pred_guard,
-          bool reduction_fold, bool precise_domain, RegionTreeNode *intersect);
+          bool reduction_fold, bool precise_domain,
+          PhysicalTraceInfo &trace_info, RegionTreeNode *intersect);
       virtual Domain get_pointer_space(void) const;
     public:
       const ApEvent use_event;

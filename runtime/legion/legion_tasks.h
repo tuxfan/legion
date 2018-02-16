@@ -131,7 +131,7 @@ namespace Legion {
      * This is the base task operation class for all
      * kinds of tasks in the system.  
      */
-    class TaskOp : public ExternalTask, public SpeculativeOp {
+    class TaskOp : public ExternalTask, public MemoizableOp<SpeculativeOp> {
     public:
       enum TaskKind {
         INDIVIDUAL_TASK_KIND,
@@ -168,6 +168,7 @@ namespace Legion {
       virtual void set_context_index(unsigned index);
       virtual int get_depth(void) const;
       virtual const char* get_task_name(void) const;
+      virtual bool has_trace(void) const;
     public:
       bool is_remote(void) const;
       inline bool is_stolen(void) const { return (steal_count > 0); }
@@ -415,6 +416,7 @@ namespace Legion {
                                     Mapper::MapTaskOutput &output,
                                     MustEpochOp *must_epoch_owner,
                                     std::vector<InstanceSet> &valid_instances); 
+      void replay_map_task_output();
     protected: // mapper helper calls
       void validate_target_processors(const std::vector<Processor> &prcs) const;
       void validate_variant_selection(MapperManager *local_mapper,
@@ -690,6 +692,9 @@ namespace Legion {
       void unpack_remote_complete(Deserializer &derez);
       void unpack_remote_commit(Deserializer &derez);
     public:
+      // From MemoizableOp
+      virtual void replay_analysis(void);
+    public:
       static void process_unpack_remote_mapped(Deserializer &derez);
       static void process_unpack_remote_complete(Deserializer &derez);
       static void process_unpack_remote_commit(Deserializer &derez);
@@ -811,6 +816,12 @@ namespace Legion {
       void send_back_created_state(AddressSpaceID target);
     public:
       virtual void record_reference_mutation_effect(RtEvent event);
+    public:
+      // From MemoizableOp
+      virtual void replay_analysis(void);
+    public:
+      // From Memoizable
+      virtual std::pair<unsigned, DomainPoint> get_trace_local_id() const;
     protected:
       friend class SliceTask;
       SliceTask                   *slice_owner;
@@ -913,6 +924,9 @@ namespace Legion {
       void unpack_slice_mapped(Deserializer &derez, AddressSpaceID source);
       void unpack_slice_complete(Deserializer &derez);
       void unpack_slice_commit(Deserializer &derez); 
+    public:
+      // From MemoizableOp
+      virtual void replay_analysis(void);
     public:
       static void process_slice_mapped(Deserializer &derez, 
                                        AddressSpaceID source);
@@ -1065,6 +1079,9 @@ namespace Legion {
                           const std::set<IndexPartition> &parts);
       virtual void register_index_partition_deletions(
                           const std::set<IndexPartition> &parts);
+    public:
+      // From MemoizableOp
+      virtual void replay_analysis(void);
     protected:
       friend class IndexTask;
       friend class PointTask;

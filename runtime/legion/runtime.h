@@ -2515,6 +2515,7 @@ namespace Legion {
       ReleaseOp*            get_available_release_op(void);
       TraceCaptureOp*       get_available_capture_op(void);
       TraceCompleteOp*      get_available_trace_op(void);
+      TraceReplayOp*        get_available_replay_op(void);
       MustEpochOp*          get_available_epoch_op(void);
       PendingPartitionOp*   get_available_pending_partition_op(void);
       DependentPartitionOp* get_available_dependent_partition_op(void);
@@ -2552,6 +2553,7 @@ namespace Legion {
       void free_release_op(ReleaseOp *op);
       void free_capture_op(TraceCaptureOp *op);
       void free_trace_op(TraceCompleteOp *op);
+      void free_replay_op(TraceReplayOp *op);
       void free_epoch_op(MustEpochOp *op);
       void free_pending_partition_op(PendingPartitionOp *op);
       void free_dependent_partition_op(DependentPartitionOp* op);
@@ -2818,6 +2820,7 @@ namespace Legion {
       mutable LocalLock release_op_lock;
       mutable LocalLock capture_op_lock;
       mutable LocalLock trace_op_lock;
+      mutable LocalLock replay_op_lock;
       mutable LocalLock epoch_op_lock;
       mutable LocalLock pending_partition_op_lock;
       mutable LocalLock dependent_partition_op_lock;
@@ -2852,6 +2855,7 @@ namespace Legion {
       std::deque<ReleaseOp*>            available_release_ops;
       std::deque<TraceCaptureOp*>       available_capture_ops;
       std::deque<TraceCompleteOp*>      available_trace_ops;
+      std::deque<TraceReplayOp*>        available_replay_ops;
       std::deque<MustEpochOp*>          available_epoch_ops;
       std::deque<PendingPartitionOp*>   available_pending_partition_ops;
       std::deque<DependentPartitionOp*> available_dependent_partition_ops;
@@ -3003,6 +3007,9 @@ namespace Legion {
       static bool bit_mask_logging;
 #endif
       static bool program_order_execution;
+      static bool dump_physical_traces;
+      static bool no_tracing;
+      static bool no_physical_tracing;
       static bool verify_disjointness;
     public:
       static unsigned num_profiling_nodes;

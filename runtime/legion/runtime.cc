@@ -16355,6 +16355,13 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    TraceReplayOp* Runtime::get_available_replay_op(void)
+    //--------------------------------------------------------------------------
+    {
+      return get_available(replay_op_lock, available_replay_ops);
+    }
+    
+    //--------------------------------------------------------------------------
     MustEpochOp* Runtime::get_available_epoch_op(void)
     //--------------------------------------------------------------------------
     {
@@ -16658,6 +16665,14 @@ namespace Legion {
     {
       AutoLock t_lock(trace_op_lock);
       release_operation<false>(available_trace_ops, op);
+    }
+
+    //--------------------------------------------------------------------------
+    void Runtime::free_replay_op(TraceReplayOp *op)
+    //--------------------------------------------------------------------------
+    {
+      AutoLock t_lock(trace_op_lock);
+      release_operation<false>(available_replay_ops, op);
     }
 
     //--------------------------------------------------------------------------
@@ -17941,6 +17956,9 @@ namespace Legion {
     /*static*/ std::vector<MPILegionHandshake>* 
                       Runtime::pending_handshakes = NULL;
     /*static*/ bool Runtime::program_order_execution = false;
+    /*static*/ bool Runtime::dump_physical_traces = false;
+    /*static*/ bool Runtime::no_tracing = false;
+    /*static*/ bool Runtime::no_physical_tracing = false;
     /*static*/ bool Runtime::verify_disjointness = false;
 #ifdef DEBUG_LEGION
     /*static*/ bool Runtime::logging_region_tree_state = false;
@@ -18063,6 +18081,9 @@ namespace Legion {
         gc_epoch_size = DEFAULT_GC_EPOCH_SIZE;
         max_local_fields = DEFAULT_LOCAL_FIELDS;
         program_order_execution = false;
+        dump_physical_traces = false;
+        no_tracing = false;
+        no_physical_tracing = false;
         verify_disjointness = false;
         num_profiling_nodes = 0;
         serializer_type = "binary";
@@ -18097,6 +18118,9 @@ namespace Legion {
           if (!strcmp(argv[i],"-lg:safe_mapper"))
             unsafe_mapper = false;
           BOOL_ARG("-lg:inorder",program_order_execution);
+          BOOL_ARG("-lg:dump_physical_traces",dump_physical_traces);
+          BOOL_ARG("-lg:no_tracing",no_tracing);
+          BOOL_ARG("-lg:no_physical_tracing",no_physical_tracing);
           BOOL_ARG("-lg:disjointness",verify_disjointness);
           INT_ARG("-lg:window", initial_task_window_size);
           INT_ARG("-lg:hysteresis", initial_task_window_hysteresis);
@@ -18172,6 +18196,9 @@ namespace Legion {
           if (!strcmp(argv[i],"-hl:safe_mapper"))
             unsafe_mapper = false;
           BOOL_ARG("-hl:inorder",program_order_execution);
+          BOOL_ARG("-hl:dump_physical_traces",dump_physical_traces);
+          BOOL_ARG("-hl:no_tracing",no_tracing);
+          BOOL_ARG("-hl:no_physical_tracing",no_physical_tracing);
           BOOL_ARG("-hl:disjointness",verify_disjointness);
           INT_ARG("-hl:window", initial_task_window_size);
           INT_ARG("-hl:hysteresis", initial_task_window_hysteresis);
@@ -20039,16 +20066,15 @@ namespace Legion {
     }
 #endif
 
-
     //--------------------------------------------------------------------------
     /*static*/ char* BitMaskHelper::to_string(const uint64_t *bits, int count)
     //--------------------------------------------------------------------------
     {
-      char *result = (char*)malloc((((count + 7) >> 3) + 1)*sizeof(char));
+      char *result = (char*)malloc(((((count + 63) >> 6) << 4) + 1)*sizeof(char));
       assert(result != 0);
       char *p = result;
       // special case for non-multiple-of-64
-      if((count & 63) != 0) {
+      if((count & 63) != 0 && bits[count >> 6]) {
         // each nibble (4 bits) takes one character
         int nibbles = ((count & 63) + 3) >> 2;
         sprintf(p, "%*.*" MASK_FMT, nibbles, nibbles, bits[count >> 6]);
@@ -20056,9 +20082,11 @@ namespace Legion {
       }
       // rest are whole words
       int idx = (count >> 6);
-      while(idx >= 0) {
-        sprintf(p, "%16.16" MASK_FMT, bits[--idx]);
-        p += 16;
+      while(idx > 0) {
+        if (bits[--idx] || idx == 0) {
+          sprintf(p, "%16.16" MASK_FMT, bits[idx]);
+          p += 16;
+        }
       }
       return result;
     }

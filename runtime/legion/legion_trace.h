@@ -72,6 +72,12 @@ namespace Legion {
         FieldMask mask;
       };
     public:
+      enum TracingState {
+        LOGICAL_ONLY,
+        PHYSICAL_RECORD,
+        PHYSICAL_REPLAY,
+      };
+    public:
       LegionTrace(TaskContext *ctx);
       virtual ~LegionTrace(void);
     public:
@@ -96,8 +102,22 @@ namespace Legion {
       virtual void record_aliased_children(unsigned req_index, unsigned depth,
                                            const FieldMask &aliased_mask) = 0;
     public:
+      bool has_physical_trace(void) { return physical_trace != NULL; }
+      PhysicalTrace* get_physical_trace(void) { return physical_trace; }
+      void register_physical_only(Operation *op, GenerationID gen);
+    public:
       void replay_aliased_children(std::vector<RegionTreePath> &paths) const;
       void end_trace_execution(FenceOp *fence_op);
+    public:
+      void initialize_tracing_state(void) { state = LOGICAL_ONLY; }
+      void set_state_record(void) { state = PHYSICAL_RECORD; }
+      void set_state_replay(void) { state = PHYSICAL_REPLAY; }
+      bool is_recording(void) const { return state == PHYSICAL_RECORD; }
+      bool is_replaying(void) const { return state == PHYSICAL_REPLAY; }
+#ifdef LEGION_SPY
+    public:
+      UniqueID get_current_uid_by_index(unsigned op_idx) const;
+#endif
     public:
       TaskContext *const ctx;
     protected:
@@ -106,10 +126,15 @@ namespace Legion {
       // aliased but non-interfering region requirements. This should
       // be pretty sparse so we'll make it a map
       std::map<unsigned,LegionVector<AliasChildren>::aligned> aliased_children;
+      TracingState state;
+      // Pointer to a physical trace
+      PhysicalTrace *physical_trace;
+      unsigned last_memoized;
+      std::set<std::pair<Operation*,GenerationID> > frontiers;
 #ifdef LEGION_SPY
     protected:
-      std::vector<UniqueID> current_uids;
-      std::vector<unsigned> num_regions;
+      std::map<std::pair<Operation*,GenerationID>,UniqueID> current_uids;
+      std::map<std::pair<Operation*,GenerationID>,unsigned> num_regions;
 #endif
     };
 
@@ -243,6 +268,19 @@ namespace Legion {
       bool tracing;
     };
 
+    class TraceOp : public FenceOp {
+    public:
+      TraceOp(Runtime *rt);
+      TraceOp(const TraceOp &rhs);
+      virtual ~TraceOp(void);
+    public:
+      TraceOp& operator=(const TraceOp &rhs);
+    public:
+      virtual void execute_dependence_analysis(void);
+    protected:
+      LegionTrace *local_trace;
+    };
+
     /**
      * \class TraceCaptureOp
      * This class represents trace operations which we inject
@@ -250,8 +288,7 @@ namespace Legion {
      * is finished so the DynamicTrace object can compute the
      * dependences data structure.
      */
-    class TraceCaptureOp : public Operation,
-                           public LegionHeapify<TraceCaptureOp> {
+    class TraceCaptureOp : public TraceOp {
     public:
       static const AllocationType alloc_type = TRACE_CAPTURE_OP_ALLOC;
     public:
@@ -268,8 +305,10 @@ namespace Legion {
       virtual const char* get_logging_name(void) const;
       virtual OpKind get_operation_kind(void) const;
       virtual void trigger_dependence_analysis(void);
+      virtual void trigger_mapping(void);
     protected:
-      DynamicTrace *local_trace;
+      DynamicTrace *dynamic_trace;
+      PhysicalTemplate *current_template;
     };
 
     /**
@@ -280,7 +319,7 @@ namespace Legion {
      * then registers dependences on all operations in the trace
      * and becomes the new current fence.
      */
-    class TraceCompleteOp : public FenceOp {
+    class TraceCompleteOp : public TraceOp {
     public:
       static const AllocationType alloc_type = TRACE_COMPLETE_OP_ALLOC;
     public:
@@ -297,11 +336,902 @@ namespace Legion {
       virtual const char* get_logging_name(void) const;
       virtual OpKind get_operation_kind(void) const;
       virtual void trigger_dependence_analysis(void);
+      virtual void trigger_mapping(void);
     protected:
-      LegionTrace *local_trace;
+      PhysicalTemplate *current_template;
+      ApEvent template_completion;
+      bool replayed;
     };
 
-  }; // namespace Internal 
+    /**
+     * \class TraceReplayOp
+     * This class represents trace operations which we inject
+     * into the operation stream to replay a physical trace
+     * if there is one that satisfies its preconditions.
+     */
+    class TraceReplayOp : public TraceOp {
+    public:
+      static const AllocationType alloc_type = TRACE_REPLAY_OP_ALLOC;
+    public:
+      TraceReplayOp(Runtime *rt);
+      TraceReplayOp(const TraceReplayOp &rhs);
+      virtual ~TraceReplayOp(void);
+    public:
+      TraceReplayOp& operator=(const TraceReplayOp &rhs);
+    public:
+      void initialize_replay(TaskContext *ctx, LegionTrace *trace);
+    public:
+      virtual void activate(void);
+      virtual void deactivate(void);
+      virtual const char* get_logging_name(void) const;
+      virtual OpKind get_operation_kind(void) const;
+      virtual void trigger_dependence_analysis(void);
+      virtual void trigger_mapping(void);
+    };
+
+    struct CachedMapping
+    {
+      VariantID               chosen_variant;
+      TaskPriority            task_priority;
+      bool                    postmap_task;
+      std::vector<Processor>  target_procs;
+      std::deque<InstanceSet> physical_instances;
+    };
+
+    typedef
+      LegionMap<std::pair<unsigned, DomainPoint>, CachedMapping>::aligned
+      CachedMappings;
+
+    /**
+     * \class PhysicalTrace
+     * This class is used for memoizing the dynamic physical dependence
+     * analysis for series of operations in a given task's context.
+     */
+    class PhysicalTrace {
+    public:
+      PhysicalTrace(Runtime *runtime);
+      PhysicalTrace(const PhysicalTrace &rhs);
+      ~PhysicalTrace(void);
+    public:
+      PhysicalTrace& operator=(const PhysicalTrace &rhs);
+    public:
+      void clear_cached_template(void) { current_template = NULL; }
+      void check_template_preconditions(void);
+    public:
+      PhysicalTemplate* get_current_template(void) { return current_template; }
+      bool has_any_templates(void) const { return templates.size() > 0; }
+    public:
+      PhysicalTemplate* start_new_template(void);
+      void fix_trace(PhysicalTemplate *tpl);
+    public:
+      void initialize_template(ApEvent fence_completion, bool recurrent);
+    public:
+      Runtime *runtime;
+    private:
+      mutable LocalLock trace_lock;
+      PhysicalTemplate* current_template;
+      std::vector<PhysicalTemplate*> templates;
+    };
+
+    typedef std::pair<unsigned, DomainPoint> TraceLocalId;
+
+    /**
+     * \class PhysicalTemplate
+     * This class represents a recipe to reconstruct a physical task graph.
+     * A template consists of a sequence of instructions, each of which is
+     * interpreted by the template engine. The template also maintains
+     * the interpreter state (operations and events). These are initialized
+     * before the template gets executed.
+     */
+    struct PhysicalTemplate {
+    public:
+      PhysicalTemplate(void);
+      PhysicalTemplate(const PhysicalTemplate &rhs);
+    private:
+      friend class PhysicalTrace;
+      ~PhysicalTemplate(void);
+    public:
+      void initialize(ApEvent fence_completion, bool recurrent);
+      ApEvent get_completion(void) const;
+    private:
+      static bool check_logical_open(RegionTreeNode *node, ContextID ctx,
+                                     FieldMask fields);
+      static bool check_logical_open(RegionTreeNode *node, ContextID ctx,
+                          LegionMap<IndexSpaceNode*, FieldMask>::aligned projs);
+    public:
+      bool check_preconditions(void);
+      bool check_replayable(void);
+      void register_operation(Operation *op);
+      void execute_all(void);
+      void finalize(void);
+      void optimize(void);
+      void dump_template(void);
+    public:
+      inline bool is_recording(void) const { return recording; }
+      inline bool is_replaying(void) const { return !recording; }
+      inline bool is_replayable(void) const { return replayable; }
+    protected:
+      static std::string view_to_string(const InstanceView *view);
+      static std::string view_to_string(const FillView *view);
+      void sanity_check(void);
+    public:
+      void record_mapper_output(SingleTask *task,
+                                const Mapper::MapTaskOutput &output,
+                             const std::deque<InstanceSet> &physical_instances);
+      void get_mapper_output(SingleTask *task,
+                             VariantID &chosen_variant,
+                             TaskPriority &task_priority,
+                             bool &postmap_task,
+                             std::vector<Processor> &target_proc,
+                             std::deque<InstanceSet> &physical_instances) const;
+    public:
+      void record_get_term_event(ApEvent lhs, SingleTask* task);
+      void record_create_ap_user_event(ApUserEvent lhs);
+      void record_trigger_event(ApUserEvent lhs, ApEvent rhs);
+      void record_merge_events(ApEvent &lhs, ApEvent rhs);
+      void record_merge_events(ApEvent &lhs, ApEvent e1, ApEvent e2);
+      void record_merge_events(ApEvent &lhs, ApEvent e1, ApEvent e2,
+                               ApEvent e3);
+      void record_merge_events(ApEvent &lhs, const std::set<ApEvent>& rhs);
+      void record_copy_views(InstanceView *src,
+                             const FieldMask &src_mask,
+                             ContextID src_logical_ctx,
+                             ContextID src_physucal_ctx,
+                             InstanceView *dst,
+                             const FieldMask &dst_mask,
+                             ContextID dst_logical_ctx,
+                             ContextID dst_physical_ctx);
+      void record_issue_copy(Operation* op, ApEvent &lhs,
+                             RegionNode *node,
+                             const std::vector<CopySrcDstField>& src_fields,
+                             const std::vector<CopySrcDstField>& dst_fields,
+                             ApEvent precondition,
+                             PredEvent predicate_guard,
+                             RegionTreeNode *intersect,
+                             ReductionOpID redop,
+                             bool reduction_fold);
+      void record_empty_copy(CompositeView *src,
+                             const FieldMask &src_mask,
+                             MaterializedView *dst,
+                             const FieldMask &dst_mask,
+                             ContextID logical_ctx);
+      void record_set_ready_event(Operation *op,
+                                  unsigned region_idx,
+                                  unsigned inst_idx,
+                                  ApEvent ready_event,
+                                  const RegionRequirement &req,
+                                  InstanceView *view,
+                                  const FieldMask &fields,
+                                  ContextID logical_ctx,
+                                  ContextID physical_ctx);
+      void record_get_copy_term_event(ApEvent lhs, CopyOp *copy);
+      void record_set_copy_sync_event(ApEvent &lhs, CopyOp *copy);
+      void record_trigger_copy_completion(CopyOp *copy, ApEvent rhs);
+      void record_issue_fill(Operation *op, ApEvent &lhs,
+                             RegionNode *node,
+                             const std::vector<CopySrcDstField> &fields,
+                             const void *fill_buffer, size_t fill_size,
+                             ApEvent precondition,
+                             PredEvent predicate_guard,
+#ifdef LEGION_SPY
+                             UniqueID fill_uid,
+#endif
+                             RegionTreeNode *intersect);
+
+      void record_fill_view(FillView *fill_view, const FieldMask &fill_mask);
+      void record_deferred_copy_from_fill_view(FillView *fill_view,
+                                               InstanceView *dst_view,
+                                               const FieldMask &copy_mask,
+                                               ContextID logical_ctx,
+                                               ContextID physical_ctx);
+      void record_empty_copy_from_fill_view(InstanceView *dst_view,
+                                            const FieldMask &copy_mask,
+                                            ContextID logical_ctx,
+                                            ContextID physical_ctx);
+    private:
+      void record_ready_view(const RegionRequirement &req,
+                             InstanceView *view,
+                             const FieldMask &fields,
+                             ContextID logical_ctx,
+                             ContextID physical_ctx);
+      void record_last_user(const PhysicalInstance &inst, unsigned field,
+                            unsigned user, bool read);
+      void find_last_users(const PhysicalInstance &inst, unsigned field,
+                           std::set<unsigned> &users);
+    private:
+      bool recording;
+      bool replayable;
+      mutable LocalLock template_lock;
+      unsigned fence_completion_id;
+    private:
+      std::map<ApEvent, unsigned> event_map;
+      std::vector<Instruction*> instructions;
+      std::map<TraceLocalId, unsigned> task_entries;
+      typedef std::pair<PhysicalInstance, unsigned> InstanceAccess;
+      struct UserInfo {
+        std::set<unsigned> users;
+        bool read;
+      };
+      std::map<InstanceAccess, UserInfo> last_users;
+      std::map<unsigned, unsigned> frontiers;
+    public:
+      ApEvent fence_completion;
+      std::map<TraceLocalId, Operation*> operations;
+      std::vector<ApEvent> events;
+      std::vector<ApUserEvent> user_events;
+      std::vector<TraceLocalId> op_list;
+      CachedMappings                                  cached_mappings;
+      LegionMap<InstanceView*, FieldMask>::aligned    previous_valid_views;
+      LegionMap<std::pair<RegionTreeNode*, ContextID>,
+                FieldMask>::aligned                   previous_open_nodes;
+      std::map<std::pair<RegionTreeNode*, ContextID>,
+               LegionMap<IndexSpaceNode*, FieldMask>::aligned>
+                                                      previous_projections;
+      LegionMap<InstanceView*, FieldMask>::aligned    valid_views;
+      LegionMap<InstanceView*, FieldMask>::aligned    reduction_views;
+      LegionMap<FillView*,     FieldMask>::aligned    fill_views;
+      LegionMap<FillView*,     FieldMask>::aligned    untracked_fill_views;
+      LegionMap<InstanceView*, bool>::aligned         initialized;
+      LegionMap<InstanceView*, ContextID>::aligned    logical_contexts;
+      LegionMap<InstanceView*, ContextID>::aligned    physical_contexts;
+    };
+
+    enum InstructionKind
+    {
+      GET_TERM_EVENT = 0,
+      GET_COPY_TERM_EVENT,
+      CREATE_AP_USER_EVENT,
+      TRIGGER_EVENT,
+      MERGE_EVENT,
+      ISSUE_COPY,
+      ISSUE_FILL,
+      SET_COPY_SYNC_EVENT,
+      ASSIGN_FENCE_COMPLETION,
+      SET_READY_EVENT,
+      TRIGGER_COPY_COMPLETION,
+      LAUNCH_TASK,
+    };
+
+    /**
+     * \class Instruction
+     * This class is an abstract parent class for all template instructions.
+     */
+    struct Instruction {
+      Instruction(PhysicalTemplate& tpl);
+      virtual ~Instruction(void) {};
+      virtual void execute(void) = 0;
+      virtual std::string to_string(void) = 0;
+
+      virtual InstructionKind get_kind(void) = 0;
+      virtual GetTermEvent* as_get_term_event(void) = 0;
+      virtual CreateApUserEvent* as_create_ap_user_event(void) = 0;
+      virtual TriggerEvent* as_trigger_event(void) = 0;
+      virtual MergeEvent* as_merge_event(void) = 0;
+      virtual AssignFenceCompletion* as_assignment_fence_completion(void) = 0;
+      virtual IssueCopy* as_issue_copy(void) = 0;
+      virtual IssueFill* as_issue_fill(void) = 0;
+      virtual SetReadyEvent* as_set_ready_event(void) = 0;
+      virtual GetCopyTermEvent* as_get_copy_term_event(void) = 0;
+      virtual SetCopySyncEvent* as_set_copy_sync_event(void) = 0;
+      virtual TriggerCopyCompletion* as_triger_copy_completion(void) = 0;
+
+      virtual Instruction* clone(PhysicalTemplate& tpl,
+                               const std::map<unsigned, unsigned> &rewrite) = 0;
+
+      virtual TraceLocalId get_owner(const TraceLocalId &key) = 0;
+
+    protected:
+      std::map<TraceLocalId, Operation*> &operations;
+      std::vector<ApEvent> &events;
+      std::vector<ApUserEvent> &user_events;
+    };
+
+    /**
+     * \class GetTermEvent
+     * This instruction has the following semantics:
+     *   events[lhs] = operations[rhs].get_task_completion()
+     */
+    struct GetTermEvent : public Instruction {
+      GetTermEvent(PhysicalTemplate& tpl, unsigned lhs,
+                   const TraceLocalId& rhs);
+      virtual void execute(void);
+      virtual std::string to_string(void);
+
+      virtual InstructionKind get_kind(void)
+        { return GET_TERM_EVENT; }
+      virtual GetTermEvent* as_get_term_event(void)
+        { return this; }
+      virtual CreateApUserEvent* as_create_ap_user_event(void)
+        { return NULL; }
+      virtual TriggerEvent* as_trigger_event(void)
+        { return NULL; }
+      virtual MergeEvent* as_merge_event(void)
+        { return NULL; }
+      virtual AssignFenceCompletion* as_assignment_fence_completion(void)
+        { return NULL; }
+      virtual IssueCopy* as_issue_copy(void)
+        { return NULL; }
+      virtual IssueFill* as_issue_fill(void)
+        { return NULL; }
+      virtual SetReadyEvent* as_set_ready_event(void)
+        { return NULL; }
+      virtual GetCopyTermEvent* as_get_copy_term_event(void)
+        { return NULL; }
+      virtual SetCopySyncEvent* as_set_copy_sync_event(void)
+        { return NULL; }
+      virtual TriggerCopyCompletion* as_triger_copy_completion(void)
+        { return NULL; }
+
+      virtual Instruction* clone(PhysicalTemplate& tpl,
+                                 const std::map<unsigned, unsigned> &rewrite);
+
+      virtual TraceLocalId get_owner(const TraceLocalId &key) { return rhs; }
+
+    private:
+      friend struct PhysicalTemplate;
+      unsigned lhs;
+      TraceLocalId rhs;
+    };
+
+    /**
+     * \class CreateApUserEvent
+     * This instruction has the following semantics:
+     *   events[lhs] = Runtime::create_ap_user_event()
+     */
+    struct CreateApUserEvent : public Instruction {
+      CreateApUserEvent(PhysicalTemplate& tpl, unsigned lhs);
+      virtual void execute(void);
+      virtual std::string to_string(void);
+
+      virtual InstructionKind get_kind(void)
+        { return CREATE_AP_USER_EVENT; }
+      virtual GetTermEvent* as_get_term_event(void)
+        { return NULL; }
+      virtual CreateApUserEvent* as_create_ap_user_event(void)
+        { return this; }
+      virtual TriggerEvent* as_trigger_event(void)
+        { return NULL; }
+      virtual MergeEvent* as_merge_event(void)
+        { return NULL; }
+      virtual AssignFenceCompletion* as_assignment_fence_completion(void)
+        { return NULL; }
+      virtual IssueCopy* as_issue_copy(void)
+        { return NULL; }
+      virtual IssueFill* as_issue_fill(void)
+        { return NULL; }
+      virtual SetReadyEvent* as_set_ready_event(void)
+        { return NULL; }
+      virtual GetCopyTermEvent* as_get_copy_term_event(void)
+        { return NULL; }
+      virtual SetCopySyncEvent* as_set_copy_sync_event(void)
+        { return NULL; }
+      virtual TriggerCopyCompletion* as_triger_copy_completion(void)
+        { return NULL; }
+
+      virtual Instruction* clone(PhysicalTemplate& tpl,
+                                 const std::map<unsigned, unsigned> &rewrite);
+
+      virtual TraceLocalId get_owner(const TraceLocalId &key) { return key; }
+
+    private:
+      friend struct PhysicalTemplate;
+      unsigned lhs;
+    };
+
+    /**
+     * \class TriggerEvent
+     * This instruction has the following semantics:
+     *   Runtime::trigger_event(events[lhs], events[rhs])
+     */
+    struct TriggerEvent : public Instruction {
+      TriggerEvent(PhysicalTemplate& tpl, unsigned lhs, unsigned rhs);
+      virtual void execute(void);
+      virtual std::string to_string(void);
+
+      virtual InstructionKind get_kind(void)
+        { return TRIGGER_EVENT; }
+      virtual GetTermEvent* as_get_term_event(void)
+        { return NULL; }
+      virtual CreateApUserEvent* as_create_ap_user_event(void)
+        { return NULL; }
+      virtual TriggerEvent* as_trigger_event(void)
+        { return this; }
+      virtual MergeEvent* as_merge_event(void)
+        { return NULL; }
+      virtual AssignFenceCompletion* as_assignment_fence_completion(void)
+        { return NULL; }
+      virtual IssueCopy* as_issue_copy(void)
+        { return NULL; }
+      virtual IssueFill* as_issue_fill(void)
+        { return NULL; }
+      virtual SetReadyEvent* as_set_ready_event(void)
+        { return NULL; }
+      virtual GetCopyTermEvent* as_get_copy_term_event(void)
+        { return NULL; }
+      virtual SetCopySyncEvent* as_set_copy_sync_event(void)
+        { return NULL; }
+      virtual TriggerCopyCompletion* as_triger_copy_completion(void)
+        { return NULL; }
+
+      virtual Instruction* clone(PhysicalTemplate& tpl,
+                                 const std::map<unsigned, unsigned> &rewrite);
+
+      virtual TraceLocalId get_owner(const TraceLocalId &key) { return key; }
+
+    private:
+      friend struct PhysicalTemplate;
+      unsigned lhs;
+      unsigned rhs;
+    };
+
+    /**
+     * \class MergeEvent
+     * This instruction has the following semantics:
+     *   events[lhs] = Runtime::merge_events(events[rhs])
+     */
+    struct MergeEvent : public Instruction {
+      MergeEvent(PhysicalTemplate& tpl, unsigned lhs,
+                 const std::set<unsigned>& rhs);
+      virtual void execute(void);
+      virtual std::string to_string(void);
+
+      virtual InstructionKind get_kind(void)
+        { return MERGE_EVENT; }
+      virtual GetTermEvent* as_get_term_event(void)
+        { return NULL; }
+      virtual CreateApUserEvent* as_create_ap_user_event(void)
+        { return NULL; }
+      virtual TriggerEvent* as_trigger_event(void)
+        { return NULL; }
+      virtual MergeEvent* as_merge_event(void)
+        { return this; }
+      virtual AssignFenceCompletion* as_assignment_fence_completion(void)
+        { return NULL; }
+      virtual IssueCopy* as_issue_copy(void)
+        { return NULL; }
+      virtual IssueFill* as_issue_fill(void)
+        { return NULL; }
+      virtual SetReadyEvent* as_set_ready_event(void)
+        { return NULL; }
+      virtual GetCopyTermEvent* as_get_copy_term_event(void)
+        { return NULL; }
+      virtual SetCopySyncEvent* as_set_copy_sync_event(void)
+        { return NULL; }
+      virtual TriggerCopyCompletion* as_triger_copy_completion(void)
+        { return NULL; }
+
+      virtual Instruction* clone(PhysicalTemplate& tpl,
+                                 const std::map<unsigned, unsigned> &rewrite);
+
+      virtual TraceLocalId get_owner(const TraceLocalId &key) { return key; }
+
+    private:
+      friend struct PhysicalTemplate;
+      unsigned lhs;
+      std::set<unsigned> rhs;
+    };
+
+    /**
+     * \class AssignFenceCompletion
+     * This instruction has the following semantics:
+     *   events[lhs] = fence_completion
+     */
+    struct AssignFenceCompletion : public Instruction {
+      AssignFenceCompletion(PhysicalTemplate& tpl, unsigned lhs);
+      virtual void execute(void);
+      virtual std::string to_string(void);
+
+      virtual InstructionKind get_kind(void)
+        { return ASSIGN_FENCE_COMPLETION; }
+      virtual GetTermEvent* as_get_term_event(void)
+        { return NULL; }
+      virtual CreateApUserEvent* as_create_ap_user_event(void)
+        { return NULL; }
+      virtual TriggerEvent* as_trigger_event(void)
+        { return NULL; }
+      virtual MergeEvent* as_merge_event(void)
+        { return NULL; }
+      virtual AssignFenceCompletion* as_assignment_fence_completion(void)
+        { return this; }
+      virtual IssueCopy* as_issue_copy(void)
+        { return NULL; }
+      virtual IssueFill* as_issue_fill(void)
+        { return NULL; }
+      virtual SetReadyEvent* as_set_ready_event(void)
+        { return NULL; }
+      virtual GetCopyTermEvent* as_get_copy_term_event(void)
+        { return NULL; }
+      virtual SetCopySyncEvent* as_set_copy_sync_event(void)
+        { return NULL; }
+      virtual TriggerCopyCompletion* as_triger_copy_completion(void)
+        { return NULL; }
+
+      virtual Instruction* clone(PhysicalTemplate& tpl,
+                                 const std::map<unsigned, unsigned> &rewrite);
+
+      virtual TraceLocalId get_owner(const TraceLocalId &key) { return key; }
+
+    private:
+      friend struct PhysicalTemplate;
+      ApEvent &fence_completion;
+      unsigned lhs;
+    };
+
+    /**
+     * \class IssueFill
+     * This instruction has the following semantics:
+     *
+     *   events[lhs] = domain.fill(fields, requests,
+     *                             fill_buffer, fill_size,
+     *                             events[precondition_idx]);
+     */
+    struct IssueFill : public Instruction {
+      IssueFill(PhysicalTemplate& tpl,
+                unsigned lhs, RegionNode *node,
+                const TraceLocalId &op_key,
+                const std::vector<CopySrcDstField> &fields,
+                const void *fill_buffer, size_t fill_size,
+                unsigned precondition_idx,
+                PredEvent predicate_guard,
+#ifdef LEGION_SPY
+                UniqueID fill_uid,
+#endif
+                RegionTreeNode *intersect);
+      virtual ~IssueFill(void);
+      virtual void execute(void);
+      virtual std::string to_string(void);
+
+      virtual InstructionKind get_kind(void)
+        { return ISSUE_FILL; }
+      virtual GetTermEvent* as_get_term_event(void)
+        { return NULL; }
+      virtual CreateApUserEvent* as_create_ap_user_event(void)
+        { return NULL; }
+      virtual TriggerEvent* as_trigger_event(void)
+        { return NULL; }
+      virtual MergeEvent* as_merge_event(void)
+        { return NULL; }
+      virtual AssignFenceCompletion* as_assignment_fence_completion(void)
+        { return NULL; }
+      virtual IssueCopy* as_issue_copy(void)
+        { return NULL; }
+      virtual IssueFill* as_issue_fill(void)
+        { return this; }
+      virtual SetReadyEvent* as_set_ready_event(void)
+        { return NULL; }
+      virtual GetCopyTermEvent* as_get_copy_term_event(void)
+        { return NULL; }
+      virtual SetCopySyncEvent* as_set_copy_sync_event(void)
+        { return NULL; }
+      virtual TriggerCopyCompletion* as_triger_copy_completion(void)
+        { return NULL; }
+
+      virtual Instruction* clone(PhysicalTemplate& tpl,
+                                 const std::map<unsigned, unsigned> &rewrite);
+
+      virtual TraceLocalId get_owner(const TraceLocalId &key) { return op_key; }
+
+    private:
+      friend struct PhysicalTemplate;
+      unsigned lhs;
+      RegionNode *node;
+      TraceLocalId op_key;
+      std::vector<CopySrcDstField> fields;
+      void *fill_buffer;
+      size_t fill_size;
+      unsigned precondition_idx;
+      PredEvent predicate_guard;
+#ifdef LEGION_SPY
+      UniqueID fill_uid;
+#endif
+      RegionTreeNode *intersect;
+    };
+
+    /**
+     * \class IssueCopy
+     * This instruction has the following semantics:
+     *   events[lhs] = node->issue_copy(operations[op_key],
+     *                                  src_fields, dst_fields,
+     *                                  events[precondition_idx],
+     *                                  predicate_guard, intersect,
+     *                                  redop, reduction_fold);
+     */
+    struct IssueCopy : public Instruction {
+      IssueCopy(PhysicalTemplate &tpl,
+                unsigned lhs, RegionNode *node,
+                const TraceLocalId &op_key,
+                const std::vector<CopySrcDstField>& src_fields,
+                const std::vector<CopySrcDstField>& dst_fields,
+                unsigned precondition_idx, PredEvent predicate_guard,
+                RegionTreeNode *intersect,
+                ReductionOpID redop, bool reduction_fold);
+      virtual void execute(void);
+      virtual std::string to_string(void);
+
+      virtual InstructionKind get_kind(void)
+        { return ISSUE_COPY; }
+      virtual GetTermEvent* as_get_term_event(void)
+        { return NULL; }
+      virtual CreateApUserEvent* as_create_ap_user_event(void)
+        { return NULL; }
+      virtual TriggerEvent* as_trigger_event(void)
+        { return NULL; }
+      virtual MergeEvent* as_merge_event(void)
+        { return NULL; }
+      virtual AssignFenceCompletion* as_assignment_fence_completion(void)
+        { return NULL; }
+      virtual IssueCopy* as_issue_copy(void)
+        { return this; }
+      virtual IssueFill* as_issue_fill(void)
+        { return NULL; }
+      virtual SetReadyEvent* as_set_ready_event(void)
+        { return NULL; }
+      virtual GetCopyTermEvent* as_get_copy_term_event(void)
+        { return NULL; }
+      virtual SetCopySyncEvent* as_set_copy_sync_event(void)
+        { return NULL; }
+      virtual TriggerCopyCompletion* as_triger_copy_completion(void)
+        { return NULL; }
+
+      virtual Instruction* clone(PhysicalTemplate& tpl,
+                                 const std::map<unsigned, unsigned> &rewrite);
+
+      virtual TraceLocalId get_owner(const TraceLocalId &key) { return op_key; }
+
+    private:
+      friend struct PhysicalTemplate;
+      unsigned lhs;
+      RegionNode *node;
+      TraceLocalId op_key;
+      std::vector<CopySrcDstField> src_fields;
+      std::vector<CopySrcDstField> dst_fields;
+      unsigned precondition_idx;
+      PredEvent predicate_guard;
+      RegionTreeNode *intersect;
+      ReductionOpID redop;
+      bool reduction_fold;
+    };
+
+    /**
+     * \class SetReadyEvent
+     * This instruction has the following semantics:
+     *   operations[op_key]->get_physical_instances()[region_idx][inst_idx]
+     *                      .set_ready_event(events[ready_event_idx])
+     */
+    struct SetReadyEvent : public Instruction,
+                           public LegionHeapify<SetReadyEvent> {
+      SetReadyEvent(PhysicalTemplate& tpl,
+                    const TraceLocalId& op_key,
+                    unsigned region_idx,
+                    unsigned inst_idx,
+                    unsigned ready_event_idx,
+                    InstanceView *view,
+                    const FieldMask &fields);
+      virtual void execute(void);
+      virtual std::string to_string(void);
+
+      virtual InstructionKind get_kind(void)
+        { return SET_READY_EVENT; }
+      virtual GetTermEvent* as_get_term_event(void)
+        { return NULL; }
+      virtual CreateApUserEvent* as_create_ap_user_event(void)
+        { return NULL; }
+      virtual TriggerEvent* as_trigger_event(void)
+        { return NULL; }
+      virtual MergeEvent* as_merge_event(void)
+        { return NULL; }
+      virtual AssignFenceCompletion* as_assignment_fence_completion(void)
+        { return NULL; }
+      virtual IssueCopy* as_issue_copy(void)
+        { return NULL; }
+      virtual IssueFill* as_issue_fill(void)
+        { return NULL; }
+      virtual SetReadyEvent* as_set_ready_event(void)
+        { return this; }
+      virtual GetCopyTermEvent* as_get_copy_term_event(void)
+        { return NULL; }
+      virtual SetCopySyncEvent* as_set_copy_sync_event(void)
+        { return NULL; }
+      virtual TriggerCopyCompletion* as_triger_copy_completion(void)
+        { return NULL; }
+
+      virtual Instruction* clone(PhysicalTemplate& tpl,
+                                 const std::map<unsigned, unsigned> &rewrite);
+
+      virtual TraceLocalId get_owner(const TraceLocalId &key) { return op_key; }
+
+    private:
+      friend struct PhysicalTemplate;
+      TraceLocalId op_key;
+      unsigned region_idx;
+      unsigned inst_idx;
+      unsigned ready_event_idx;
+      InstanceView* view;
+      FieldMask fields;
+    };
+
+    /**
+     * \class GetCopyTermEvent
+     * This instruction has the following semantics:
+     *   events[lhs] = operations[rhs].get_completion_event()
+     */
+    struct GetCopyTermEvent : public Instruction {
+      GetCopyTermEvent(PhysicalTemplate& tpl, unsigned lhs,
+                       const TraceLocalId& rhs);
+      virtual void execute(void);
+      virtual std::string to_string(void);
+
+      virtual InstructionKind get_kind(void)
+        { return GET_COPY_TERM_EVENT; }
+      virtual GetTermEvent* as_get_term_event(void)
+        { return NULL; }
+      virtual CreateApUserEvent* as_create_ap_user_event(void)
+        { return NULL; }
+      virtual TriggerEvent* as_trigger_event(void)
+        { return NULL; }
+      virtual MergeEvent* as_merge_event(void)
+        { return NULL; }
+      virtual AssignFenceCompletion* as_assignment_fence_completion(void)
+        { return NULL; }
+      virtual IssueCopy* as_issue_copy(void)
+        { return NULL; }
+      virtual IssueFill* as_issue_fill(void)
+        { return NULL; }
+      virtual SetReadyEvent* as_set_ready_event(void)
+        { return NULL; }
+      virtual GetCopyTermEvent* as_get_copy_term_event(void)
+        { return this; }
+      virtual SetCopySyncEvent* as_set_copy_sync_event(void)
+        { return NULL; }
+      virtual TriggerCopyCompletion* as_triger_copy_completion(void)
+        { return NULL; }
+
+      virtual Instruction* clone(PhysicalTemplate& tpl,
+                                 const std::map<unsigned, unsigned> &rewrite);
+
+      virtual TraceLocalId get_owner(const TraceLocalId &key) { return rhs; }
+
+    private:
+      friend struct PhysicalTemplate;
+      unsigned lhs;
+      TraceLocalId rhs;
+    };
+
+    /**
+     * \class SetCopySyncEvent
+     * This instruction has the following semantics:
+     *   events[lhs] = operations[rhs].compute_sync_precondition()
+     */
+    struct SetCopySyncEvent : public Instruction {
+      SetCopySyncEvent(PhysicalTemplate& tpl, unsigned lhs,
+                       const TraceLocalId& rhs);
+      virtual void execute(void);
+      virtual std::string to_string(void);
+
+      virtual InstructionKind get_kind(void)
+        { return SET_COPY_SYNC_EVENT; }
+      virtual GetTermEvent* as_get_term_event(void)
+        { return NULL; }
+      virtual CreateApUserEvent* as_create_ap_user_event(void)
+        { return NULL; }
+      virtual TriggerEvent* as_trigger_event(void)
+        { return NULL; }
+      virtual MergeEvent* as_merge_event(void)
+        { return NULL; }
+      virtual AssignFenceCompletion* as_assignment_fence_completion(void)
+        { return NULL; }
+      virtual IssueCopy* as_issue_copy(void)
+        { return NULL; }
+      virtual IssueFill* as_issue_fill(void)
+        { return NULL; }
+      virtual SetReadyEvent* as_set_ready_event(void)
+        { return NULL; }
+      virtual GetCopyTermEvent* as_get_copy_term_event(void)
+        { return NULL; }
+      virtual SetCopySyncEvent* as_set_copy_sync_event(void)
+        { return this; }
+      virtual TriggerCopyCompletion* as_triger_copy_completion(void)
+        { return NULL; }
+
+      virtual Instruction* clone(PhysicalTemplate& tpl,
+                                 const std::map<unsigned, unsigned> &rewrite);
+
+      virtual TraceLocalId get_owner(const TraceLocalId &key) { return rhs; }
+
+    private:
+      friend struct PhysicalTemplate;
+      unsigned lhs;
+      TraceLocalId rhs;
+    };
+
+    /**
+     * \class TriggerCopyCompletion
+     * This instruction has the following semantics:
+     *   operations[lhs]->complete_copy_execution(events[rhs])
+     */
+    struct TriggerCopyCompletion : public Instruction {
+      TriggerCopyCompletion(PhysicalTemplate& tpl, const TraceLocalId& lhs,
+                            unsigned rhs);
+      virtual void execute(void);
+      virtual std::string to_string(void);
+
+      virtual InstructionKind get_kind(void)
+        { return TRIGGER_COPY_COMPLETION; }
+      virtual GetTermEvent* as_get_term_event(void)
+        { return NULL; }
+      virtual CreateApUserEvent* as_create_ap_user_event(void)
+        { return NULL; }
+      virtual TriggerEvent* as_trigger_event(void)
+        { return NULL; }
+      virtual MergeEvent* as_merge_event(void)
+        { return NULL; }
+      virtual AssignFenceCompletion* as_assignment_fence_completion(void)
+        { return NULL; }
+      virtual IssueCopy* as_issue_copy(void)
+        { return NULL; }
+      virtual IssueFill* as_issue_fill(void)
+        { return NULL; }
+      virtual SetReadyEvent* as_set_ready_event(void)
+        { return NULL; }
+      virtual GetCopyTermEvent* as_get_copy_term_event(void)
+        { return NULL; }
+      virtual SetCopySyncEvent* as_set_copy_sync_event(void)
+        { return NULL; }
+      virtual TriggerCopyCompletion* as_triger_copy_completion(void)
+        { return this; }
+
+      virtual Instruction* clone(PhysicalTemplate& tpl,
+                                 const std::map<unsigned, unsigned> &rewrite);
+
+      virtual TraceLocalId get_owner(const TraceLocalId &key) { return lhs; }
+
+    private:
+      friend struct PhysicalTemplate;
+      TraceLocalId lhs;
+      unsigned rhs;
+    };
+
+    struct LaunchTask : public Instruction {
+      LaunchTask(PhysicalTemplate& tpl, const TraceLocalId& lhs);
+      virtual void execute(void);
+      virtual std::string to_string(void);
+
+      virtual InstructionKind get_kind(void)
+        { return LAUNCH_TASK; }
+      virtual GetTermEvent* as_get_term_event(void)
+        { return NULL; }
+      virtual CreateApUserEvent* as_create_ap_user_event(void)
+        { return NULL; }
+      virtual TriggerEvent* as_trigger_event(void)
+        { return NULL; }
+      virtual MergeEvent* as_merge_event(void)
+        { return NULL; }
+      virtual AssignFenceCompletion* as_assignment_fence_completion(void)
+        { return NULL; }
+      virtual IssueCopy* as_issue_copy(void)
+        { return NULL; }
+      virtual IssueFill* as_issue_fill(void)
+        { return NULL; }
+      virtual SetReadyEvent* as_set_ready_event(void)
+        { return NULL; }
+      virtual GetCopyTermEvent* as_get_copy_term_event(void)
+        { return NULL; }
+      virtual SetCopySyncEvent* as_set_copy_sync_event(void)
+        { return NULL; }
+      virtual TriggerCopyCompletion* as_triger_copy_completion(void)
+        { return NULL; }
+
+      virtual Instruction* clone(PhysicalTemplate& tpl,
+                                 const std::map<unsigned, unsigned> &rewrite);
+
+      virtual TraceLocalId get_owner(const TraceLocalId &key) { return op_key; }
+
+    private:
+      friend struct PhysicalTemplate;
+      TraceLocalId op_key;
+    };
+
+  }; // namespace Internal
 }; // namespace Legion
 
 #endif // __LEGION_TRACE__

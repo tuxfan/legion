@@ -223,6 +223,7 @@ namespace Legion {
       output.inline_task = false;
       output.stealable = false;
       output.map_locally = true;
+      output.memoize = false;
     }
 
     //--------------------------------------------------------------------------
@@ -740,6 +741,16 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       // TODO: update this when we have dataflow operations
+    }
+
+    //--------------------------------------------------------------------------
+    void ReplayMapper::memoize_operation(const MapperContext  ctx,
+                                         const MemoizeInput&  input,
+                                               MemoizeOutput& output)
+    //--------------------------------------------------------------------------
+    {
+      // TODO: update this when we record memoization decision
+      output.memoize = false;
     }
 
     //--------------------------------------------------------------------------

@@ -310,12 +310,15 @@ namespace Legion {
     public:
       virtual void perform_fence_analysis(FenceOp *op) = 0;
       virtual void update_current_fence(FenceOp *op) = 0;
+      virtual FenceOp* get_current_fence() = 0;
     public:
       virtual void begin_trace(TraceID tid) = 0;
       virtual void end_trace(TraceID tid) = 0;
       virtual void begin_static_trace(
                                      const std::set<RegionTreeID> *managed) = 0;
       virtual void end_static_trace(void) = 0;
+      virtual void record_previous_trace(LegionTrace *trace) = 0;
+      virtual void invalidate_trace_cache(LegionTrace *trace) = 0;
     public:
       virtual void issue_frame(FrameOp *frame, ApEvent frame_termination) = 0;
       virtual void perform_frame_issue(FrameOp *frame, 
@@ -866,11 +869,14 @@ namespace Legion {
     public:
       virtual void perform_fence_analysis(FenceOp *op);
       virtual void update_current_fence(FenceOp *op);
+      virtual FenceOp* get_current_fence();
     public:
       virtual void begin_trace(TraceID tid);
       virtual void end_trace(TraceID tid);
       virtual void begin_static_trace(const std::set<RegionTreeID> *managed);
       virtual void end_static_trace(void);
+      virtual void record_previous_trace(LegionTrace *trace);
+      virtual void invalidate_trace_cache(LegionTrace *trace);
     public:
       virtual void issue_frame(FrameOp *frame, ApEvent frame_termination);
       virtual void perform_frame_issue(FrameOp *frame, 
@@ -996,6 +1002,7 @@ namespace Legion {
       // Traces for this task's execution
       LegionMap<TraceID,DynamicTrace*,TASK_TRACES_ALLOC>::tracked traces;
       LegionTrace *current_trace;
+      LegionTrace *previous_trace;
       // Event for waiting when the number of mapping+executing
       // child operations has grown too large.
       mutable LocalLock window_lock;
@@ -1111,6 +1118,7 @@ namespace Legion {
       virtual void set_context_index(unsigned index);
       virtual int get_depth(void) const;
       virtual const char* get_task_name(void) const;
+      virtual bool has_trace(void) const;
     public:
       RemoteContext *const owner;
       unsigned context_index;
@@ -1446,11 +1454,14 @@ namespace Legion {
     public:
       virtual void perform_fence_analysis(FenceOp *op);
       virtual void update_current_fence(FenceOp *op);
+      virtual FenceOp* get_current_fence();
     public:
       virtual void begin_trace(TraceID tid);
       virtual void end_trace(TraceID tid);
       virtual void begin_static_trace(const std::set<RegionTreeID> *managed);
       virtual void end_static_trace(void);
+      virtual void record_previous_trace(LegionTrace *trace);
+      virtual void invalidate_trace_cache(LegionTrace *trace);
     public:
       virtual void issue_frame(FrameOp *frame, ApEvent frame_termination);
       virtual void perform_frame_issue(FrameOp *frame, 
@@ -1758,11 +1769,14 @@ namespace Legion {
     public:
       virtual void perform_fence_analysis(FenceOp *op);
       virtual void update_current_fence(FenceOp *op);
+      virtual FenceOp* get_current_fence();
     public:
       virtual void begin_trace(TraceID tid);
       virtual void end_trace(TraceID tid);
       virtual void begin_static_trace(const std::set<RegionTreeID> *managed);
       virtual void end_static_trace(void);
+      virtual void record_previous_trace(LegionTrace *trace);
+      virtual void invalidate_trace_cache(LegionTrace *trace);
     public:
       virtual void issue_frame(FrameOp *frame, ApEvent frame_termination);
       virtual void perform_frame_issue(FrameOp *frame, 
