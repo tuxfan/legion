@@ -1,0 +1,80 @@
+%sri
+% This is LLNCS.DEM the demonstration file of
+% the LaTeX macro package from Springer-Verlag
+% for Lecture Notes in Computer Science,
+% version 2.4 for LaTeX2e as of 16. April 2010
+%
+\documentclass{llncs}
+%
+\usepackage{makeidx}  % allows for indexgeneration
+%
+\begin{document}
+
+\mainmatter              % start of the contributions
+%
+\title{As Much As You Want: Resilience in Legion}
+%
+\titlerunning{Resilience in Legion}
+ 
+\author{Karthik Murthy \and
+Mike Bauer \and 
+Sean Treichler \and
+Wonchan Lee \and
+Elliott Slaughter \and
+Alex Aiken
+}
+%
+\authorrunning{Karthik Murthy et al.} 
+\institute{Stanford University, USA,\\
+\email{kmurthy@stanford.edu}}
+
+\maketitle              % typeset the title of the contribution
+
+\begin{abstract}
+\dots
+\keywords{resilience}
+\end{abstract}
+%
+\section{Introduction}
+\section{Resilience Policy}
+\section{Interaction of Resilience Policy with Legion Features}
+\section{Implementation}
+\section{Experiments}
+\subsection{local recover vs global recovery}
+\subsection{compute/comm vs no-failure/single failure/multi-failure}
+\subsection{S3D, Pennant, Stencil, Circuit}
+\section{Resilience Application: Speculation}
+\section{Mapper-guided Policies}
+\subsection{UT Austin}
+\section{Related Work}
+\section{Conclusion}
+
+%
+% ---- Bibliography ----
+%
+
+\begin{thebibliography}{5}
+%
+\bibitem {clar:eke}
+Clarke, F., Ekeland, I.:
+Nonlinear oscillations and
+boundary-value problems for Hamiltonian systems.
+Arch. Rat. Mech. Anal. 78, 315--333 (1982)
+
+\bibitem {rab}
+Rabinowitz, P.:
+On subharmonic solutions of a Hamiltonian system.
+Comm. Pure Appl. Math. 33, 609--633 (1980)
+
+\end{thebibliography}
+
+\clearpage
+%\addtocmark[2]{Author Index} % additional numbered TOC entry
+%\renewcommand{\indexname}{Author Index}
+%\printindex
+%\clearpage
+%\addtocmark[2]{Subject Index} % additional numbered TOC entry
+%\markboth{Subject Index}{Subject Index}
+%\renewcommand{\indexname}{Subject Index}
+%\input{subjidx.ind}
+\end{document}
