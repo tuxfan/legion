@@ -2889,6 +2889,41 @@ namespace Legion {
     }
 
     /////////////////////////////////////////////////////////////
+    // AffineStructuredProjectionStep
+    /////////////////////////////////////////////////////////////
+
+    //--------------------------------------------------------------------------
+    AffineStructuredProjectionStep::AffineStructuredProjectionStep(
+        DomainTransform t)
+      : transform(t)
+    //--------------------------------------------------------------------------
+    {
+      offset.dim = transform.m;
+      divisor.dim = transform.m;
+      mod_divisor.dim = transform.m;
+      for (int i = 0; i < transform.m; ++i)
+      {
+        offset[i] = 0;
+        divisor[i] = 1;
+        mod_divisor[i] = 0;
+      }
+    }
+
+    AffineStructuredProjectionStep::AffineStructuredProjectionStep(
+        DomainTransform t, DomainPoint o)
+      : transform(t), offset(o)
+    //--------------------------------------------------------------------------
+    {
+      divisor.dim = transform.m;
+      mod_divisor.dim = transform.m;
+      for (int i = 0; i < transform.m; ++i)
+      {
+        divisor[i] = 1;
+        mod_divisor[i] = 0;
+      }
+    }
+
+    /////////////////////////////////////////////////////////////
     // StructuredProjectionFunctor 
     /////////////////////////////////////////////////////////////
 

@@ -2946,6 +2946,34 @@ namespace Legion {
 
 
     /**
+     * \class AffineStructuredProjectionStep
+     * A class for describing a step of an affine structured projection
+     * function, with a divisor and mod.
+     */
+    class AffineStructuredProjectionStep {
+    public:
+      AffineStructuredProjectionStep(DomainTransform t);
+      AffineStructuredProjectionStep(DomainTransform t, DomainPoint o);
+    public:
+      DomainTransform transform;
+      DomainPoint offset;
+      DomainPoint divisor;
+      DomainPoint mod_divisor;
+    };
+
+    /**
+     * \class AffineStructuredProjection
+     * A class for describing a structured projection function,
+     * simply contains a list of Affine Structured Projection Steps.
+     */
+    class AffineStructuredProjection {
+    public:
+      AffineStructuredProjection(void) {}
+    public:
+      std::vector<AffineStructuredProjectionStep> steps;
+    };
+
+    /**
      * \class StructuredProjectionStep
      * A class for describing a step of a structured projection function.
      */
@@ -3054,6 +3082,10 @@ namespace Legion {
        * Structured projection function to be implemented
        */
       virtual StructuredProjection project_structured(Context ctx) = 0;
+      /**
+       * Structured projection function to be implemented
+       */
+      virtual AffineStructuredProjection affine_project_structured(Context ctx) = 0;
 
       virtual bool is_structured() { return true; }
     };
