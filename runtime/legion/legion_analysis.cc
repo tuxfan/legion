@@ -2110,6 +2110,65 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    ProjectionExpression* ProjectionExpression::from_affine_step(
+        AffineStructuredProjectionStep &step, int index)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      assert(index < step.transform.m);
+#endif
+      // make sure that we start from the first nonzero index
+      int nz_idx = 0;
+      DomainPoint coefficients = step.transform.get_row(index);
+      for (nz_idx = 0; nz_idx < coefficients.dim; nz_idx++)
+      {
+        if (coefficients[nz_idx] != 0)
+        {
+          break;
+        }
+      }
+      if (nz_idx == coefficients.dim)
+      {
+        return new ProjectionExpression(CONST, setp.offset[index]);
+      }
+
+      ProjectionExpression *cur_exp = new ProjectionExpression(CONST,
+          coefficients[nz_idx]);
+      cur_exp = new ProjectionExpression(MUL, cur_exp,
+          new ProjectionExpression(VAR, nz_idx));
+      for (int coeff_idx = nz_idx+1; coeff_idx < coefficients.dim; coeff_idx++)
+      {
+        if (coefficients[coeff_idx] != 0)
+        {
+          cur_exp = new ProjectionExpression(ADD,
+              cur_exp,
+              new ProjectionExpression(MUL,
+                  new ProjectionExpression(CONST, coefficients[coeff_idx]),
+                  new ProjectionExpression(VAR, coeff_idx)));
+        }
+      }
+      if (step.offset[index] != 0)
+      {
+        cur_exp = new ProjectionExpression(ADD,
+            cur_exp,
+            new ProjectionExpression(CONST, step.offset[index]));
+      }
+      if (step.divisor[index] != 1)
+      {
+        cur_exp = new ProjectionExpression(DIV,
+            cur_exp,
+            new ProjectionExpression(CONST, step.divisor[index]));
+      }
+      if (step.mod_divisor[index] != 0)
+      {
+        cur_exp = new ProjectionExpression(MOD,
+            cur_exp,
+            new ProjectionExpression(CONST, step.mod_divisor[index]));
+      }
+      return cur_exp;
+    }
+
+    //--------------------------------------------------------------------------
     long int ProjectionExpression::evaluate(DomainPoint &point) const
     //--------------------------------------------------------------------------
     {

@@ -299,6 +299,13 @@ namespace Legion {
       LogicalRegion evaluate_projection(StructuredProjection proj,
           const DomainPoint &point,
           RegionTreeNode *upper_bound);
+      LogicalRegion evaluate_projection(AffineStructuredProjection proj,
+          const DomainPoint &point,
+          RegionTreeNode *upper_bound);
+      ProjectionAnalysisConstraint* compute_proj_constraint(
+          AffineStructuredProjection proj1,
+          AffineStructuredProjection proj2,
+          LogicalRegion sample_bottom_region);
       ProjectionAnalysisConstraint* compute_proj_constraint(
           StructuredProjection proj1,
           StructuredProjection proj2,
@@ -309,6 +316,10 @@ namespace Legion {
           ConstraintType comparison_type,
           StructuredProjectionStep step1,
           StructuredProjectionStep step2);
+      ProjectionAnalysisConstraint* add_constraints(
+          ConstraintType comparison_type,
+          AffineStructuredProjectionStep step1,
+          AffineStructuredProjectionStep step2);
           
     public:
       void perform_versioning_analysis(Operation *op, unsigned idx,

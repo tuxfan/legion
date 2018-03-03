@@ -1419,8 +1419,98 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    LogicalRegion RegionTreeForest::evaluate_projection(
+        AffineStructuredProjection proj, const DomainPoint &point,
+        RegionTreeNode *upper_bound)
+    //--------------------------------------------------------------------------
+    {
+      RegionTreeNode *cur_node = upper_bound;
+      for (unsigned idx = 0; idx < proj.steps.size(); idx++)
+      {
+        DomainPoint evaled = proj.steps[idx].evaluate(point);
+        LegionColor color;
+
+        if (cur_node->is_region())
+        {
+          color = evaled.get_color();
+        }
+        else
+        {
+          IndexSpaceNode *color_space =
+              cur_node->as_partition_node()->row_source->color_space;
+
+          switch(evaled.get_dim())
+          {
+            case 1:
+              {
+                Point<1,coord_t> point(evaled);
+                color = color_space->linearize_color(&point, TYPE_TAG_1D);
+                break;
+              }
+            case 2:
+              {
+                Point<2,coord_t> point(evaled);
+                color = color_space->linearize_color(&point, TYPE_TAG_2D);
+                break;
+              }
+            case 3:
+              {
+                Point<3,coord_t> point(evaled);
+                color = color_space->linearize_color(&point, TYPE_TAG_3D);
+                break;
+              }
+            default:
+              assert(false);
+          }
+        }
+        cur_node = cur_node->get_tree_child(color);
+      }
+      return cur_node->as_region_node()->handle;
+    }
+
+    //--------------------------------------------------------------------------
     ProjectionAnalysisConstraint* RegionTreeForest::compute_proj_constraint(
         StructuredProjection proj1, StructuredProjection proj2,
+        LogicalRegion sample_bottom_region)
+    //--------------------------------------------------------------------------
+    {
+      RegionTreeNode *cur_node = get_node(sample_bottom_region);
+      cur_node = cur_node->get_parent();
+      ProjectionAnalysisConstraint *cur_constraint =
+        new ProjectionAnalysisConstraint(TRUE);
+      ProjectionAnalysisConstraint *new_constraint;
+      for (int idx = (int) proj1.steps.size() - 1; idx >= 0; idx--)
+      {
+        if (cur_node->is_region()) {
+          new_constraint = add_constraints(NEQ, proj1.steps[idx],
+              proj2.steps[idx]);
+          cur_constraint = new
+            ProjectionAnalysisConstraint(OR, new_constraint, cur_constraint);
+        }
+        else {
+          if (cur_node->are_all_children_disjoint())
+          {
+            new_constraint = add_constraints(EQ, proj1.steps[idx],
+                proj2.steps[idx]);
+            cur_constraint = new
+              ProjectionAnalysisConstraint(AND, new_constraint, cur_constraint);
+          }
+          else
+          {
+            new_constraint = add_constraints(NEQ, proj1.steps[idx],
+                proj2.steps[idx]);
+            cur_constraint = new
+              ProjectionAnalysisConstraint(OR, new_constraint, cur_constraint);
+          }
+        }
+        cur_node = cur_node->get_parent();
+      }
+      return cur_constraint;
+    }
+
+    //--------------------------------------------------------------------------
+    ProjectionAnalysisConstraint* RegionTreeForest::compute_proj_constraint(
+        AffineStructuredProjection proj1, AffineStructuredProjection proj2,
         LogicalRegion sample_bottom_region)
     //--------------------------------------------------------------------------
     {
@@ -1487,6 +1577,43 @@ namespace Legion {
             step1.mul_const[idx], step1.var_id[idx], step1.add_const[idx]);
         ProjectionExpression *exp2 = ProjectionExpression::from_linear(
             step2.mul_const[idx], step2.var_id[idx], step2.add_const[idx]);
+        ProjectionAnalysisConstraint *comparison_constraint = new
+          ProjectionAnalysisConstraint(comparison_type, exp1, exp2);
+        cur_constraint = new ProjectionAnalysisConstraint(conjunction_type,
+            cur_constraint, comparison_constraint);
+      }
+      return cur_constraint;
+    }
+
+    //--------------------------------------------------------------------------
+    ProjectionAnalysisConstraint* RegionTreeForest::add_constraints(
+        ConstraintType comparison_type, AffineStructuredProjectionStep step1,
+        AffineStructuredProjectionStep step2)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      assert(comparison_type == EQ || comparison_type == NEQ);
+#endif
+      ConstraintType conjunction_type;
+      ConstraintType base;
+      if (comparison_type == EQ)
+      {
+        conjunction_type = AND;
+        base = TRUE;
+      }
+      else
+      {
+        conjunction_type = OR;
+        base = FALSE;
+      }
+      ProjectionAnalysisConstraint *cur_constraint = new
+        ProjectionAnalysisConstraint(base);
+      for (int idx = 0; idx < step1.transform.m; idx++)
+      {
+        ProjectionExpression *exp1 = ProjectionExpression::from_affine_step(
+            step1, idx);
+        ProjectionExpression *exp2 = ProjectionExpression::from_affine_step(
+            step2, idx);
         ProjectionAnalysisConstraint *comparison_constraint = new
           ProjectionAnalysisConstraint(comparison_type, exp1, exp2);
         cur_constraint = new ProjectionAnalysisConstraint(conjunction_type,

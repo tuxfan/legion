@@ -2955,6 +2955,42 @@ namespace Legion {
       AffineStructuredProjectionStep(DomainTransform t);
       AffineStructuredProjectionStep(DomainTransform t, DomainPoint o);
     public:
+      DomainPoint evaluate(const DomainPoint &p);
+    public:
+      static inline DomainPoint divide(const DomainPoint &dividend,
+                                       const DomainPoint &divisorp)
+      {
+        // TODO twars: handle properly the case where some of the values are negative
+        assert(dividend.dim == divisorp.dim);
+        DomainPoint result;
+        result.dim = dividend.dim;
+        for (int i = 0; i < result.dim; ++i)
+        {
+          result[i] = dividend[i] / divisorp[i];
+        }
+        return result;
+      }
+      static inline DomainPoint mod_divide(const DomainPoint &dividend,
+                                           const DomainPoint &mod_divisorp)
+      {
+        // TODO twars: handle properly the case where some of the values are negative
+        assert(dividend.dim == mod_divisorp.dim);
+        DomainPoint result;
+        result.dim = dividend.dim;
+        for (int i = 0; i < result.dim; ++i)
+        {
+          if (mod_divisorp[i] != 0)
+          {
+            result[i] = dividend[i] % mod_divisorp[i];
+          }
+          else
+          {
+            result[i] = dividend[i];
+          }
+        }
+        return result;
+      }
+    public:
       DomainTransform transform;
       DomainPoint offset;
       DomainPoint divisor;

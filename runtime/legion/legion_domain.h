@@ -236,6 +236,8 @@ namespace Legion {
     coord_t& operator[](unsigned index);
     const coord_t& operator[](unsigned index) const;
 
+    DomainPoint operator+(const DomainPoint &p) const;
+
     struct STLComparator {
       bool operator()(const DomainPoint& a, const DomainPoint& b) const
       {
@@ -462,6 +464,8 @@ namespace Legion {
     DomainPoint operator*(const DomainPoint &p) const;
   public:
     bool is_identity(void) const;
+  public:
+    DomainPoint get_row(int row_idx) const;
   public:
     int m, n;
     coord_t matrix[::MAX_POINT_DIM * ::MAX_POINT_DIM];

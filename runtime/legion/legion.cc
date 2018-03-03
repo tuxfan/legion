@@ -2909,6 +2909,7 @@ namespace Legion {
       }
     }
 
+    //--------------------------------------------------------------------------
     AffineStructuredProjectionStep::AffineStructuredProjectionStep(
         DomainTransform t, DomainPoint o)
       : transform(t), offset(o)
@@ -2921,6 +2922,16 @@ namespace Legion {
         divisor[i] = 1;
         mod_divisor[i] = 0;
       }
+    }
+
+    //--------------------------------------------------------------------------
+    DomainPoint AffineStructuredProjectionStep::evaluate(const DomainPoint &p)
+    //--------------------------------------------------------------------------
+    {
+      DomainPoint result = transform * p + offset;
+      result = AffineStructuredProjectionStep::divide(result, divisor);
+      result = AffineStructuredProjectionStep::mod_divide(result, mod_divisor);
+      return result;
     }
 
     /////////////////////////////////////////////////////////////

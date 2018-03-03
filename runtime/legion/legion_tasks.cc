@@ -7262,14 +7262,14 @@ namespace Legion {
         if (!proj_funcs_by_tree[tree_i][0]->functor->is_structured())
           continue;
 
-        std::vector<StructuredProjection> structured_funcs;
+        std::vector<AffineStructuredProjection> structured_funcs;
         structured_funcs.reserve(proj_funcs_by_tree[tree_i].size());
         for (unsigned idx = 0; idx < proj_funcs_by_tree[tree_i].size(); idx++)
         {
           StructuredProjectionFunctor* proj_func =
             (StructuredProjectionFunctor*) (proj_funcs_by_tree[tree_i][idx]->functor);
           structured_funcs.push_back(
-              proj_func->project_structured(DUMMY_CONTEXT));
+              proj_func->affine_project_structured(DUMMY_CONTEXT));
         }
 
         unsigned structured_depth = structured_funcs[0].steps.size();
@@ -7296,11 +7296,11 @@ namespace Legion {
         for (unsigned idx1 = 0; idx1 < structured_funcs.size(); idx1++)
         {
           RegionUsage usage1(proj_reqs_by_tree[tree_i][idx1]);
-          StructuredProjection proj1 = structured_funcs[idx1];
+          AffineStructuredProjection proj1 = structured_funcs[idx1];
           for (unsigned idx2 = idx1; idx2 < structured_funcs.size(); idx2++)
           {
             RegionUsage usage2(proj_reqs_by_tree[tree_i][idx2]);
-            StructuredProjection proj2 = structured_funcs[idx2];
+            AffineStructuredProjection proj2 = structured_funcs[idx2];
             DependenceType dtype = check_dependence_type(usage1, usage2);
             if (dtype != TRUE_DEPENDENCE && dtype != ANTI_DEPENDENCE)
             {
@@ -7311,11 +7311,15 @@ namespace Legion {
             ProjectionAnalysisConstraint *constraint =
               runtime->forest->compute_proj_constraint(proj1, proj2,
                   sample_region)->simplify();
+            printf("Constraints after simplifying:\n%s\n",
+              constraint->stringify().c_str());
             constraints.push_back(*constraint);
           }
         }
       }
 
+printf("Failing on purpose here\n");
+assert(0);
       constraint_equations = constraints;
     }
 

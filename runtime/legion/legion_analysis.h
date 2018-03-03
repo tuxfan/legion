@@ -455,6 +455,8 @@ namespace Legion {
       public:
         static ProjectionExpression* from_linear(int mul_const, int var_id,
             int add_const);
+        static ProjectionExpression* from_affine_step(
+            AffineStructuredProjectionStep &step, int index);
         long int evaluate(DomainPoint &point) const;
         std::string stringify(void) const;
       public:

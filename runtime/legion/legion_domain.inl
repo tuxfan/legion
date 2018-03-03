@@ -666,6 +666,20 @@ namespace Legion {
   }
 
   //----------------------------------------------------------------------------
+  inline DomainPoint DomainPoint::operator+(const DomainPoint &p) const
+  //----------------------------------------------------------------------------
+  {
+    assert(dim == p.dim);
+    DomainPoint result;
+    result.dim = dim;
+    for (int i = 0; i < dim; i++)
+    {
+      result.point_data[i] = point_data[i] + p.point_data[i];
+    }
+    return result;
+  }
+
+  //----------------------------------------------------------------------------
   template<int DIM>
   /*static*/ inline DomainPoint 
                     DomainPoint::from_point(LegionRuntime::Arrays::Point<DIM> p)
@@ -1739,6 +1753,22 @@ namespace Legion {
             return false;
         }
     return true;
+  }
+
+  //----------------------------------------------------------------------------
+  inline DomainPoint DomainTransform::get_row(int row_idx) const
+  //----------------------------------------------------------------------------
+  {
+#ifdef DEBUG_LEGION
+      assert(row_idx < m);
+#endif
+      DomainPoint row;
+      row.dim = n;
+      for (int i = 0; i < n; i++)
+      {
+        row[i] = matrix[row_idx * n + i];
+      }
+      return row;
   }
 
   //----------------------------------------------------------------------------
