@@ -7,3 +7,24 @@ which are the legion features of importance ?
 put a figure of interaction.
 
 what is the memory consistency angle here ?
+
+what does it mean to advance the commit wavefront
+
+Resilience is a tangling of the lifetime of a task and a region snapshot- 
+1) when can we advance a commit wavefront ?
+2) whats the lifetime of a region-instance snapshot ?
+
+on this front, we see it as a two-step process a) define a consistent cut of tasks problem, b) commit any task strictly behind this wavefront c) garbage collect any snapshot that serves as input to any task that is already committed
+
+consistent cut of tasks that can be part of the commit wavefront: 
+a set of tasks whose inputs are need\_preserve'ed, or they are strictly post-dominated by tasks whose inputs are need\_preserved.  
+
+3) what about copy/index/tasks ?
+copy local to local follows the above semantics
+copy local to remote get committed immediately after successful execution.
+index launch tasks, actually feel need not be in the task graph, unless virtual mapping is used. they can be garbage collected immediately after all child tasks are included in the dependence analysis wavefront
+  - I am thinking we will never have a case where are relaunching the index launch, since hte child tasks either are part of the committed wavefront or are not (pending a discussion on phase barriers)
+
+Question on what to do about must\_epoch tasks with phase\_barrier inside them ?
+
+answer: restartable phase\_barrier with generation commit callback 
