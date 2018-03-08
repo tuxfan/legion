@@ -10,9 +10,9 @@
 
 
 \begin{center}
- \begin{tabular}{||c c c c||} 
+ \begin{tabular}{||c | c | c | c||} 
  \hline
- Number of Iterations (1000 tasks/index launch, seconds) & Time Without Resilience Without lg:resilient & Time Without Resilienct With lg:resilient & Time With Resilience without lg:resilient \\ [0.25ex] 
+ NumIter& No Resl No lg:res & No Res With lg:res & Res No lg:res \\ [0.25ex] 
  \hline\hline
 100 &  7.2 & 6.6 & 23.6\\ 
  \hline
@@ -29,20 +29,14 @@
 
 \begin{figure}
 \includegraphics[width=\textwidth]{images/index_tasks_time.png}
-\caption{Total time taken by 02\_index\_tasks.}
-\end{figure}
-
-
-\begin{figure}
-\includegraphics[width=\textwidth]{images/index_tasks_memory.png}
-\caption{Total Memory footprint by 02\_index\_tasks.}
+\caption{Total time taken by 02\_index\_tasks. Time in Seconds, 1000 tasks/index launch }
 \end{figure}
 
 
 \begin{center}
- \begin{tabular}{||c c c c||} 
+ \begin{tabular}{||c | c | c | c||} 
  \hline
- Number of Iterations (1000 tasks/index launch, MB) & Memory\% Without Resilience Without lg:resilient & Memory\% Without Resilienct With lg:resilient & Memory\% With Resilience without lg:resilient \\ [0.25ex] 
+ NumIter& No Resl No lg:res & No Res With lg:res & Res No lg:res \\ [0.25ex] 
  \hline\hline
 100 &  18 & 140 & 107 \\ 
  \hline
@@ -56,6 +50,12 @@
  \hline
 \end{tabular}
 \end{center}
+
+\begin{figure}
+\includegraphics[width=\textwidth]{images/index_tasks_memory.png}
+\caption{Total Memory footprint by 02\_index\_tasks. Memory in MB, 1000 tasks/index launch.}
+\end{figure}
+
 
 
 
