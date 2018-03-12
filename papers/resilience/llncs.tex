@@ -44,32 +44,21 @@ evaluate this.  \dots
 \end{abstract}
 
 %
-\section{Introduction}
+\input{introduction}
 
-\section{Resilience Policy}
+\input{resilience_overview}
 
-\include{resilience_policy_with_legion_features}
+\input{resilience_policy_with_legion_features}
 
-\include{speculation}
+\input{resilience_implementation}
 
-\section{Implementation}
+\input{speculation}
 
-\include{experiments}
+\input{experiments}
 
-\subsection{Experiments}
+\input{extensions}
 
-pennant, stencil, miniAero (better understood) /Circuit, 
-- limit the failure to the before
-
-\section{Adaptive Resilience}
-
-\subsection{Resilience Policy Implemented via Mapper: Example 1 Generic}
-
-\subsection{Resilience Policy Implemented via Mapper: Example 2 UT Austin}
-\subsubsection{Interaction of need\_preserve with the commit wavefront}
-\subsubsection{Obtaining dependence graph in the mapper before calling need\_preserve} 
-
-\section{Related Work}
+\input{related_work}
 
 \section{Conclusion}
 
