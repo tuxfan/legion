@@ -574,12 +574,28 @@ namespace Legion {
       void initialize_reduction_state(void);
       void fold_reduction_future(const void *result, size_t result_size,
                                  bool owner, bool exclusive); 
+    public:
+      std::vector<std::vector<AffineConstraint> >
+          process_constraint_equations(void);
+      void find_intralaunch_dependencies(
+          std::vector<AffineConstraint*> &affine_constraints,
+          std::vector<PointTask*> &local_points);
+      std::vector<DomainPoint> find_conflicting_points(
+          std::vector<AffineExpression> &affine_expressions,
+          std::vector<int> rhs_values);
+    private:
+      std::vector<int> possible_values(AffineConstraint constraint,
+          DomainPoint rhs_point);
+      void process_constraint_equations_helper(
+          ProjectionAnalysisConstraint &constraint,
+          std::vector<std::vector<AffineConstraint> > &affine_constraints);
     public: // Should also be protected
       std::vector<ProjectionAnalysisConstraint> constraint_equations;
       OrderingID oid;
     public: //twarsz Change this back to protected.
       // Map from point tasks to their runtime events used in structured launches
       std::map<DomainPoint, RtEvent> point_task_events;
+      std::map<DomainPoint, std::vector<DomainPoint> > point_task_deps;
     protected:
       std::list<SliceTask*> slices;
       std::vector<VersionInfo> version_infos;

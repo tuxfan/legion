@@ -2751,6 +2751,33 @@ namespace Legion {
     }
 
     /////////////////////////////////////////////////////////////
+    // StructuredOrderingFunctor
+    /////////////////////////////////////////////////////////////
+
+    //--------------------------------------------------------------------------
+    StructuredOrderingFunctor::StructuredOrderingFunctor(
+        DomainPoint coefficients) : coefficients(coefficients)
+    //--------------------------------------------------------------------------
+    {
+    }
+
+    //--------------------------------------------------------------------------
+    int StructuredOrderingFunctor::get_order_value(const DomainPoint &point)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      assert(point.dim == coefficients.dim);
+#endif
+      int value = 0;
+      for (int i = 0; i < coefficients.dim; i++)
+      {
+        value += coefficients[i] * point[i];
+      }
+      return value;
+    }
+
+
+    /////////////////////////////////////////////////////////////
     // ProjectionFunctor 
     /////////////////////////////////////////////////////////////
 

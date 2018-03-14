@@ -652,6 +652,8 @@ typedef enum legion_region_flags_t {
 typedef enum legion_constraint_type_t {
   EQ, // two equations are equal
   NEQ, // two equations are not equal
+  AEQ, // two affine equations are equal
+  ANEQ, // two affine equations are not equal
   NOT, // negation of a constraint
   AND, // logical and of two constraints
   OR, // logical or of two constraints

@@ -4558,7 +4558,7 @@ namespace Legion {
                 if (other_slice->internal_domain.contains(
                   dependent_points[idx_p]))
                 {
-                  LegionRuntime::Arrays::Rect<3> other_rect = other_slice->internal_domain.get_rect<3>();
+                  //LegionRuntime::Arrays::Rect<3> other_rect = other_slice->internal_domain.get_rect<3>();
                   slice_dependency_events.insert(
                       other_slice->get_structured_slice_mapped_trigger());
                   break;
@@ -4748,6 +4748,135 @@ namespace Legion {
       if (owner)
         free(const_cast<void*>(result));
     } 
+
+    //--------------------------------------------------------------------------
+    std::vector<std::vector<AffineConstraint> > MultiTask::
+        process_constraint_equations()
+    //--------------------------------------------------------------------------
+    {
+      std::vector<std::vector<AffineConstraint> > affine_constraints;
+      std::vector<AffineConstraint> first_subproblem_constraints;
+      affine_constraints.push_back(first_subproblem_constraints);
+      for (unsigned i = 0; i < constraint_equations.size(); i++)
+      {
+        process_constraint_equations_helper(constraint_equations[i],
+            affine_constraints);
+      }
+      return affine_constraints;
+    }
+
+    //--------------------------------------------------------------------------
+    void MultiTask::process_constraint_equations_helper(
+        ProjectionAnalysisConstraint &constraint,
+        std::vector<std::vector<AffineConstraint> > &affine_constraints)
+    //--------------------------------------------------------------------------
+    {
+      switch(constraint.constraint_type)
+      {
+        case OR:
+        {
+          process_constraint_equations_helper(*(constraint.lhs),
+              affine_constraints);
+          std::vector<AffineConstraint> next_subproblem_constraints;
+          affine_constraints.push_back(next_subproblem_constraints);
+          process_constraint_equations_helper(*(constraint.rhs),
+              affine_constraints);
+          break;
+        }
+        case AND:
+          process_constraint_equations_helper(*(constraint.lhs),
+              affine_constraints);
+          process_constraint_equations_helper(*(constraint.rhs),
+              affine_constraints);
+          break;
+        case AEQ:
+        {
+          AffineConstraint affine_constraint;
+          affine_constraint.constraint_type = EQ;
+          affine_constraint.lhs = constraint.lhs_affine_exp;
+          affine_constraint.rhs = constraint.rhs_affine_exp;
+          affine_constraints[affine_constraints.size()-1].push_back(
+              affine_constraint);
+          break;
+        }
+        case TRUE:
+        case FALSE:
+        case NEQ:
+        case ANEQ:
+        case NOT:
+          assert(0); // should be simplified and currently not handling negations
+        case EQ:
+          assert(0); // we should only be dealing with semi affine constraints
+        default:
+          assert(0); // invalid constraint_type
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    void MultiTask::find_intralaunch_dependencies(
+        std::vector<AffineConstraint*> &affine_constraints,
+        std::vector<PointTask*> &local_points)
+    //--------------------------------------------------------------------------
+    {
+      std::vector<std::vector<int> > potential_rhs_values;
+      std::vector<int> rhs_values;
+      std::vector<unsigned> iteration_helper;
+      std::vector<AffineExpression> lhs_expressions;
+      iteration_helper.resize(affine_constraints.size());
+      for (std::vector<PointTask*>::const_iterator it = local_points.begin();
+            it != local_points.end(); it++)
+      {
+        for (unsigned cidx = 0; cidx < affine_constraints.size(); cidx++)
+        {
+          iteration_helper[cidx] = 0;
+          int rhs_value =
+              affine_constraints[cidx]->rhs->evaluate((*it)->index_point);
+          potential_rhs_values[cidx] = affine_constraints[cidx]->lhs->
+              find_potential_values(rhs_value, internal_domain);
+          lhs_expressions.push_back(*(affine_constraints[cidx]->lhs));
+        }
+
+        bool more_values = true;
+        while (more_values)
+        {
+          more_values = false;
+          for (unsigned i = 0; i < affine_constraints.size(); i++)
+          {
+            rhs_values[i] = potential_rhs_values[i][iteration_helper[i]];
+          }
+          // possibly memoize values here (only really relevant for mod...)
+          std::vector<DomainPoint> conflicting_points =
+              find_conflicting_points(lhs_expressions, rhs_values);
+          // set up dependencies based on ordering functor
+          for (unsigned i = 0; i < iteration_helper.size(); i++)
+          {
+            iteration_helper[i]++;
+            if (iteration_helper[i] == potential_rhs_values[i].size())
+            {
+              iteration_helper[i] = 0;
+            }
+            else
+            {
+              more_values = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    std::vector<DomainPoint> MultiTask::find_conflicting_points(
+        std::vector<AffineExpression> &affine_expressions,
+        std::vector<int> rhs_values)
+    //--------------------------------------------------------------------------
+    {
+      std::vector<DomainPoint> conflicting_points;
+      // simplify the equations
+      // the order of the solution and find the free variables
+      // 
+      return conflicting_points;
+    }
 
     //--------------------------------------------------------------------------
     VersionInfo& MultiTask::get_version_info(unsigned idx)

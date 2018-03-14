@@ -488,6 +488,100 @@ namespace Legion {
     };
 
     /**
+     * \class AffineExpression
+     * Affine constraints on regions discovered during structured projection
+     * analysis.
+     */
+    class AffineExpression {
+    public:
+      AffineExpression(void);
+      AffineExpression(DomainPoint coefficients, int offset);
+      AffineExpression(DomainPoint coefficients, int offset,
+          int divisor, int mod_divisor);
+      AffineExpression(int const_value);
+      AffineExpression(const AffineExpression &other);
+    public:
+        int evaluate(DomainPoint &point);
+        int evaluate_no_mod(DomainPoint &point);
+        std::vector<int> find_potential_values(int rhs_val,
+            Domain domain);
+        std::string stringify(void) const;
+    public:
+        void pack_expression(Serializer &rez) const;
+        void unpack_expression(Deserializer &derez);
+    public:
+        static AffineExpression* from_affine_step(
+            AffineStructuredProjectionStep &step, int index);
+    public:
+        DomainPoint coefficients;
+        int offset;
+        int divisor;
+        int mod_divisor;
+        bool is_const;
+    };
+
+    class UnionFind {
+    public:
+      UnionFind(int N);
+    public:
+      int find(int e);
+      void merge(int e1, int e2);
+      inline int get_count(int e);
+    private:
+      std::vector<int> ids;
+      std::vector<int> sizes;
+    };
+
+    /**
+     * \class AffineEquationSet
+     * A set of affine equations to be solved.
+     * Right now only works if offset, divisor, and mod_divisor are zero
+     * (assumes the possible values have been previously determined and
+     * simplified).
+     */
+    class AffineEquationSet {
+    public:
+      // maybe don't compute this here
+      // instead compute B, V
+      // solve with free variables
+      // use valid values of the variables
+      std::vector<DomainPoint> find_conflicting_points(void);
+    private:
+      // Returns true if a pivot was found
+      inline bool find_and_pivot(unsigned row, unsigned col);
+      inline void eliminate_from_index(int row, int col,
+          bool forward);
+    public:
+      int dim;
+      Domain possible_points;
+      std::vector<DomainPoint> coefficients;
+      std::vector<int> rhs_values;
+      std::vector<int> determined_vars;
+      std::vector<int> pivot_values;
+    private:
+      int gcd(std::vector<int> inputs);
+      int gcd(int a, int b);
+    private:
+      DomainPoint find_possible_point_and_strides(void);
+      std::vector<DomainPoint> strides;
+    };
+
+
+    /**
+     * \struct AffineConstraint
+     * Affine constraints on regions discovered during structured projection
+     * analysis.
+     */
+    struct AffineConstraint {
+      public:
+        ConstraintType constraint_type; // right now only allow EQ
+        AffineExpression *lhs;
+        AffineExpression *rhs;
+        int lhs_value;
+        int rhs_value;
+    };
+
+    /**
      * \class ProjectionAnalysisConstraint
      * Constraints on regions discovered during structured projection
      * analysis.
@@ -501,6 +595,9 @@ namespace Legion {
         ProjectionAnalysisConstraint(ConstraintType type,
             ProjectionExpression *lhs_exp,
             ProjectionExpression *rhs_exp);
+        ProjectionAnalysisConstraint(ConstraintType type,
+            AffineExpression *lhs_affine_exp,
+            AffineExpression *rhs_affine_exp);
       public:
         void pack_constraint(Serializer &rez) const;
         void unpack_constraint(Deserializer &derez);
@@ -508,6 +605,8 @@ namespace Legion {
         ProjectionAnalysisConstraint *simplify(void);
         ProjectionAnalysisConstraint *substitute(DomainPoint &left_point,
                                                  DomainPoint &right_point);
+        ProjectionAnalysisConstraint *to_dnf(void);
+        ProjectionAnalysisConstraint *to_negation_normal_form(void);
         void get_dependent_points(DomainPoint &point,
             Domain &bounding_domain, OrderingFunctor *ord_func,
             std::vector<DomainPoint> &dep_points);
@@ -522,12 +621,16 @@ namespace Legion {
           std::vector<SolutionSet>);
         std::vector<SolutionSet> union_helper(std::vector<SolutionSet>,
           std::vector<SolutionSet>);
+        // Assumes only called on constraints in negation normal form
+        ProjectionAnalysisConstraint *to_dnf_helper(void);
       public:
         ConstraintType constraint_type;
         ProjectionAnalysisConstraint *lhs;
         ProjectionAnalysisConstraint *rhs;
         ProjectionExpression *lhs_exp;
         ProjectionExpression *rhs_exp;
+        AffineExpression *lhs_affine_exp;
+        AffineExpression *rhs_affine_exp;
     };
 
     /**

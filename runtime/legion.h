@@ -2822,6 +2822,30 @@ namespace Legion {
        * @return int order
        */
       virtual int get_order_value(const DomainPoint &point)=0;
+      virtual bool is_structured() { return false; }
+    };
+
+    /**
+     * \interface OrderingFunctor
+     * An ordering function to specify the order of tasks in a
+     * dependent index space launch
+     */
+    class StructuredOrderingFunctor : OrderingFunctor {
+    public:
+      StructuredOrderingFunctor(DomainPoint coefficients);
+    public:
+      /**
+       * The only method of the class that needs to be overridden -
+       * takes in a domain point and outputs a value.  The points
+       * in the index launch with dependencies will be run with the
+       * lower value point running first
+       * @param point the point being projected
+       * @return int order
+       */
+      virtual int get_order_value(const DomainPoint &point);
+      virtual bool is_structured() { return false; }
+    private:
+      DomainPoint coefficients;
     };
 
     /**

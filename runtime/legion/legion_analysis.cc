@@ -25,6 +25,7 @@
 #include "legion/legion_views.h"
 #include "legion/legion_analysis.h"
 #include "legion/legion_context.h"
+#include <limits.h>
 
 #include <sstream>
 
@@ -2129,7 +2130,7 @@ namespace Legion {
       }
       if (nz_idx == coefficients.dim)
       {
-        return new ProjectionExpression(CONST, setp.offset[index]);
+        return new ProjectionExpression(CONST, step.offset[index]);
       }
 
       ProjectionExpression *cur_exp = new ProjectionExpression(CONST,
@@ -2236,13 +2237,653 @@ namespace Legion {
     }
 
     /////////////////////////////////////////////////////////////
+    // AffineExpression
+    /////////////////////////////////////////////////////////////
+
+    //--------------------------------------------------------------------------
+    AffineExpression::AffineExpression(void)
+      : offset(0), divisor(1), mod_divisor(0), is_const(true)
+    //--------------------------------------------------------------------------
+    {
+      coefficients.dim = 0;
+    }
+
+    //--------------------------------------------------------------------------
+    AffineExpression::AffineExpression(DomainPoint coefficients, int offset)
+      : coefficients(coefficients), offset(offset), divisor(1), mod_divisor(0),
+        is_const(false)
+    //--------------------------------------------------------------------------
+    {
+      bool has_nonzero_coeffs = false;
+      for (int i = 0; i < coefficients.dim - 1; i++)
+      {
+        has_nonzero_coeffs = has_nonzero_coeffs || (coefficients[i] != 0);
+      }
+      is_const = !has_nonzero_coeffs;
+    }
+
+    //--------------------------------------------------------------------------
+    AffineExpression::AffineExpression(DomainPoint coefficients,
+        int offset, int divisor, int mod_divisor)
+      : coefficients(coefficients), offset(offset), divisor(divisor),
+        mod_divisor(mod_divisor), is_const(false)
+    //--------------------------------------------------------------------------
+    {
+      bool has_nonzero_coeffs = false;
+      for (int i = 0; i < coefficients.dim - 1; i++)
+      {
+        has_nonzero_coeffs = has_nonzero_coeffs || (coefficients[i] != 0);
+      }
+      is_const = !has_nonzero_coeffs;
+      if (is_const)
+      {
+        // TODO: handle negative divisors properly
+        offset = offset / divisor;
+        divisor = 1;
+        if (mod_divisor != 0)
+        {
+          offset = offset % mod_divisor;
+          mod_divisor = 0;
+        }
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    AffineExpression::AffineExpression(int const_value)
+      : offset(const_value), divisor(1), mod_divisor(0), is_const(true)
+    //--------------------------------------------------------------------------
+    {
+      coefficients.dim = 0;
+    }
+
+    //--------------------------------------------------------------------------
+    AffineExpression::AffineExpression(const AffineExpression &other)
+      : offset(other.offset),
+        divisor(other.divisor),
+        mod_divisor(other.mod_divisor),
+        is_const(other.is_const)
+    //--------------------------------------------------------------------------
+    {
+    }
+
+    //--------------------------------------------------------------------------
+    int AffineExpression::evaluate(DomainPoint &p)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      assert(p.dim + 1== coefficients.dim);
+#endif
+      int value = 0;
+      for (int i = 0; i < p.dim; ++i)
+      {
+        value += coefficients[i] * p[i];
+      }
+      value += offset;
+      //TODO: fix this for negative division/mod
+      value = value / divisor;
+      if (mod_divisor != 0)
+        value = value % mod_divisor;
+      return value;
+    }
+
+    //--------------------------------------------------------------------------
+    int AffineExpression::evaluate_no_mod(DomainPoint &p)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      assert(p.dim + 1== coefficients.dim);
+#endif
+      int value = 0;
+      for (int i = 0; i < p.dim; ++i)
+      {
+        value += coefficients[i] * p[i];
+      }
+      value += offset;
+      //TODO: fix this for negative division
+      value = value / divisor;
+      return value;
+    }
+
+    //--------------------------------------------------------------------------
+    std::vector<int> AffineExpression::find_potential_values(
+        int rhs_value, Domain domain)
+    //--------------------------------------------------------------------------
+    {
+      // TODO: fix this for negative mod and divisor
+      int lo_rhs_value = rhs_value;
+      int hi_rhs_value = rhs_value;
+      int dim = domain.get_dim();
+      DomainPoint min_point, max_point;
+      min_point.dim = dim;
+      max_point.dim = dim;
+
+      DomainPoint lo = domain.lo();
+      DomainPoint hi = domain.hi();
+
+      std::vector<int> possible_values;
+      if (mod_divisor != 0)
+      {
+        for (int i = 0; i < domain.dim; i++)
+        {
+          if (coefficients[i] >= 0)
+          {
+            min_point[i] = lo[i];
+            max_point[i] = hi[i];
+          }
+          else
+          {
+            min_point[i] = hi[i];
+            max_point[i] = lo[i];
+          }
+        }
+        lo_rhs_value = evaluate_no_mod(min_point);
+        hi_rhs_value = evaluate_no_mod(max_point);
+        if (lo_rhs_value % mod_divisor != 0)
+        {
+          lo_rhs_value = (lo_rhs_value)/mod_divisor * mod_divisor + mod_divisor;
+        }
+        if (hi_rhs_value % mod_divisor != 0)
+        {
+          hi_rhs_value = (hi_rhs_value)/mod_divisor * mod_divisor;
+        }
+      }
+      for (int cur_rhs_value = lo_rhs_value; cur_rhs_value <= hi_rhs_value;
+          cur_rhs_value += mod_divisor)
+      {
+        for (int i = 0; i < divisor; i++)
+        {
+          possible_values.push_back(cur_rhs_value + i + offset);
+        }
+        if (mod_divisor == 0)
+        {
+          break;
+        }
+      }
+
+      return possible_values;
+    }
+
+    //--------------------------------------------------------------------------
+    std::string AffineExpression::stringify() const
+    //--------------------------------------------------------------------------
+    {
+      std::ostringstream stringStream;
+      if (mod_divisor != 0)
+      {
+        stringStream << "(";
+      }
+      if (divisor != 1)
+      {
+        stringStream << "(";
+      }
+
+      bool needs_plus = false;
+      for (int i = 0; i < coefficients.dim; i++)
+      {
+        if (coefficients[i] != 0)
+        {
+          if (needs_plus)
+          {
+            stringStream << " + ";
+          }
+          stringStream << coefficients[i];
+          stringStream << "*";
+          stringStream << "v";
+          stringStream << i;
+          needs_plus = true;
+        }
+      }
+      if (needs_plus)
+      {
+        stringStream << " + ";
+      }
+      if (offset != 0)
+      {
+          stringStream << offset;
+      }
+      if (divisor != 1)
+      {
+        stringStream << ") / ";
+        stringStream << divisor;
+      }
+      if (mod_divisor != 0)
+      {
+        stringStream << ") % ";
+        stringStream << mod_divisor;
+      }
+      return stringStream.str();
+    }
+
+    //--------------------------------------------------------------------------
+    void AffineExpression::pack_expression(Serializer &rez) const
+    //--------------------------------------------------------------------------
+    {
+      // to be implemented soon, just to compile
+      assert(0);
+    }
+
+    //--------------------------------------------------------------------------
+    void AffineExpression::unpack_expression(Deserializer &derez)
+    //--------------------------------------------------------------------------
+    {
+      // to be implemented soon, just to compile
+      assert(0);
+    }
+
+    //--------------------------------------------------------------------------
+    AffineExpression* AffineExpression::from_affine_step(
+        AffineStructuredProjectionStep &step, int index)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      assert(index < step.transform.m);
+#endif
+      DomainPoint coefficients = step.transform.get_row(index);
+      return new AffineExpression(coefficients,
+          step.offset[index],
+          step.divisor[index],
+          step.mod_divisor[index]);
+    }
+
+    /////////////////////////////////////////////////////////////
+    // AffineExpression
+    /////////////////////////////////////////////////////////////
+
+    //--------------------------------------------------------------------------
+    std::vector<DomainPoint> AffineEquationSet::find_conflicting_points()
+    //--------------------------------------------------------------------------
+    {
+      std::vector<DomainPoint> conflicting_points;
+      if (coefficients.size() == 0)
+      {
+        return conflicting_points;
+      }
+
+      int size = coefficients.size();
+      for (int row = 0, col = 0; row < size; row++, col++)
+      {
+        if (col >= dim)
+        {
+          if (rhs_values[row] != 0)
+          {
+            return conflicting_points;
+          }
+          continue;
+        }
+        if (coefficients[row][col] == 0)
+        {
+          if (!find_and_pivot(row, col))
+          {
+            row--;
+            continue;
+          }
+        }
+        eliminate_from_index(row, col, true);
+      }
+      for (int row = dim-1, col = dim-1; row >= 0; row--, col--)
+      {
+        if (coefficients[row][col] != 0)
+        {
+          eliminate_from_index(row, col, false);
+        }
+        else
+        {
+          row++;
+        }
+      }
+
+      // now solve for the possible values
+      // Do a union find over the possible groups of variables
+      // which could be free
+      UnionFind free_var_uf(dim);
+      std::vector<std::vector<int> > var_rows;
+      for (int row=0, col=0; row < dim && col < dim; row++, col++)
+      {
+        pivot_values.push_back(0);
+        if (coefficients[row][col] == 0)
+        {
+          row--;
+          continue;
+        }
+        pivot_values[col] = coefficients[row][col];
+        var_rows[col].push_back(row);
+        for (int c = col + 1; c < dim; c++)
+        {
+          if (coefficients[row][c] != 0)
+          {
+            free_var_uf.merge(row, c);
+          }
+          var_rows[c].push_back(row);
+        }
+      }
+
+      std::vector<std::vector<int> > free_var_groups;
+      std::vector<std::vector<int> > pivots_in_fv_group;
+
+      for (int i = 0; i < dim; i++)
+      {
+        int id = free_var_uf.find(i);
+        bool is_free = !(id == i && free_var_uf.get_count(id) == 1 &&
+                    var_rows[i].size() >= 1);
+        if (is_free)
+        {
+          free_var_groups[id].push_back(i);
+          if (pivot_values[i] != 0)
+          {
+            pivots_in_fv_group[id].push_back(i);
+          }
+        }
+      }
+
+      std::vector<int> unconstrained_vars;
+      std::vector<std::vector<int> > constrained_free_vars;
+      std::vector<std::vector<int> > constrained_pivots;
+      for (int i = 0; i < dim; i++)
+      {
+        if (free_var_groups[i].size() == 0)
+        {
+          determined_vars.push_back(i);
+        }
+        else if (free_var_groups[i].size() == 1)
+        {
+          unconstrained_vars.push_back(i);
+        }
+        else
+        {
+          constrained_free_vars.push_back(free_var_groups[i]);
+          constrained_pivots.push_back(pivots_in_fv_group[i]);
+        }
+      }
+
+      DomainPoint lo, hi;
+      if (unconstrained_vars.size() > 0)
+      {
+        DomainPoint possible_points_lo = possible_points.lo();
+        DomainPoint possible_points_hi = possible_points.hi();
+        DomainPoint lo, hi;
+        lo.dim = unconstrained_vars.size();
+        hi.dim = unconstrained_vars.size();
+        for (unsigned i = 0; i < unconstrained_vars.size(); i++)
+        {
+          int var = unconstrained_vars[i];
+          lo[i] = possible_points_lo[var];
+          hi[i] = possible_points_hi[var];
+        }
+      }
+      else
+      {
+        lo.dim = 0;
+        hi.dim = 0;
+      }
+      Domain unconstrained_vars_values(lo, hi);
+
+      DomainPoint first_point = find_possible_point_and_strides();
+      if (!possible_points.contains(first_point))
+      {
+        return conflicting_points;
+      }
+
+      bool more_points = true;
+      DomainPoint current_point = first_point;
+      while (more_points)
+      {
+        more_points = false;
+        DomainPoint point_to_add(current_point);
+        if (unconstrained_vars.size() > 0)
+        {
+          for (Domain::DomainPointIterator itr(unconstrained_vars_values);
+              itr; itr++)
+          {
+            for (unsigned i = 0; i < unconstrained_vars.size(); i++)
+            {
+              int var = unconstrained_vars[i];
+              point_to_add[var] = itr.p[i];
+            }
+            conflicting_points.push_back(point_to_add);
+          }
+        }
+        else
+        {
+          conflicting_points.push_back(point_to_add);
+        }
+        for (unsigned i = 0; i < strides.size(); i++)
+        {
+          current_point = current_point + strides[i];
+          if (possible_points.contains(current_point))
+          {
+            more_points = true;
+            break;
+          }
+          else
+          {
+            for (int d = 0; d < dim; d++)
+            {
+              if (strides[i][d] != 0)
+              {
+                current_point[d] = first_point[d];
+              }
+            }
+          }
+        }
+      }
+
+      return conflicting_points;
+    }
+
+    //--------------------------------------------------------------------------
+    bool AffineEquationSet::find_and_pivot(unsigned row, unsigned col)
+    //--------------------------------------------------------------------------
+    {
+      for (unsigned i = row + 1; i < coefficients.size(); i++)
+      {
+        if (coefficients[i][col] != 0)
+        {
+          DomainPoint temp(coefficients[i]);
+          coefficients[i] = coefficients[row];
+          coefficients[row] = temp;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    //--------------------------------------------------------------------------
+    void AffineEquationSet::eliminate_from_index(int row, int col,
+        bool forward)
+    //--------------------------------------------------------------------------
+    {
+      int pivot_value = coefficients[row][col];
+      int dir = forward ? 1 : -1;
+      for (unsigned i = row + dir; i < coefficients.size() && i >= 0; i += dir)
+      {
+        int elim_value = coefficients[i][col];
+        if (elim_value == 0)
+        {
+          continue;
+        }
+        int scale_pivot = 1;
+        int scale_elim = 1;
+        if (pivot_value % elim_value == 0)
+        {
+          scale_elim = pivot_value / elim_value;
+        }
+        else if (elim_value % pivot_value == 0)
+        {
+          scale_pivot = elim_value / pivot_value;
+        }
+        else
+        {
+          scale_pivot = elim_value;
+          scale_elim = pivot_value;
+        }
+        coefficients[i][col] = 0;
+        for (int j = col + 1; j < dim; j++)
+        {
+          coefficients[i][j] = coefficients[i][j]*scale_elim -
+                               coefficients[row][j]*scale_pivot;
+        }
+        rhs_values[i] = rhs_values[i]*scale_elim -
+                        rhs_values[row]*scale_pivot;
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    int AffineEquationSet::gcd(std::vector<int> inputs)
+    //--------------------------------------------------------------------------
+    {
+      int result = inputs[0];
+      for (unsigned i = 1; i < inputs.size(); i++)
+      {
+        if (result < inputs[i])
+        {
+          result = gcd(inputs[i], result);
+        }
+        else
+        {
+          result = gcd(result, inputs[i]);
+        }
+      }
+      return result;
+    }
+
+    //--------------------------------------------------------------------------
+    int AffineEquationSet::gcd(int a, int b)
+    //--------------------------------------------------------------------------
+    {
+      return b == 0 ? a : gcd(b, a % b);
+    }
+
+    //--------------------------------------------------------------------------
+    DomainPoint AffineEquationSet::find_possible_point_and_strides()
+    //--------------------------------------------------------------------------
+    {
+      DomainPoint first_point;
+      DomainPoint invalid_point = possible_points.lo();
+      invalid_point[0] -= 1;
+      for (unsigned i = 0; i < determined_vars.size(); i++)
+      {
+        int var = determined_vars[i];
+        if (rhs_values[var] % pivot_values[var] != 0)
+        {
+          return invalid_point;
+        }
+        first_point[var] = rhs_values[var] / pivot_values[var];
+      }
+      return first_point;
+      /*
+      for (int fv_group = 0; fv_group < constrained_free_vars.size();
+           fv_group++)
+      {
+        // find the stride for the row:
+        // first find the gcd for all rows involved
+        // find the stride for each variable in each row
+
+
+        /////////////////
+        int degrees_of_freedom = constrained_free_vars[fv_group].size() -
+            constrained_pivots.size();
+        DomainPoint lo, hi;
+        DomainPoint possible_lo = possible_points.lo();
+        DomainPoint possible_hi = possible_points.hi();
+        lo.dim = degrees_of_freedom;
+        hi.dim = degrees_of_freedom;
+        for (int i = 0; i < degrees_of_freedom; i++)
+        {
+          lo[i] = 0;
+          hi[i] = 1;
+        }
+        Domain itr_helper(lo, hi);
+        for (Domain::DomainPointIterator itr(itr_helper); itr; itr++)
+        {
+          DomainPoint test_point;
+          for (int i = 0; i < degrees_of_freedom; i++)
+          {
+            if (itr.p[i] == lo[i])
+            {
+              test_point[i] = possible_lo[i];
+            }
+            else
+            {
+              test_point[i] = possible_hi[i];
+            }
+          }
+          // solve for the point here
+        }
+      }
+      */
+    }
+
+    /////////////////////////////////////////////////////////////
+    // UnionFind
+    /////////////////////////////////////////////////////////////
+
+    //--------------------------------------------------------------------------
+    UnionFind::UnionFind(int N)
+    //--------------------------------------------------------------------------
+    {
+      for (int i = 0; i < N; i++)
+      {
+        ids.push_back(i);
+        sizes.push_back(1);
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    int UnionFind::find(int e)
+    //--------------------------------------------------------------------------
+    {
+      int cur_elem = e;
+      while(ids[cur_elem] != cur_elem)
+      {
+        cur_elem = ids[cur_elem];
+      }
+      int id = cur_elem;
+      cur_elem = e;
+      while(ids[cur_elem] != cur_elem)
+      {
+        ids[cur_elem] = id;
+      }
+      return id;
+    }
+
+    //--------------------------------------------------------------------------
+    void UnionFind::merge(int e1, int e2)
+    //--------------------------------------------------------------------------
+    {
+      int id1 = find(e1);
+      int id2 = find(e2);
+      if (id1 == id2)
+      {
+        return;
+      }
+      if (sizes[id1] < sizes[id2])
+      {
+        ids[id1] = ids[id2];
+        sizes[id2] += sizes[id1];
+      }
+      else
+      {
+        ids[id2] = ids[id1];
+        sizes[id1] += sizes[id2];
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    int UnionFind::get_count(int e)
+    //--------------------------------------------------------------------------
+    {
+      return sizes[find(e)];
+    }
+
+    /////////////////////////////////////////////////////////////
     // ProjectionAnalysisConstraint
     /////////////////////////////////////////////////////////////
 
+    //--------------------------------------------------------------------------
     ProjectionAnalysisConstraint::ProjectionAnalysisConstraint(
                       ConstraintType type)
       : constraint_type(type), lhs(NULL), rhs(NULL),
-      lhs_exp(NULL), rhs_exp(NULL)
+      lhs_exp(NULL), rhs_exp(NULL), lhs_affine_exp(NULL), rhs_affine_exp(NULL)
     //--------------------------------------------------------------------------
     {
     }
@@ -2252,7 +2893,8 @@ namespace Legion {
                       ConstraintType type,
                       ProjectionAnalysisConstraint *lhs,
                       ProjectionAnalysisConstraint *rhs)
-      : constraint_type(type), lhs(lhs), rhs(rhs), lhs_exp(NULL), rhs_exp(NULL)
+      : constraint_type(type), lhs(lhs), rhs(rhs), lhs_exp(NULL), rhs_exp(NULL),
+        lhs_affine_exp(NULL), rhs_affine_exp(NULL)
     //--------------------------------------------------------------------------
     {
     }
@@ -2263,7 +2905,20 @@ namespace Legion {
                       ProjectionExpression *lhs_exp,
                       ProjectionExpression *rhs_exp)
       : constraint_type(type), lhs(NULL), rhs(NULL),
-        lhs_exp(lhs_exp), rhs_exp(rhs_exp)
+        lhs_exp(lhs_exp), rhs_exp(rhs_exp),
+        lhs_affine_exp(NULL), rhs_affine_exp(NULL)
+    //--------------------------------------------------------------------------
+    {
+    }
+
+    //--------------------------------------------------------------------------
+    ProjectionAnalysisConstraint::ProjectionAnalysisConstraint(
+                      ConstraintType type,
+                      AffineExpression *lhs_affine_exp,
+                      AffineExpression *rhs_affine_exp)
+      : constraint_type(type), lhs(NULL), rhs(NULL),
+        lhs_exp(NULL), rhs_exp(NULL),
+        lhs_affine_exp(lhs_affine_exp), rhs_affine_exp(rhs_affine_exp)
     //--------------------------------------------------------------------------
     {
     }
@@ -2279,6 +2934,11 @@ namespace Legion {
         case NEQ:
           lhs_exp->pack_expression(rez);
           rhs_exp->pack_expression(rez);
+          break;
+        case AEQ:
+        case ANEQ:
+          lhs_affine_exp->pack_expression(rez);
+          rhs_affine_exp->pack_expression(rez);
           break;
         case NOT:
           lhs->pack_constraint(rez);
@@ -2309,6 +2969,13 @@ namespace Legion {
           rhs_exp = new ProjectionExpression();
           lhs_exp->unpack_expression(derez);
           rhs_exp->unpack_expression(derez);
+          break;
+        case AEQ:
+        case ANEQ:
+          lhs_affine_exp = new AffineExpression();
+          rhs_affine_exp = new AffineExpression();
+          lhs_affine_exp->unpack_expression(derez);
+          rhs_affine_exp->unpack_expression(derez);
           break;
         case NOT:
           lhs = new ProjectionAnalysisConstraint(TRUE);
@@ -2360,7 +3027,32 @@ namespace Legion {
               return new ProjectionAnalysisConstraint(FALSE);
           }
           else
-            return new ProjectionAnalysisConstraint(NEQ, lhs_exp, rhs_exp);
+          {
+            newLhs = new ProjectionAnalysisConstraint(EQ, lhs_exp, rhs_exp);
+            return new ProjectionAnalysisConstraint(NOT, newLhs, NULL);
+          }
+        case AEQ:
+          if (lhs_affine_exp->is_const && rhs_affine_exp->is_const)
+          {
+            if (lhs_affine_exp->offset == rhs_affine_exp->offset)
+              return new ProjectionAnalysisConstraint(TRUE);
+            else
+              return new ProjectionAnalysisConstraint(FALSE);
+          }
+          else
+            return new ProjectionAnalysisConstraint(AEQ,
+                lhs_affine_exp, rhs_affine_exp);
+        case ANEQ:
+          if (lhs_affine_exp->is_const && rhs_affine_exp->is_const)
+          {
+            if (lhs_affine_exp->offset != rhs_affine_exp->offset)
+              return new ProjectionAnalysisConstraint(TRUE);
+            else
+              return new ProjectionAnalysisConstraint(FALSE);
+          }
+          else
+            return new ProjectionAnalysisConstraint(AEQ,
+                lhs_affine_exp, rhs_affine_exp);
         case NOT:
           newLhs = lhs->simplify();
           if (newLhs->constraint_type == TRUE)
@@ -2423,6 +3115,20 @@ namespace Legion {
             return new ProjectionAnalysisConstraint(TRUE);
           else
             return new ProjectionAnalysisConstraint(FALSE);
+        case AEQ:
+          left_evaled = lhs_affine_exp->evaluate(left_point);
+          right_evaled = rhs_affine_exp->evaluate(right_point);
+          if (left_evaled == right_evaled)
+            return new ProjectionAnalysisConstraint(TRUE);
+          else
+            return new ProjectionAnalysisConstraint(FALSE);
+        case ANEQ:
+          left_evaled = lhs_affine_exp->evaluate(left_point);
+          right_evaled = rhs_affine_exp->evaluate(right_point);
+          if (left_evaled != right_evaled)
+            return new ProjectionAnalysisConstraint(TRUE);
+          else
+            return new ProjectionAnalysisConstraint(FALSE);
         case NOT:
           newLhs = lhs->substitute(left_point, right_point);
           return new ProjectionAnalysisConstraint(NOT, newLhs, NULL);
@@ -2435,6 +3141,121 @@ namespace Legion {
         case TRUE:
         case FALSE:
           return new ProjectionAnalysisConstraint(constraint_type);
+        default:
+          assert(0);
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    ProjectionAnalysisConstraint* ProjectionAnalysisConstraint::to_dnf()
+    //--------------------------------------------------------------------------
+    {
+      ProjectionAnalysisConstraint *neg_normal_form = to_negation_normal_form();
+      return neg_normal_form->to_dnf_helper();
+    }
+
+    //--------------------------------------------------------------------------
+    ProjectionAnalysisConstraint*
+        ProjectionAnalysisConstraint::to_negation_normal_form()
+    //--------------------------------------------------------------------------
+    {
+      ProjectionAnalysisConstraint *newLhs =
+        new ProjectionAnalysisConstraint(TRUE);
+      ProjectionAnalysisConstraint *newRhs =
+        new ProjectionAnalysisConstraint(TRUE);
+      switch(constraint_type)
+      {
+        case EQ:
+        case NEQ:
+            return new ProjectionAnalysisConstraint(
+                constraint_type, lhs_exp, rhs_exp);
+        case AEQ:
+        case ANEQ:
+            return new ProjectionAnalysisConstraint(
+                constraint_type, lhs_affine_exp, rhs_affine_exp);
+        case TRUE:
+        case FALSE:
+          return new ProjectionAnalysisConstraint(constraint_type);
+        case AND:
+        case OR:
+          newLhs = lhs->to_negation_normal_form();
+          newRhs = rhs->to_negation_normal_form();
+          return new ProjectionAnalysisConstraint(constraint_type, newLhs, newRhs);
+        case NOT:
+          if (lhs->constraint_type == AND)
+          {
+            newLhs = new ProjectionAnalysisConstraint(OR,
+                new ProjectionAnalysisConstraint(NOT, lhs->lhs, NULL),
+                new ProjectionAnalysisConstraint(NOT, lhs->rhs, NULL));
+            return newLhs->to_negation_normal_form();
+          }
+          if (lhs->constraint_type == OR)
+          {
+            newLhs = new ProjectionAnalysisConstraint(AND,
+                new ProjectionAnalysisConstraint(NOT, lhs->lhs, NULL),
+                new ProjectionAnalysisConstraint(NOT, lhs->rhs, NULL));
+            return newLhs->to_negation_normal_form();
+          }
+          if (lhs->constraint_type == NOT)
+          {
+            return lhs;
+          }
+          return new ProjectionAnalysisConstraint(NOT, lhs, NULL);
+        default:
+          assert(0);
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    ProjectionAnalysisConstraint* ProjectionAnalysisConstraint::to_dnf_helper()
+    //--------------------------------------------------------------------------
+    {
+      ProjectionAnalysisConstraint *newLhs =
+        new ProjectionAnalysisConstraint(TRUE);
+      ProjectionAnalysisConstraint *newRhs =
+        new ProjectionAnalysisConstraint(TRUE);
+      switch(constraint_type)
+      {
+        case EQ:
+        case NEQ:
+            return new ProjectionAnalysisConstraint(
+                constraint_type, lhs_exp, rhs_exp);
+        case AEQ:
+        case ANEQ:
+            return new ProjectionAnalysisConstraint(
+                constraint_type, lhs_affine_exp, rhs_affine_exp);
+        case TRUE:
+        case FALSE:
+          return new ProjectionAnalysisConstraint(constraint_type);
+        case NOT:
+          return new ProjectionAnalysisConstraint(NOT, lhs, NULL);
+        case OR:
+          return new ProjectionAnalysisConstraint(OR, lhs, rhs);
+        case AND:
+          if (lhs->constraint_type == OR)
+          {
+            newLhs = new ProjectionAnalysisConstraint(AND,
+                lhs->lhs, rhs);
+            newLhs = newLhs->to_dnf_helper();
+            newRhs = new ProjectionAnalysisConstraint(AND,
+                lhs->rhs, rhs);
+            newRhs = newRhs->to_dnf_helper();
+            return new ProjectionAnalysisConstraint(OR, newLhs, newRhs);
+          }
+          else if (rhs->constraint_type == OR)
+          {
+            newLhs = new ProjectionAnalysisConstraint(AND,
+                lhs, rhs->lhs);
+            newLhs = newLhs->to_dnf_helper();
+            newRhs = new ProjectionAnalysisConstraint(AND,
+                lhs, rhs->rhs);
+            newRhs = newRhs->to_dnf_helper();
+            return new ProjectionAnalysisConstraint(OR, newLhs, newRhs);
+          }
+          else
+          {
+            return new ProjectionAnalysisConstraint(AND, lhs, rhs);
+          }
         default:
           assert(0);
       }
@@ -2636,6 +3457,9 @@ namespace Legion {
           //add all the domain points to a vector
           //return that as the "no" vector
           break;
+        case AEQ: // these next two cases are not supported
+        case ANEQ:
+          assert(0);
         default:
           // Should never be reached
           assert(0);
@@ -2881,6 +3705,20 @@ namespace Legion {
           ret_string += lhs_exp->stringify();
           ret_string += " != ";
           ret_string += rhs_exp->stringify();
+          ret_string += ")";
+          return ret_string;
+        case AEQ:
+          ret_string = "(";
+          ret_string += lhs_exp->stringify();
+          ret_string += " == ";
+          ret_string += rhs_exp->stringify();
+          ret_string += ")";
+          return ret_string;
+        case ANEQ:
+          ret_string = "(";
+          ret_string += lhs_affine_exp->stringify();
+          ret_string += " != ";
+          ret_string += rhs_affine_exp->stringify();
           ret_string += ")";
           return ret_string;
         case NOT:

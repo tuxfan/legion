@@ -1522,7 +1522,7 @@ namespace Legion {
       for (int idx = (int) proj1.steps.size() - 1; idx >= 0; idx--)
       {
         if (cur_node->is_region()) {
-          new_constraint = add_constraints(NEQ, proj1.steps[idx],
+          new_constraint = add_constraints(ANEQ, proj1.steps[idx],
               proj2.steps[idx]);
           cur_constraint = new
             ProjectionAnalysisConstraint(OR, new_constraint, cur_constraint);
@@ -1530,14 +1530,14 @@ namespace Legion {
         else {
           if (cur_node->are_all_children_disjoint())
           {
-            new_constraint = add_constraints(EQ, proj1.steps[idx],
+            new_constraint = add_constraints(AEQ, proj1.steps[idx],
                 proj2.steps[idx]);
             cur_constraint = new
               ProjectionAnalysisConstraint(AND, new_constraint, cur_constraint);
           }
           else
           {
-            new_constraint = add_constraints(NEQ, proj1.steps[idx],
+            new_constraint = add_constraints(ANEQ, proj1.steps[idx],
                 proj2.steps[idx]);
             cur_constraint = new
               ProjectionAnalysisConstraint(OR, new_constraint, cur_constraint);
@@ -1592,11 +1592,11 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
-      assert(comparison_type == EQ || comparison_type == NEQ);
+      assert(comparison_type == AEQ || comparison_type == ANEQ);
 #endif
       ConstraintType conjunction_type;
       ConstraintType base;
-      if (comparison_type == EQ)
+      if (comparison_type == AEQ)
       {
         conjunction_type = AND;
         base = TRUE;
