@@ -2255,7 +2255,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       bool has_nonzero_coeffs = false;
-      for (int i = 0; i < coefficients.dim - 1; i++)
+      for (int i = 0; i < coefficients.dim; i++)
       {
         has_nonzero_coeffs = has_nonzero_coeffs || (coefficients[i] != 0);
       }
@@ -2270,7 +2270,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       bool has_nonzero_coeffs = false;
-      for (int i = 0; i < coefficients.dim - 1; i++)
+      for (int i = 0; i < coefficients.dim; i++)
       {
         has_nonzero_coeffs = has_nonzero_coeffs || (coefficients[i] != 0);
       }
@@ -2311,7 +2311,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
-      assert(p.dim + 1== coefficients.dim);
+      assert(p.dim == coefficients.dim);
 #endif
       int value = 0;
       for (int i = 0; i < p.dim; ++i)
@@ -2331,7 +2331,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
-      assert(p.dim + 1== coefficients.dim);
+      assert(p.dim == coefficients.dim);
 #endif
       int value = 0;
       for (int i = 0; i < p.dim; ++i)
@@ -2433,7 +2433,7 @@ namespace Legion {
           needs_plus = true;
         }
       }
-      if (needs_plus)
+      if (needs_plus && offset != 0)
       {
         stringStream << " + ";
       }
@@ -3709,9 +3709,9 @@ namespace Legion {
           return ret_string;
         case AEQ:
           ret_string = "(";
-          ret_string += lhs_exp->stringify();
+          ret_string += lhs_affine_exp->stringify();
           ret_string += " == ";
-          ret_string += rhs_exp->stringify();
+          ret_string += rhs_affine_exp->stringify();
           ret_string += ")";
           return ret_string;
         case ANEQ:

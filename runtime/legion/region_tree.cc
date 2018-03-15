@@ -1610,9 +1610,9 @@ namespace Legion {
         ProjectionAnalysisConstraint(base);
       for (int idx = 0; idx < step1.transform.m; idx++)
       {
-        ProjectionExpression *exp1 = ProjectionExpression::from_affine_step(
+        AffineExpression *exp1 = AffineExpression::from_affine_step(
             step1, idx);
-        ProjectionExpression *exp2 = ProjectionExpression::from_affine_step(
+        AffineExpression *exp2 = AffineExpression::from_affine_step(
             step2, idx);
         ProjectionAnalysisConstraint *comparison_constraint = new
           ProjectionAnalysisConstraint(comparison_type, exp1, exp2);

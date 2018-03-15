@@ -578,6 +578,9 @@ namespace Legion {
       std::vector<std::vector<AffineConstraint> >
           process_constraint_equations(void);
       void find_intralaunch_dependencies(
+          std::vector<AffineConstraint> &affine_constraints,
+          std::vector<PointTask*> &local_points);
+      void find_intralaunch_dependencies_2(
           std::vector<AffineConstraint*> &affine_constraints,
           std::vector<PointTask*> &local_points);
       std::vector<DomainPoint> find_conflicting_points(
@@ -827,6 +830,9 @@ namespace Legion {
       void send_back_created_state(AddressSpaceID target);
     public:
       virtual void record_reference_mutation_effect(RtEvent event);
+    public:
+      // List of events that must be triggered before this point task can map
+      std::set<RtEvent> map_preconditions;
     protected:
       friend class SliceTask;
       SliceTask                   *slice_owner;

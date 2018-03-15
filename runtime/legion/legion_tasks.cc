@@ -4755,12 +4755,12 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       std::vector<std::vector<AffineConstraint> > affine_constraints;
-      std::vector<AffineConstraint> first_subproblem_constraints;
-      affine_constraints.push_back(first_subproblem_constraints);
       for (unsigned i = 0; i < constraint_equations.size(); i++)
       {
-        process_constraint_equations_helper(constraint_equations[i],
-            affine_constraints);
+        std::vector<AffineConstraint> first_subproblem_constraints;
+        affine_constraints.push_back(first_subproblem_constraints);
+        process_constraint_equations_helper(
+            *(constraint_equations[i].to_dnf()), affine_constraints);
       }
       return affine_constraints;
     }
@@ -4814,6 +4814,84 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void MultiTask::find_intralaunch_dependencies(
+        std::vector<AffineConstraint> &affine_constraints,
+        std::vector<PointTask*> &local_points)
+    //--------------------------------------------------------------------------
+    {
+      // map from (n, value) to point tasks that evaluate
+      // to value on the nth equation
+      OrderingFunctor *ord_func =
+        runtime->find_ordering_functor(oid);
+      std::map<std::vector<int>, std::vector<PointTask*>> lhs_values_map;
+      for (std::vector<PointTask*>::const_iterator it = local_points.begin();
+            it != local_points.end(); it++)
+      {
+        std::vector<int> lhs_values;
+        for (unsigned cidx = 0; cidx < affine_constraints.size(); cidx++)
+        {
+          int lhs_value =
+              affine_constraints[cidx].lhs->evaluate((*it)->index_point);
+          lhs_values.push_back(lhs_value);
+        }
+        lhs_values_map[lhs_values].push_back(*it);
+      }
+
+      PointTask* conflicting_point_task;
+      for (std::vector<PointTask*>::const_iterator it = local_points.begin();
+            it != local_points.end(); it++)
+      {
+        int cur_point_order = ord_func->get_order_value((*it)->index_point);
+        std::vector<int> rhs_values;
+        for (unsigned cidx = 0; cidx < affine_constraints.size(); cidx++)
+        {
+          int rhs_value =
+              affine_constraints[cidx].rhs->evaluate((*it)->index_point);
+          rhs_values.push_back(rhs_value);
+        }
+
+        for (unsigned i = 0; i < lhs_values_map[rhs_values].size(); i++)
+        {
+          conflicting_point_task = lhs_values_map[rhs_values][i];
+          if (conflicting_point_task->index_point == (*it)->index_point)
+          {
+            continue;
+          }
+          int conflicting_point_order =
+              ord_func->get_order_value(conflicting_point_task->index_point);
+          if (cur_point_order < conflicting_point_order)
+          {
+            printf("Point (%lld, %lld) depends on (%lld, %lld)\n",
+                conflicting_point_task->index_point[0],
+                conflicting_point_task->index_point[1],
+                (*it)->index_point[0],
+                (*it)->index_point[1]);
+            conflicting_point_task->map_preconditions.insert(
+                point_task_events[(*it)->index_point]);
+          }
+          else if (cur_point_order > conflicting_point_order)
+          {
+            printf("Point (%lld, %lld) depends on (%lld, %lld)\n",
+                (*it)->index_point[0],
+                (*it)->index_point[1],
+                conflicting_point_task->index_point[0],
+                conflicting_point_task->index_point[1]);
+            (*it)->map_preconditions.insert(
+                point_task_events[conflicting_point_task->index_point]);
+          }
+#ifdef DEBUG_LEGION
+          else
+          {
+            // two conflicting points in the same launch should not
+            // have the same order value
+            assert(0);
+          }
+#endif
+        }
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    void MultiTask::find_intralaunch_dependencies_2(
         std::vector<AffineConstraint*> &affine_constraints,
         std::vector<PointTask*> &local_points)
     //--------------------------------------------------------------------------
@@ -7321,6 +7399,7 @@ namespace Legion {
     void IndexTask::perform_structured_dependence_analysis()
     //--------------------------------------------------------------------------
     {
+      printf("performing structured dependence analysis\n");
       std::vector<std::vector<RegionRequirement> > proj_reqs_by_tree;
       std::vector<std::vector<ProjectionFunction*> > proj_funcs_by_tree;
       //std::vector<ProjectionFunction*> proj_funcs;
@@ -7447,8 +7526,6 @@ namespace Legion {
         }
       }
 
-printf("Failing on purpose here\n");
-assert(0);
       constraint_equations = constraints;
     }
 
@@ -8650,11 +8727,30 @@ assert(0);
       // cleaned up while we are still iterating through the loop
       std::vector<PointTask*> local_points(points);
       bool needs_versioning = constraint_equations.size() > 0;
+
+      // put the equations in dnf form
+      // find the intralaunch dependencies
+      if (constraint_equations.size() > 0)
+      {
+        std::vector<std::vector<AffineConstraint> > dnf_constraints =
+            process_constraint_equations();
+        for (unsigned i = 0; i < dnf_constraints.size(); i++)
+        {
+          find_intralaunch_dependencies(dnf_constraints[i], local_points);
+        }
+      }
+
       for (std::vector<PointTask*>::const_iterator it = local_points.begin();
             it != local_points.end(); it++)
       {
         PointTask *next_point = *it;
-        RtEvent dep_event = next_point->find_interlaunch_dependencies();
+        if (constraint_equations.size() > 0)
+        {
+          next_point->map_preconditions.insert(slice_deps_mapped_event);
+        }
+        RtEvent dep_event =
+            Runtime::merge_events(next_point->map_preconditions);
+
         if (dep_event.exists() && !dep_event.has_triggered())
         {
           next_point->defer_map_and_launch(dep_event, true);

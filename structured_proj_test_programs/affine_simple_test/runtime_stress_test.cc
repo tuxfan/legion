@@ -193,18 +193,22 @@ void SliceMapper::compute_cached_procs(std::vector<Processor> all_procs)
   cached = true;
 }
 
-class FromTopRightOrderFunctor : public OrderingFunctor
+class FromTopRightOrderFunctor : public StructuredOrderingFunctor
 {
   public:
     FromTopRightOrderFunctor()
-      : OrderingFunctor() {}
+      : StructuredOrderingFunctor(get_coefficients()) {}
 
     ~FromTopRightOrderFunctor() {}
 
-    virtual int get_order_value(const DomainPoint &point)
+  private:
+    static DomainPoint get_coefficients(void)
     {
-      assert(point.get_dim() == 2);
-      return -point[0] - point[1];
+      DomainPoint coeffs;
+      coeffs.dim = 2;
+      coeffs[0] = -1;
+      coeffs[1] = -1;
+      return coeffs;
     }
 };
 
@@ -937,14 +941,14 @@ void check_task(const Task *task,
     int expected = 1;
     expected = x + y + 1;
 
-    //printf("At point (%lld, %lld)\n", (*pir)[0], (*pir)[1]);
-    //printf("Checking for values %d and %d... expected %d, found %d\n",
-    //    x, y, expected, val);
+    printf("At point (%lld, %lld)\n", (*pir)[0], (*pir)[1]);
+    printf("Checking for values %d and %d... expected %d, found %d\n",
+        x, y, expected, val);
     
     if (expected != val)
     {
       all_passed = false;
-      break;
+    //  break;
     }
   }
   if (all_passed)
