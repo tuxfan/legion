@@ -1,11 +1,42 @@
-%sri
-
 \section{Implementation of Resilience}
 
 \subsection{\texttt{need\_preserve} Implementation}
 
 tagging region instances
 tagging tasks
+
+-the mapper marks an instance as persistent, i.e., vector<vector<bool>> persistent
+-in finalize\_map\_task, the singleTask sees this and notes it down in the Individual\_task's persistent\_tasks list
+-when trigger\_complete is called on the task, 
+
+	1) inside line 5560, invalidate\_region\_tree\_contexts, 
+		inside which we have runtime->forest->invalidate\_versions, we do not do on region[idx].region.
+		we also do not do the instance\_top\_views
+		
+	2) we retain the mark on the task as allowed\_for\_gc.
+
+   3) we go to the incoming of this task, and just like verified\_regions[true], we mark outgoing\_edge\_dominated[true]
+      if all the outgoing of a task is marked as true, then we change allowed\_for\_gc = true.
+
+
+Discussion Points for today
+--------------------------
+1) allow persistence on a subset of mapped instances in map\_task ? Pro:
+flexibility, Con: if a checkpoint is to be considered useful for a restart, not
+having the full set of inputs checkpointed seems contradictory. 
+2) verify\_regions tracks op dependencies after physical dependence analysis, correct ? 
+3) a discussion on persistence inside map\_task call 
+
+
+discussed design:
+
+1) build a function set\_hardened\_instnace(instance,task) along the lines of the set\_gc\_priority(instance, never, task) inside the mapper call
+2) inside that mark a task's incoming edges as saying that it leads to a hardened instance(task)
+3) the garbage collector will basically collect a task whose outgoing edges are all marked as verified/hardened.
+4) if a task is gc'ed, then it marks all its incoming edges as leads to a hardened instance.
+5) steps 1-4 will be based on set\_garbage\_collection\_priority and how verified\_regions are set. We will be adding a new list to each task, similar to verified\_regions, that will represent edges\_ending\_in\_hardened\_regions.
+
+
 
 \subsubsection{Interaction of need\_preserve with the commit wavefront}
 \subsubsection{Obtaining dependence graph in the mapper before calling need\_preserve} 
