@@ -40,3 +40,12 @@ discussed design:
 
 \subsubsection{Interaction of need\_preserve with the commit wavefront}
 \subsubsection{Obtaining dependence graph in the mapper before calling need\_preserve} 
+
+
+\subsection{ProfilingResponse callback used}
+while using the profiling measurement reporting infrastructure as-is causes overhead, this is because of the invoking of a mapper profiling response function. We do not need that for resilience, so the resilience callback would short circuit it.
+
+task launch -> porfiling reported event is there -> when it is triggered -> \texttt{singletask::profiling\_response} is invoked -> handle things
+   ----- in here, there is no need to call the mapper side yet. So, avoid one overhead there, maybe this was never called and so , this is not an optimization. ok, back to square one. 
+
+ 
