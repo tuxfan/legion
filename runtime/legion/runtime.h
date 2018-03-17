@@ -1923,10 +1923,10 @@ namespace Legion {
       ProjectionFunction* find_projection_function(ProjectionID pid);
     public:
       void register_ordering_functor(OrderingID oid,
-                                     OrderingFunctor *func);
+                                     StructuredOrderingFunctor *func);
       static void preregister_ordering_functor(OrderingID oid,
-                                     OrderingFunctor *func);
-      OrderingFunctor* find_ordering_functor(OrderingID oid);
+                                     StructuredOrderingFunctor *func);
+      StructuredOrderingFunctor* find_ordering_functor(OrderingID oid);
     public:
       void attach_semantic_information(TaskID task_id, SemanticTag,
                                    const void *buffer, size_t size, 
@@ -2733,7 +2733,7 @@ namespace Legion {
     protected:
       mutable LocalLock projection_lock;
       std::map<ProjectionID,ProjectionFunction*> projection_functions;
-      std::map<OrderingID,OrderingFunctor*> ordering_functors;
+      std::map<OrderingID,StructuredOrderingFunctor*> ordering_functors;
     protected:
       mutable LocalLock group_lock;
       LegionMap<uint64_t,LegionDeque<ProcessorGroupInfo>::aligned,
@@ -2921,7 +2921,7 @@ namespace Legion {
                                 get_pending_constraint_table(void);
       static std::map<ProjectionID,ProjectionFunctor*>&
                                 get_pending_projection_table(void);
-      static std::map<OrderingID,OrderingFunctor*>&
+      static std::map<OrderingID,StructuredOrderingFunctor*>&
                                 get_pending_ordering_table(void);
       static TaskID& get_current_static_task_id(void);
       static TaskID generate_static_task_id(void);

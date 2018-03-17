@@ -4418,6 +4418,13 @@ namespace Legion {
       }
 
       std::vector<std::set<RtEvent> > slice_dependency_events;
+      std::vector<SliceTask*> slices_vec(slices.size());
+
+      // Since the ordering functor is monotonic in the launch domain
+      // (in any domain), a slice's ordering can be based on its lowest point
+      std::vector<int> slice_orders(slices.size());
+      StructuredOrderingFunctor *ordering_func =
+        runtime->find_ordering_functor(oid);
 
       for(std::list<SliceTask*>::const_iterator it = slices.begin();
           it != slices.end(); ++it)
@@ -4425,9 +4432,12 @@ namespace Legion {
         SliceTask *slice = *it;
         runtime->forest->find_launch_space_domain(slice->internal_space,
             slice->internal_domain);
-        slice->set_structured_slice_mapped_trigger(Runtime::create_rt_user_event());
+        slice->set_structured_slice_mapped_trigger(
+            Runtime::create_rt_user_event());
         slice_dependency_events.push_back(std::set<RtEvent>());
-        // need to get the ordering value of the slice here
+        slice_orders.push_back(
+            ordering_func->get_min_value(slice->internal_domain));
+        slices_vec.push_back(slice);
       }
 
       std::vector<std::vector<AffineConstraint> > dnf_constraints =
@@ -4436,24 +4446,20 @@ namespace Legion {
       for (unsigned dnf_idx = 0; dnf_idx < dnf_constraints.size(); dnf_idx++)
       {
         std::vector<AffineConstraint> constraints = dnf_constraints[dnf_idx];
-        std::vector<RangeTree::Point<int, SliceTask*> > left_points;
-        std::vector<RangeTree::Point<int, SliceTask*> > right_points;
+        std::vector<RangeTree::Point<int, int> > left_points;
+        std::vector<RangeTree::Point<int, int> > right_points;
 
         std::vector<std::pair<std::vector<int>, std::vector<int> > > left_rects;
         std::vector<std::pair<std::vector<int>, std::vector<int> > > right_rects;
 
+        int slice_idx = 0;
         for(std::list<SliceTask*>::const_iterator it = slices.begin();
-            it != slices.end(); ++it)
+            it != slices.end(); ++it, slice_idx++)
         {
           std::vector<int> left_lo(constraints.size());
           std::vector<int> left_hi(constraints.size());
           std::vector<int> right_lo(constraints.size());
           std::vector<int> right_hi(constraints.size());
-          //DomainPoint left_min, left_max, right_min, right_max;
-          //left_min.dim = constraints.size();
-          //left_max.dim = constraints.size();
-          //right_min.dim = constraints.size();
-          //right_max.dim = constraints.size();
 
           for (unsigned cidx = 0; cidx < constraints.size(); cidx++)
           {
@@ -4470,21 +4476,20 @@ namespace Legion {
             right_hi[cidx] = right_max_value;
           }
 
-          RangeTree::Point<int, SliceTask*>::all_corners(left_lo, left_hi, left_points, *it);
-          RangeTree::Point<int, SliceTask*> right_point(right_hi, *it);
+          RangeTree::Point<int, int>::all_corners(left_lo, left_hi,
+              left_points, slice_idx);
+          RangeTree::Point<int, int> right_point(right_hi, slice_idx);
           right_points.push_back(right_point);
 
           left_rects.push_back(std::make_pair(left_lo, left_hi));
           right_rects.push_back(std::make_pair(right_lo, right_hi));
         }
 
-// fuck makefi
-        RangeTree::RangeTree<int, SliceTask*> left_rt(left_points);
-        RangeTree::RangeTree<int, SliceTask*> right_rt(right_points);
+        RangeTree::RangeTree<int, int> left_rt(left_points);
+        RangeTree::RangeTree<int, int> right_rt(right_points);
 
-        int idx = 0;
-        std::vector<RangeTree::Point<int, SliceTask*> > points_in_range;
-        RangeTree::Point<int, SliceTask*> point;
+        std::vector<RangeTree::Point<int, int> > points_in_range;
+        RangeTree::Point<int, int> point;
 
         std::vector<bool> true_vec(constraints.size());
         for (unsigned i = 0; i < constraints.size(); i++)
@@ -4492,30 +4497,68 @@ namespace Legion {
           true_vec[i] = true;
         }
 
+        slice_idx = 0;
         for(std::list<SliceTask*>::const_iterator it = slices.begin();
-            it != slices.end(); ++it, ++idx)
+            it != slices.end(); ++it, ++slice_idx)
         {
           points_in_range = left_rt.pointsInRange(
-              right_rects[idx].first, right_rects[idx].second, true_vec, true_vec);
+              right_rects[slice_idx].first, right_rects[slice_idx].second,
+              true_vec, true_vec);
+          int cur_order_value = slice_orders[slice_idx];
 
           for (unsigned i = 0; i < points_in_range.size(); i++)
           {
             point = points_in_range[i];
-            if (point.value() != (*it))
+            SliceTask *conflicting_slice = slices_vec[point.value()];
+            if (conflicting_slice != (*it))
             {
-              slice_dependency_events[idx].insert(point.value()->get_structured_slice_mapped_trigger());
+              if (slice_orders[point.value()] < cur_order_value)
+              {
+                slice_dependency_events[slice_idx].insert(
+                    conflicting_slice->get_structured_slice_mapped_trigger());
+              }
+              else if (cur_order_value < slice_orders[point.value()])
+              {
+                slice_dependency_events[point.value()].insert(
+                    (*it)->get_structured_slice_mapped_trigger());
+              }
+#ifdef DEBUG_LEGION
+              else
+              {
+                // conflict between two slices with the same order value
+                assert(0);
+              }
+#endif
             }
           }
 
           points_in_range = right_rt.pointsInRange(
-              left_rects[idx].first, left_rects[idx].second, true_vec, true_vec);
+              left_rects[slice_idx].first, left_rects[slice_idx].second,
+              true_vec, true_vec);
 
           for (unsigned i = 0; i < points_in_range.size(); i++)
           {
             point = points_in_range[i];
-            if (point.value() != (*it))
+            SliceTask *conflicting_slice = slices_vec[point.value()];
+            if (conflicting_slice != (*it))
             {
-              slice_dependency_events[idx].insert(point.value()->get_structured_slice_mapped_trigger());
+              if (slice_orders[point.value()] < cur_order_value)
+              {
+                slice_dependency_events[slice_idx].insert(
+                    conflicting_slice->get_structured_slice_mapped_trigger());
+              }
+              else if (cur_order_value < slice_orders[point.value()])
+              {
+                slice_dependency_events[point.value()].insert(
+                    (*it)->get_structured_slice_mapped_trigger());
+              }
+#ifdef DEBUG_LEGION
+              else
+              {
+                // conflict between two slices with the same order value
+                assert(0);
+              }
+#endif
             }
           }
         }
@@ -4587,7 +4630,7 @@ namespace Legion {
             {
               ProjectionAnalysisConstraint constraintEq =
                   constraint_equations[idx_p];
-              OrderingFunctor *ordering_func =
+              StructuredOrderingFunctor *ordering_func =
                 runtime->find_ordering_functor(oid);
                 // make this into a domain point
               constraintEq.get_dependent_points(p1,
@@ -4657,7 +4700,7 @@ namespace Legion {
             {
               ProjectionAnalysisConstraint constraintEq =
                   constraint_equations[idx_p];
-              OrderingFunctor *ordering_func =
+              StructuredOrderingFunctor *ordering_func =
                 runtime->find_ordering_functor(oid);
                 // make this into a domain point
               constraintEq.get_dependent_points(p1,
@@ -4950,7 +4993,7 @@ namespace Legion {
     {
       // map from (n, value) to point tasks that evaluate
       // to value on the nth equation
-      OrderingFunctor *ord_func =
+      StructuredOrderingFunctor *ord_func =
         runtime->find_ordering_functor(oid);
       std::map<std::vector<int>, std::vector<PointTask*>> lhs_values_map;
       for (std::vector<PointTask*>::const_iterator it = local_points.begin();
@@ -6677,7 +6720,7 @@ namespace Legion {
           /*std::vector<DomainPoint> dependentPoints =
               constraintEq->get_dependent_points2(index_point,
               slice_owner->index_owner->internal_domain);*/
-          OrderingFunctor *ord_func =
+          StructuredOrderingFunctor *ord_func =
             runtime->find_ordering_functor(slice_owner->oid);
           std::vector<DomainPoint> dependent_points;
           constraintEq.get_dependent_points(index_point,

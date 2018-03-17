@@ -9558,9 +9558,9 @@ namespace Legion {
     void Runtime::register_static_ordering_functors(void)
     //--------------------------------------------------------------------------
     {
-      std::map<OrderingID,OrderingFunctor*> &pending_ordering_functors =
+      std::map<OrderingID,StructuredOrderingFunctor*> &pending_ordering_functors =
         get_pending_ordering_table();
-      for (std::map<OrderingID,OrderingFunctor*>::const_iterator it =
+      for (std::map<OrderingID,StructuredOrderingFunctor*>::const_iterator it =
             pending_ordering_functors.begin(); it !=
             pending_ordering_functors.end(); it++)
       {
@@ -12183,10 +12183,10 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void Runtime::register_ordering_functor(OrderingID oid,
-                                            OrderingFunctor *functor)
+                                            StructuredOrderingFunctor *functor)
     //--------------------------------------------------------------------------
     {
-      std::map<OrderingID,OrderingFunctor*>::
+      std::map<OrderingID,StructuredOrderingFunctor*>::
         const_iterator finder = ordering_functors.find(oid);
       if (finder != ordering_functors.end())
       {
@@ -12202,16 +12202,16 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     /*static*/ void Runtime::preregister_ordering_functor(OrderingID oid,
-                                                 OrderingFunctor *functor)
+                                              StructuredOrderingFunctor *functor)
     //--------------------------------------------------------------------------
     {
       if (runtime_started)
         REPORT_LEGION_ERROR(ERROR_STATIC_CALL_POST_RUNTIME_START,
                       "Illegal call to 'preregister_ordering_functor' after "
                       "the runtime has started!")
-      std::map<OrderingID,OrderingFunctor*> &pending_ordering_functors =
-        get_pending_ordering_table();
-      std::map<OrderingID,OrderingFunctor*>::const_iterator finder =
+      std::map<OrderingID,StructuredOrderingFunctor*>
+          &pending_ordering_functors = get_pending_ordering_table();
+      std::map<OrderingID,StructuredOrderingFunctor*>::const_iterator finder =
         pending_ordering_functors.find(oid);
       if (finder != pending_ordering_functors.end())
         REPORT_LEGION_ERROR(ERROR_DUPLICATE_ORDERING_ID,
@@ -12221,10 +12221,10 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    OrderingFunctor* Runtime::find_ordering_functor(OrderingID oid)
+    StructuredOrderingFunctor* Runtime::find_ordering_functor(OrderingID oid)
     //--------------------------------------------------------------------------
     {
-      std::map<OrderingID,OrderingFunctor*>::
+      std::map<OrderingID,StructuredOrderingFunctor*>::
         const_iterator finder = ordering_functors.find(oid);
       if (finder == ordering_functors.end())
       {
@@ -18732,11 +18732,12 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    /*static*/ std::map<OrderingID,OrderingFunctor*>&
+    /*static*/ std::map<OrderingID,StructuredOrderingFunctor*>&
                                      Runtime::get_pending_ordering_table(void)
     //--------------------------------------------------------------------------
     {
-      static std::map<OrderingID,OrderingFunctor*> pending_ordering_table;
+      static std::map<OrderingID,StructuredOrderingFunctor*>
+          pending_ordering_table;
       return pending_ordering_table;
     }
 

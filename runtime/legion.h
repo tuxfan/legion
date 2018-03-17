@@ -2844,6 +2844,8 @@ namespace Legion {
        */
       virtual int get_order_value(const DomainPoint &point);
       virtual bool is_structured() { return true; }
+    public:
+      int get_min_value(const Domain &d);
     private:
       DomainPoint coefficients;
     };
@@ -6346,7 +6348,7 @@ namespace Legion {
        * @param functor the object to register for defining the ordering
        */
       void register_ordering_functor(OrderingID oid,
-                                     OrderingFunctor *functor);
+                                     StructuredOrderingFunctor *functor);
 
       /**
        * Register a ordering functor before the runtime has started only.
@@ -6354,7 +6356,7 @@ namespace Legion {
        * @param functor the object to register for defining the ordering
        */
       static void preregister_ordering_functor(OrderingID oid,
-                                               OrderingFunctor *functor);
+                                      StructuredOrderingFunctor *functor);
     public:
       //------------------------------------------------------------------------
       // Start-up Operations

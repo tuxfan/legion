@@ -464,7 +464,7 @@ void init_task(const Task *task,
   RegionAccessor<AccessorType::Generic, int> acc_m3 = 
     regions[2].get_field_accessor(mat3_vals).typeify<int>();
 
-  Rect<2> rect = runtime->get_index_space_domain(ctx, 
+  Rect<2> rect = runtime->get_index_space_domain(ctx,
       task->regions[0].region.get_index_space());
   //printf("calling the init method\n");
   for (PointInRectIterator<2> pir(rect); pir(); pir++)

@@ -2776,6 +2776,28 @@ namespace Legion {
       return value;
     }
 
+    //--------------------------------------------------------------------------
+    int StructuredOrderingFunctor::get_min_value(const Domain &d)
+    //--------------------------------------------------------------------------
+    {
+      DomainPoint point_to_eval;
+      point_to_eval.dim = d.dim;
+      DomainPoint lo = d.lo();
+      DomainPoint hi = d.hi();
+      for (int i = 0; i < coefficients.dim; i++)
+      {
+        if (coefficients[i] < 0)
+        {
+          point_to_eval[i] = hi[i];
+        }
+        else
+        {
+          point_to_eval[i] = lo[i];
+        }
+      }
+      return get_order_value(point_to_eval);
+    }
+
 
     /////////////////////////////////////////////////////////////
     // ProjectionFunctor 
@@ -6610,7 +6632,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void Runtime::register_ordering_functor(OrderingID oid,
-                                            OrderingFunctor *func)
+                                            StructuredOrderingFunctor *func)
     //--------------------------------------------------------------------------
     {
       runtime->register_ordering_functor(oid, func);
@@ -6618,7 +6640,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     /*static*/ void Runtime::preregister_ordering_functor(OrderingID oid,
-                                                 OrderingFunctor *func)
+                                                 StructuredOrderingFunctor *func)
     //--------------------------------------------------------------------------
     {
       Internal::Runtime::preregister_ordering_functor(oid, func);
