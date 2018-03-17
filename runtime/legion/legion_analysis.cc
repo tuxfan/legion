@@ -2455,6 +2455,50 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    int AffineExpression::get_min_value_no_mod(Domain &d)
+    //--------------------------------------------------------------------------
+    {
+      DomainPoint point_to_eval;
+      point_to_eval.dim = d.dim;
+      DomainPoint lo = d.lo();
+      DomainPoint hi = d.hi();
+      for (int i = 0; i < coefficients.dim; i++)
+      {
+        if (coefficients[i] < 0)
+        {
+          point_to_eval[i] = hi[i];
+        }
+        else
+        {
+          point_to_eval[i] = lo[i];
+        }
+      }
+      return evaluate_no_mod(point_to_eval);
+    }
+
+    //--------------------------------------------------------------------------
+    int AffineExpression::get_max_value_no_mod(Domain &d)
+    //--------------------------------------------------------------------------
+    {
+      DomainPoint point_to_eval;
+      point_to_eval.dim = d.dim;
+      DomainPoint lo = d.lo();
+      DomainPoint hi = d.hi();
+      for (int i = 0; i < coefficients.dim; i++)
+      {
+        if (coefficients[i] < 0)
+        {
+          point_to_eval[i] = lo[i];
+        }
+        else
+        {
+          point_to_eval[i] = hi[i];
+        }
+      }
+      return evaluate_no_mod(point_to_eval);
+    }
+
+    //--------------------------------------------------------------------------
     void AffineExpression::pack_expression(Serializer &rez) const
     //--------------------------------------------------------------------------
     {

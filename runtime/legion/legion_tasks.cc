@@ -24,6 +24,8 @@
 #include "legion/legion_analysis.h"
 #include "legion/legion_views.h"
 
+#include "legion/range_tree.h"
+
 #include <algorithm>
 
 #define PRINT_REG(reg) (reg).index_space.id,(reg).field_space.id, (reg).tree_id
@@ -4402,6 +4404,134 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void MultiTask::analyze_structured_slices(void)
+    //--------------------------------------------------------------------------
+    {
+      if (constraint_equations.size() == 0)
+      {
+        for(std::list<SliceTask*>::const_iterator it = slices.begin();
+            it != slices.end(); ++it)
+        {
+          SliceTask *slice = *it;
+          slice->set_structured_slice_mapped_trigger(Runtime::create_rt_user_event());
+        }
+        return;
+      }
+
+      std::vector<std::set<RtEvent> > slice_dependency_events;
+
+      for(std::list<SliceTask*>::const_iterator it = slices.begin();
+          it != slices.end(); ++it)
+      {
+        SliceTask *slice = *it;
+        runtime->forest->find_launch_space_domain(slice->internal_space,
+            slice->internal_domain);
+        slice->set_structured_slice_mapped_trigger(Runtime::create_rt_user_event());
+        slice_dependency_events.push_back(std::set<RtEvent>());
+        // need to get the ordering value of the slice here
+      }
+
+      std::vector<std::vector<AffineConstraint> > dnf_constraints =
+          process_constraint_equations();
+
+      for (unsigned dnf_idx = 0; dnf_idx < dnf_constraints.size(); dnf_idx++)
+      {
+        std::vector<AffineConstraint> constraints = dnf_constraints[dnf_idx];
+        std::vector<RangeTree::Point<int, SliceTask*> > left_points;
+        std::vector<RangeTree::Point<int, SliceTask*> > right_points;
+
+        std::vector<std::pair<std::vector<int>, std::vector<int> > > left_rects;
+        std::vector<std::pair<std::vector<int>, std::vector<int> > > right_rects;
+
+        for(std::list<SliceTask*>::const_iterator it = slices.begin();
+            it != slices.end(); ++it)
+        {
+          std::vector<int> left_lo(constraints.size());
+          std::vector<int> left_hi(constraints.size());
+          std::vector<int> right_lo(constraints.size());
+          std::vector<int> right_hi(constraints.size());
+          //DomainPoint left_min, left_max, right_min, right_max;
+          //left_min.dim = constraints.size();
+          //left_max.dim = constraints.size();
+          //right_min.dim = constraints.size();
+          //right_max.dim = constraints.size();
+
+          for (unsigned cidx = 0; cidx < constraints.size(); cidx++)
+          {
+            int left_min_value = constraints[cidx].lhs->get_min_value_no_mod((*it)->internal_domain);
+            int left_max_value = constraints[cidx].lhs->get_max_value_no_mod((*it)->internal_domain);
+            int right_min_value = constraints[cidx].rhs->get_min_value_no_mod((*it)->internal_domain);
+            int right_max_value = constraints[cidx].rhs->get_max_value_no_mod((*it)->internal_domain);
+
+            // need to do some analysis here for the mod case
+
+            left_lo[cidx] = left_min_value;
+            left_hi[cidx] = left_max_value;
+            right_lo[cidx] = right_min_value;
+            right_hi[cidx] = right_max_value;
+          }
+
+          RangeTree::Point<int, SliceTask*>::all_corners(left_lo, left_hi, left_points, *it);
+          RangeTree::Point<int, SliceTask*> right_point(right_hi, *it);
+          right_points.push_back(right_point);
+
+          left_rects.push_back(std::make_pair(left_lo, left_hi));
+          right_rects.push_back(std::make_pair(right_lo, right_hi));
+        }
+
+// fuck makefi
+        RangeTree::RangeTree<int, SliceTask*> left_rt(left_points);
+        RangeTree::RangeTree<int, SliceTask*> right_rt(right_points);
+
+        int idx = 0;
+        std::vector<RangeTree::Point<int, SliceTask*> > points_in_range;
+        RangeTree::Point<int, SliceTask*> point;
+
+        std::vector<bool> true_vec(constraints.size());
+        for (unsigned i = 0; i < constraints.size(); i++)
+        {
+          true_vec[i] = true;
+        }
+
+        for(std::list<SliceTask*>::const_iterator it = slices.begin();
+            it != slices.end(); ++it, ++idx)
+        {
+          points_in_range = left_rt.pointsInRange(
+              right_rects[idx].first, right_rects[idx].second, true_vec, true_vec);
+
+          for (unsigned i = 0; i < points_in_range.size(); i++)
+          {
+            point = points_in_range[i];
+            if (point.value() != (*it))
+            {
+              slice_dependency_events[idx].insert(point.value()->get_structured_slice_mapped_trigger());
+            }
+          }
+
+          points_in_range = right_rt.pointsInRange(
+              left_rects[idx].first, left_rects[idx].second, true_vec, true_vec);
+
+          for (unsigned i = 0; i < points_in_range.size(); i++)
+          {
+            point = points_in_range[i];
+            if (point.value() != (*it))
+            {
+              slice_dependency_events[idx].insert(point.value()->get_structured_slice_mapped_trigger());
+            }
+          }
+        }
+      }
+
+      int idx = 0;
+      for(std::list<SliceTask*>::const_iterator it = slices.begin();
+          it != slices.end(); ++it, ++idx)
+      {
+        (*it)->set_slice_deps_mapped_event(
+            Runtime::merge_events(slice_dependency_events[idx]));
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    void MultiTask::analyze_structured_slices_2(void)
     //--------------------------------------------------------------------------
     {
       // Only necessary for structured index space launches

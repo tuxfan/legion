@@ -501,23 +501,28 @@ namespace Legion {
       AffineExpression(int const_value);
       AffineExpression(const AffineExpression &other);
     public:
-        int evaluate(DomainPoint &point);
-        int evaluate_no_mod(DomainPoint &point);
-        std::vector<int> find_potential_values(int rhs_val,
-            Domain domain);
-        std::string stringify(void) const;
+      int evaluate(DomainPoint &point);
+      int evaluate_no_mod(DomainPoint &point);
+      std::vector<int> find_potential_values(int rhs_val,
+          Domain domain);
+      std::string stringify(void) const;
     public:
-        void pack_expression(Serializer &rez) const;
-        void unpack_expression(Deserializer &derez);
+      //inline DomainPoint neg_grad_dir(void);
+      //inline DomainPoint pos_grad_dir(void);
+      int get_min_value_no_mod(Domain &d);
+      int get_max_value_no_mod(Domain &d);
     public:
-        static AffineExpression* from_affine_step(
-            AffineStructuredProjectionStep &step, int index);
+      void pack_expression(Serializer &rez) const;
+      void unpack_expression(Deserializer &derez);
     public:
-        DomainPoint coefficients;
-        int offset;
-        int divisor;
-        int mod_divisor;
-        bool is_const;
+      static AffineExpression* from_affine_step(
+          AffineStructuredProjectionStep &step, int index);
+    public:
+      DomainPoint coefficients;
+      int offset;
+      int divisor;
+      int mod_divisor;
+      bool is_const;
     };
 
     class UnionFind {

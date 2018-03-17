@@ -527,6 +527,7 @@ namespace Legion {
       void clone_multi_from(MultiTask *task, IndexSpace is, Processor p,
                             bool recurse, bool stealable);
       void analyze_structured_slices(void);
+      void analyze_structured_slices_2(void);
     public:
       virtual void activate(void) = 0;
       virtual void deactivate(void) = 0;
