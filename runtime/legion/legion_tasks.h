@@ -528,6 +528,10 @@ namespace Legion {
                             bool recurse, bool stealable);
     private:
       void analyze_structured_slices(void);
+      void enumerate_point_pairs(std::vector<std::vector<int> > &los,
+          std::vector<std::vector<int> > &his,
+          std::vector<std::vector<int> > &lo_acc,
+          std::vector<std::vector<int> > &hi_acc);
       void analyze_structured_slices_2(void);
     public:
       virtual void activate(void) = 0;

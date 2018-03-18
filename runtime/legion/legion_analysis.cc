@@ -2277,12 +2277,11 @@ namespace Legion {
       is_const = !has_nonzero_coeffs;
       if (is_const)
       {
-        // TODO: handle negative divisors properly
-        offset = offset / divisor;
+        offset = AffineExpression::div(offset, divisor);
         divisor = 1;
         if (mod_divisor != 0)
         {
-          offset = offset % mod_divisor;
+          offset = AffineExpression::mod(offset, mod_divisor);
           mod_divisor = 0;
         }
       }
@@ -2319,10 +2318,10 @@ namespace Legion {
         value += coefficients[i] * p[i];
       }
       value += offset;
-      //TODO: fix this for negative division/mod
-      value = value / divisor;
+
+      value = AffineExpression::div(value, divisor);
       if (mod_divisor != 0)
-        value = value % mod_divisor;
+        value = AffineExpression::mod(value, mod_divisor);
       return value;
     }
 
@@ -2339,8 +2338,7 @@ namespace Legion {
         value += coefficients[i] * p[i];
       }
       value += offset;
-      //TODO: fix this for negative division
-      value = value / divisor;
+      value = AffineExpression::div(value, divisor);
       return value;
     }
 
@@ -2464,7 +2462,7 @@ namespace Legion {
       DomainPoint hi = d.hi();
       for (int i = 0; i < coefficients.dim; i++)
       {
-        if (coefficients[i] < 0)
+        if (coefficients[i] < 0 && divisor > 0)
         {
           point_to_eval[i] = hi[i];
         }
@@ -2486,7 +2484,7 @@ namespace Legion {
       DomainPoint hi = d.hi();
       for (int i = 0; i < coefficients.dim; i++)
       {
-        if (coefficients[i] < 0)
+        if (coefficients[i] < 0 && divisor > 0)
         {
           point_to_eval[i] = lo[i];
         }

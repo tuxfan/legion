@@ -4418,7 +4418,7 @@ namespace Legion {
       }
 
       std::vector<std::set<RtEvent> > slice_dependency_events;
-      std::vector<SliceTask*> slices_vec(slices.size());
+      std::vector<SliceTask*> slices_vec;
 
       // Since the ordering functor is monotonic in the launch domain
       // (in any domain), a slice's ordering can be based on its lowest point
@@ -4456,33 +4456,139 @@ namespace Legion {
         for(std::list<SliceTask*>::const_iterator it = slices.begin();
             it != slices.end(); ++it, slice_idx++)
         {
-          std::vector<int> left_lo(constraints.size());
-          std::vector<int> left_hi(constraints.size());
-          std::vector<int> right_lo(constraints.size());
-          std::vector<int> right_hi(constraints.size());
+          std::vector<std::vector<int> > left_lo(constraints.size());
+          std::vector<std::vector<int> > left_hi(constraints.size());
+          std::vector<std::vector<int> > right_lo(constraints.size());
+          std::vector<std::vector<int> > right_hi(constraints.size());
 
           for (unsigned cidx = 0; cidx < constraints.size(); cidx++)
           {
-            int left_min_value = constraints[cidx].lhs->get_min_value_no_mod((*it)->internal_domain);
-            int left_max_value = constraints[cidx].lhs->get_max_value_no_mod((*it)->internal_domain);
-            int right_min_value = constraints[cidx].rhs->get_min_value_no_mod((*it)->internal_domain);
-            int right_max_value = constraints[cidx].rhs->get_max_value_no_mod((*it)->internal_domain);
+            int left_min_value =constraints[cidx].lhs->
+                get_min_value_no_mod((*it)->internal_domain);
+            int left_max_value = constraints[cidx].lhs->
+                get_max_value_no_mod((*it)->internal_domain);
+            int right_min_value = constraints[cidx].rhs->
+                get_min_value_no_mod((*it)->internal_domain);
+            int right_max_value = constraints[cidx].rhs->
+                get_max_value_no_mod((*it)->internal_domain);
 
-            // need to do some analysis here for the mod case
+            int left_mod_div = constraints[cidx].lhs->mod_divisor;
+            int right_mod_div = constraints[cidx].rhs->mod_divisor;
 
-            left_lo[cidx] = left_min_value;
-            left_hi[cidx] = left_max_value;
-            right_lo[cidx] = right_min_value;
-            right_hi[cidx] = right_max_value;
+            if (left_mod_div != 0)
+            {
+              int left_range_min, left_range_max, pos_left_mod_div;
+              if (left_mod_div > 0)
+              {
+                pos_left_mod_div = left_mod_div;
+                left_range_min = 0;
+                left_range_max = left_mod_div - 1;
+              }
+              else
+              {
+                pos_left_mod_div = -1 * left_mod_div;
+                left_range_min = left_mod_div + 1;
+                left_range_max = 0;
+              }
+              if (left_max_value - left_min_value >= pos_left_mod_div)
+              {
+                left_lo[cidx].push_back(left_range_min);
+                left_hi[cidx].push_back(left_range_max);
+              }
+              else
+              {
+                int left_min_mod = AffineExpression::mod(
+                    left_min_value, left_mod_div);
+                int left_max_mod = AffineExpression::mod(
+                    left_max_value, left_mod_div);
+                if (left_min_mod > left_max_mod)
+                {
+                  left_lo[cidx].push_back(left_min_mod);
+                  left_hi[cidx].push_back(left_max_mod);
+                }
+                else
+                {
+                  left_lo[cidx].push_back(left_range_min);
+                  left_hi[cidx].push_back(left_max_mod);
+                  left_lo[cidx].push_back(left_min_mod);
+                  left_hi[cidx].push_back(left_range_max);
+                }
+              }
+            }
+            else
+            {
+              left_lo[cidx].push_back(left_min_value);
+              left_hi[cidx].push_back(left_max_value);
+            }
+            if (right_mod_div != 0)
+            {
+              int right_range_min, right_range_max, pos_right_mod_div;
+              if (right_mod_div > 0)
+              {
+                pos_right_mod_div = right_mod_div;
+                right_range_min = 0;
+                right_range_max = right_mod_div - 1;
+              }
+              else
+              {
+                pos_right_mod_div = -1 * right_mod_div;
+                right_range_min = right_mod_div + 1;
+                right_range_max = 0;
+              }
+              if (right_max_value - right_min_value >= pos_right_mod_div)
+              {
+                right_lo[cidx].push_back(right_range_min);
+                right_hi[cidx].push_back(right_range_max);
+              }
+              else
+              {
+                int right_min_mod = AffineExpression::mod(
+                    right_min_value, right_mod_div);
+                int right_max_mod = AffineExpression::mod(
+                    right_max_value, right_mod_div);
+                if (right_min_mod > right_max_mod)
+                {
+                  right_lo[cidx].push_back(right_min_mod);
+                  right_hi[cidx].push_back(right_max_mod);
+                }
+                else
+                {
+                  right_lo[cidx].push_back(right_range_min);
+                  right_hi[cidx].push_back(right_max_mod);
+                  right_lo[cidx].push_back(right_min_mod);
+                  right_hi[cidx].push_back(right_range_max);
+                }
+              }
+            }
+            else
+            {
+              right_lo[cidx].push_back(right_min_value);
+              right_hi[cidx].push_back(right_max_value);
+            }
           }
 
-          RangeTree::Point<int, int>::all_corners(left_lo, left_hi,
-              left_points, slice_idx);
-          RangeTree::Point<int, int> right_point(right_hi, slice_idx);
-          right_points.push_back(right_point);
+          std::vector<std::vector<int> > left_lo_acc;
+          std::vector<std::vector<int> > left_hi_acc;
+          std::vector<std::vector<int> > right_lo_acc;
+          std::vector<std::vector<int> > right_hi_acc;
 
-          left_rects.push_back(std::make_pair(left_lo, left_hi));
-          right_rects.push_back(std::make_pair(right_lo, right_hi));
+          enumerate_point_pairs(left_lo, left_hi, left_lo_acc, left_hi_acc);
+          enumerate_point_pairs(right_lo, right_hi, right_lo_acc,
+              right_hi_acc);
+
+          for (unsigned i = 0; i < left_lo_acc.size(); i++)
+          {
+            RangeTree::Point<int, int>::all_corners(left_lo_acc[i],
+                left_hi_acc[i], left_points, slice_idx);
+            left_rects.push_back(std::make_pair(left_lo_acc[i], left_hi_acc[i]));
+          }
+          for (unsigned i = 0; i < right_hi_acc.size(); i++)
+          {
+            RangeTree::Point<int, int> right_point(right_hi_acc[i], slice_idx);
+            right_points.push_back(right_point);
+            right_rects.push_back(std::make_pair(right_lo_acc[i],
+                right_hi_acc[i]));
+          }
         }
 
         RangeTree::RangeTree<int, int> left_rt(left_points);
@@ -4570,6 +4676,47 @@ namespace Legion {
       {
         (*it)->set_slice_deps_mapped_event(
             Runtime::merge_events(slice_dependency_events[idx]));
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    void MultiTask::enumerate_point_pairs(std::vector<std::vector<int> > &los,
+        std::vector<std::vector<int> > &his,
+        std::vector<std::vector<int> > &lo_acc,
+        std::vector<std::vector<int> > &hi_acc)
+    //--------------------------------------------------------------------------
+    {
+      bool has_more = true;
+      std::vector<unsigned> indices(los.size());
+      for (unsigned i = 0; i < indices.size(); i++)
+      {
+        indices[i] = 0;
+      }
+      while (has_more)
+      {
+        has_more = false;
+        std::vector<int> lo_point(indices.size());
+        std::vector<int> hi_point(indices.size());
+        for (unsigned i = 0; i < indices.size(); i++)
+        {
+          lo_point[i] = los[i][indices[i]];
+          hi_point[i] = his[i][indices[i]];
+        }
+        lo_acc.push_back(lo_point);
+        hi_acc.push_back(hi_point);
+        for (unsigned i = 0; i < indices.size(); i++)
+        {
+          indices[i] += 1;
+          if (indices[i] == los[i].size())
+          {
+            indices[i] = 0;
+          }
+          else
+          {
+            has_more = true;
+            break;
+          }
+        }
       }
     }
 
