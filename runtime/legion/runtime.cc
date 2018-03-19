@@ -8640,11 +8640,11 @@ namespace Legion {
 
       if (!is_exclusive)
       {
-        StructuredProjection structured_proj;
+        AffineStructuredProjection structured_proj;
         if (functor->is_structured())
         {
           structured_proj = ((StructuredProjectionFunctor*) functor)->
-            project_structured(DUMMY_CONTEXT);
+            affine_project_structured(DUMMY_CONTEXT);
         }
         AutoLock p_lock(projection_reservation);
         if (req.handle_type == PART_PROJECTION)
@@ -8692,11 +8692,11 @@ namespace Legion {
       }
       else
       {
-        StructuredProjection structured_proj;
+        AffineStructuredProjection structured_proj;
         if (functor->is_structured())
         {
           structured_proj = ((StructuredProjectionFunctor*) functor)->
-            project_structured(DUMMY_CONTEXT);
+            affine_project_structured(DUMMY_CONTEXT);
         }
         if (req.handle_type == PART_PROJECTION)
         {
@@ -8975,7 +8975,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     LogicalRegion ProjectionFunction::evaluate_structured_projection(
-        StructuredProjection proj, const DomainPoint &point,
+        AffineStructuredProjection proj, const DomainPoint &point,
         LogicalRegion upper_bound, RegionTreeForest *forest)
     //--------------------------------------------------------------------------
     {
@@ -9000,7 +9000,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     LogicalRegion ProjectionFunction::evaluate_structured_projection(
-        StructuredProjection proj, const DomainPoint &point,
+        AffineStructuredProjection proj, const DomainPoint &point,
         LogicalPartition upper_bound, RegionTreeForest *forest)
     //--------------------------------------------------------------------------
     {
@@ -10502,6 +10502,13 @@ namespace Legion {
         case 3:
           {
             DomainT<3,coord_t> color_index_space;
+            forest->get_index_space_domain(color_space, &color_index_space,
+                                           color_space.get_type_tag());
+            return Domain(color_index_space);
+          }
+        case 4:
+          {
+            DomainT<4,coord_t> color_index_space;
             forest->get_index_space_domain(color_space, &color_index_space,
                                            color_space.get_type_tag());
             return Domain(color_index_space);
@@ -15839,6 +15846,12 @@ namespace Legion {
             DomainT<3,coord_t> is = dom;
             return find_or_create_index_launch_space(dom, &is,
                   NT_TemplateHelper::encode_tag<3,coord_t>());
+          }
+        case 4:
+          {
+            DomainT<4,coord_t> is = dom;
+            return find_or_create_index_launch_space(dom, &is,
+                  NT_TemplateHelper::encode_tag<4,coord_t>());
           }
         default:
           assert(false);

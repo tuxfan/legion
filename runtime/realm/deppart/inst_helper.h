@@ -240,7 +240,8 @@ namespace Realm {
 #define FOREACH_N(__func__) \
   __func__(1) \
   __func__(2) \
-  __func__(3)
+  __func__(3) \
+  __func__(4)
 
 #define FOREACH_NT(__func__) \
   __func__(1,int) \
@@ -252,6 +253,9 @@ namespace Realm {
   __func__(3,int) \
   __func__(3,unsigned) \
   __func__(3,long long) \
+  __func__(4,int) \
+  __func__(4,unsigned) \
+  __func__(4,long long) \
 
 
 #define FOREACH_NTF(__func__) \
@@ -273,6 +277,12 @@ namespace Realm {
   __func__(3,unsigned,bool) \
   __func__(3,long long,int) \
   __func__(3,long long,bool) \
+  __func__(4,int,int) \
+  __func__(4,int,bool) \
+  __func__(4,unsigned,int) \
+  __func__(4,unsigned,bool) \
+  __func__(4,long long,int) \
+  __func__(4,long long,bool) \
 
 #define FOREACH_NTNT(__func__) \
   __func__(1,int,1,int) \
@@ -284,6 +294,9 @@ namespace Realm {
   __func__(1,int,3,int) \
   __func__(1,int,3,unsigned) \
   __func__(1,int,3,long long) \
+  __func__(1,int,4,int) \
+  __func__(1,int,4,unsigned) \
+  __func__(1,int,4,long long) \
   __func__(1,unsigned,1,int) \
   __func__(1,unsigned,1,unsigned) \
   __func__(1,unsigned,1,long long) \
@@ -293,6 +306,9 @@ namespace Realm {
   __func__(1,unsigned,3,int) \
   __func__(1,unsigned,3,unsigned) \
   __func__(1,unsigned,3,long long) \
+  __func__(1,unsigned,4,int) \
+  __func__(1,unsigned,4,unsigned) \
+  __func__(1,unsigned,4,long long) \
   __func__(1,long long,1,int) \
   __func__(1,long long,1,unsigned) \
   __func__(1,long long,1,long long) \
@@ -302,6 +318,9 @@ namespace Realm {
   __func__(1,long long,3,int) \
   __func__(1,long long,3,unsigned) \
   __func__(1,long long,3,long long) \
+  __func__(1,long long,4,int) \
+  __func__(1,long long,4,unsigned) \
+  __func__(1,long long,4,long long) \
 \
   __func__(2,int,1,int) \
   __func__(2,int,1,unsigned) \
@@ -312,6 +331,9 @@ namespace Realm {
   __func__(2,int,3,int) \
   __func__(2,int,3,unsigned) \
   __func__(2,int,3,long long) \
+  __func__(2,int,4,int) \
+  __func__(2,int,4,unsigned) \
+  __func__(2,int,4,long long) \
   __func__(2,unsigned,1,int) \
   __func__(2,unsigned,1,unsigned) \
   __func__(2,unsigned,1,long long) \
@@ -321,6 +343,9 @@ namespace Realm {
   __func__(2,unsigned,3,int) \
   __func__(2,unsigned,3,unsigned) \
   __func__(2,unsigned,3,long long) \
+  __func__(2,unsigned,4,int) \
+  __func__(2,unsigned,4,unsigned) \
+  __func__(2,unsigned,4,long long) \
   __func__(2,long long,1,int) \
   __func__(2,long long,1,unsigned) \
   __func__(2,long long,1,long long) \
@@ -330,6 +355,9 @@ namespace Realm {
   __func__(2,long long,3,int) \
   __func__(2,long long,3,unsigned) \
   __func__(2,long long,3,long long) \
+  __func__(2,long long,4,int) \
+  __func__(2,long long,4,unsigned) \
+  __func__(2,long long,4,long long) \
 \
   __func__(3,int,1,int) \
   __func__(3,int,1,unsigned) \
@@ -340,6 +368,9 @@ namespace Realm {
   __func__(3,int,3,int) \
   __func__(3,int,3,unsigned) \
   __func__(3,int,3,long long) \
+  __func__(3,int,4,int) \
+  __func__(3,int,4,unsigned) \
+  __func__(3,int,4,long long) \
   __func__(3,unsigned,1,int) \
   __func__(3,unsigned,1,unsigned) \
   __func__(3,unsigned,1,long long) \
@@ -349,6 +380,9 @@ namespace Realm {
   __func__(3,unsigned,3,int) \
   __func__(3,unsigned,3,unsigned) \
   __func__(3,unsigned,3,long long) \
+  __func__(3,unsigned,4,int) \
+  __func__(3,unsigned,4,unsigned) \
+  __func__(3,unsigned,4,long long) \
   __func__(3,long long,1,int) \
   __func__(3,long long,1,unsigned) \
   __func__(3,long long,1,long long) \
@@ -358,5 +392,45 @@ namespace Realm {
   __func__(3,long long,3,int) \
   __func__(3,long long,3,unsigned) \
   __func__(3,long long,3,long long) \
+  __func__(3,long long,4,int) \
+  __func__(3,long long,4,unsigned) \
+  __func__(3,long long,4,long long) \
+\
+  __func__(4,int,1,int) \
+  __func__(4,int,1,unsigned) \
+  __func__(4,int,1,long long) \
+  __func__(4,int,2,int) \
+  __func__(4,int,2,unsigned) \
+  __func__(4,int,2,long long) \
+  __func__(4,int,3,int) \
+  __func__(4,int,3,unsigned) \
+  __func__(4,int,3,long long) \
+  __func__(4,int,4,int) \
+  __func__(4,int,4,unsigned) \
+  __func__(4,int,4,long long) \
+  __func__(4,unsigned,1,int) \
+  __func__(4,unsigned,1,unsigned) \
+  __func__(4,unsigned,1,long long) \
+  __func__(4,unsigned,2,int) \
+  __func__(4,unsigned,2,unsigned) \
+  __func__(4,unsigned,2,long long) \
+  __func__(4,unsigned,3,int) \
+  __func__(4,unsigned,3,unsigned) \
+  __func__(4,unsigned,3,long long) \
+  __func__(4,unsigned,4,int) \
+  __func__(4,unsigned,4,unsigned) \
+  __func__(4,unsigned,4,long long) \
+  __func__(4,long long,1,int) \
+  __func__(4,long long,1,unsigned) \
+  __func__(4,long long,1,long long) \
+  __func__(4,long long,2,int) \
+  __func__(4,long long,2,unsigned) \
+  __func__(4,long long,2,long long) \
+  __func__(4,long long,3,int) \
+  __func__(4,long long,3,unsigned) \
+  __func__(4,long long,3,long long) \
+  __func__(4,long long,4,int) \
+  __func__(4,long long,4,unsigned) \
+  __func__(4,long long,4,long long) \
 
 #endif // defined REALM_DEPPART_INST_HELPER_H

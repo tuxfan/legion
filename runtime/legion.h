@@ -2983,6 +2983,38 @@ namespace Legion {
     public:
       DomainPoint evaluate(const DomainPoint &p);
     public:
+      static inline int div(int dividend, int divisor)
+      {
+#ifdef DEBUG_LEGION
+        assert(divisor != 0);
+#endif
+        int pos_divisor = divisor > 0 ? divisor : (-1 * divisor);
+        int pos_dividend = dividend > 0 ? dividend : (-1 * dividend);
+
+        if ((dividend >= 0) == (divisor > 0))
+        {
+          return pos_dividend/pos_divisor;
+        }
+        else
+        {
+          bool even_divides = pos_dividend % pos_divisor == 0;
+          return -1 * (pos_dividend/pos_divisor) - (even_divides ? 0 : 1);
+        }
+      }
+
+      static inline int mod(int dividend, int mod_divisor)
+      {
+#ifdef DEBUG_LEGION
+        assert(mod_divisor != 0);
+#endif
+        int subtract_val = mod_divisor > 0 ? 0 : (mod_divisor - 1);
+        int pos_mod = mod_divisor > 0 ? mod_divisor : (-1 * mod_divisor);
+        if (dividend >= 0)
+          return dividend % pos_mod - subtract_val;
+        else
+          return pos_mod - (-1 * dividend % pos_mod) - subtract_val;
+      }
+
       static inline DomainPoint divide(const DomainPoint &dividend,
                                        const DomainPoint &divisorp)
       {
@@ -2992,7 +3024,7 @@ namespace Legion {
         result.dim = dividend.dim;
         for (int i = 0; i < result.dim; ++i)
         {
-          result[i] = dividend[i] / divisorp[i];
+          result[i] = div(dividend[i], divisorp[i]);
         }
         return result;
       }
@@ -3007,7 +3039,7 @@ namespace Legion {
         {
           if (mod_divisorp[i] != 0)
           {
-            result[i] = dividend[i] % mod_divisorp[i];
+            result[i] = mod(dividend[i], mod_divisorp[i]);
           }
           else
           {

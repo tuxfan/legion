@@ -1316,6 +1316,16 @@ namespace Legion {
                 stealing_enabled, output.slices);
             break;
           }
+        case 4:
+          {
+            DomainT<4,coord_t> point_space = input.domain;
+            Point<4,coord_t> num_blocks =
+              default_select_num_blocks<4>(procs.size(), point_space.bounds);
+            default_decompose_points<4>(point_space, procs,
+                num_blocks, false/*recurse*/,
+                stealing_enabled, output.slices);
+            break;
+          }
         default: // don't support other dimensions right now
           assert(false);
       }

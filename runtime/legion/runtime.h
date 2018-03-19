@@ -1426,10 +1426,12 @@ namespace Legion {
       void check_projection_partition_result(const RegionRequirement &req,
                                           Operation *op, unsigned idx,
                                           LogicalRegion result, Runtime *rt);
-      LogicalRegion evaluate_structured_projection(StructuredProjection proj,
+      LogicalRegion evaluate_structured_projection(
+          AffineStructuredProjection proj,
           const DomainPoint &point, LogicalRegion upper_bound,
           RegionTreeForest *forest);
-      LogicalRegion evaluate_structured_projection(StructuredProjection proj,
+      LogicalRegion evaluate_structured_projection(
+          AffineStructuredProjection proj,
           const DomainPoint &point, LogicalPartition upper_bound,
           RegionTreeForest *forest);
     public:

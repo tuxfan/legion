@@ -5180,27 +5180,29 @@ namespace Legion {
               ord_func->get_order_value(conflicting_point_task->index_point);
           if (cur_point_order < conflicting_point_order)
           {
-            printf("Point (%lld, %lld) depends on (%lld, %lld)\n",
-                conflicting_point_task->index_point[0],
-                conflicting_point_task->index_point[1],
-                (*it)->index_point[0],
-                (*it)->index_point[1]);
             conflicting_point_task->map_preconditions.insert(
                 point_task_events[(*it)->index_point]);
           }
           else if (cur_point_order > conflicting_point_order)
           {
-            printf("Point (%lld, %lld) depends on (%lld, %lld)\n",
-                (*it)->index_point[0],
-                (*it)->index_point[1],
-                conflicting_point_task->index_point[0],
-                conflicting_point_task->index_point[1]);
             (*it)->map_preconditions.insert(
                 point_task_events[conflicting_point_task->index_point]);
           }
 #ifdef DEBUG_LEGION
           else
           {
+            printf("Other point task (%d, %d, %d, %d), order %d\n",
+                conflicting_point_task->index_point[0],
+                conflicting_point_task->index_point[1],
+                conflicting_point_task->index_point[2],
+                conflicting_point_task->index_point[3],
+                conflicting_point_order);
+            printf("Other point task (%d, %d, %d, %d), order %d\n",
+                (*it)->index_point[0],
+                (*it)->index_point[1],
+                (*it)->index_point[2],
+                (*it)->index_point[3],
+                cur_point_order);
             // two conflicting points in the same launch should not
             // have the same order value
             assert(0);

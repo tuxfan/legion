@@ -173,7 +173,7 @@ namespace Legion {
   //----------------------------------------------------------------------------
   {
     for (int i = 0; i < DIM; i++)
-      (&Realm::Point<DIM,T>::x)[i] = (&rhs.x)[i];
+      (&(Realm::Point<DIM,T>::x))[i] = (&rhs.x)[i];
     return *this;
   }
 
@@ -1011,6 +1011,26 @@ namespace Legion {
           result = is3.contains(p3);
           break;
         }
+      case 4:
+        {
+          Point<4,coord_t> p3 = point;
+          DomainT<4,coord_t> is3 = *this;
+          result = is3.contains(p3);
+          break;
+          /*
+          DomainPoint lo = this->lo();
+          DomainPoint hi = this->hi();
+          result = (lo[0] <= point[0] &&
+                    point[0] <= hi[0] &&
+                    lo[1] <= point[1] &&
+                    point[1] <= hi[1] &&
+                    lo[2] <= point[2] &&
+                    point[2] <= hi[2] &&
+                    lo[3] <= point[3] &&
+                    point[3] <= hi[3]);
+          break;
+          */
+        }
       default:
         assert(false);
     }
@@ -1051,6 +1071,20 @@ namespace Legion {
         {
           DomainT<3,coord_t> is = *this;
           return is.volume();
+        }
+      case 4:
+        {
+          DomainT<4,coord_t> is = *this;
+          return is.volume();
+          /*
+          DomainPoint lo = this->lo();
+          DomainPoint hi = this->hi();
+          size_t volume = 1;
+          volume *= (hi[0] - lo[0] + 1);
+          volume *= (hi[1] - lo[1] + 1);
+          volume *= (hi[2] - lo[2] + 1);
+          volume *= (hi[3] - lo[3] + 1);
+          return volume;*/
         }
       default:
         assert(false);
@@ -1241,6 +1275,23 @@ namespace Legion {
         }
         break;
       }
+    case 4:
+      {
+        Realm::IndexSpaceIterator<4,coord_t> *is_itr = 
+          new (is_iterator) Realm::IndexSpaceIterator<4,coord_t>(
+              DomainT<4,coord_t>(d));
+        is_valid = is_itr->valid;
+        if (is_valid) {
+          Realm::PointInRectIterator<4,coord_t> *rect_itr = 
+            new (rect_iterator) 
+              Realm::PointInRectIterator<4,coord_t>(is_itr->rect);
+          rect_valid = rect_itr->valid;
+          p = Point<4,coord_t>(rect_itr->p); 
+        } else {
+          rect_valid = false;
+        }
+        break;
+      }
     default:
       assert(0);
     };
@@ -1333,6 +1384,34 @@ namespace Legion {
           }
         } else {
           p = Point<3,coord_t>(rect_itr->p); 
+        }
+        break;
+      }
+    case 4:
+      {
+        // Step the rect iterator first
+        Realm::PointInRectIterator<4,coord_t> *rect_itr = 
+          (Realm::PointInRectIterator<4,coord_t>*)(void *)rect_iterator;
+        rect_itr->step();
+        rect_valid = rect_itr->valid;
+        if (!rect_valid) {
+          // If the rectangle iterator is not valid anymore
+          // then try to start the next rectangle
+          Realm::IndexSpaceIterator<4,coord_t> *is_itr = 
+            (Realm::IndexSpaceIterator<4,coord_t>*)(void *)is_iterator;
+          is_itr->step();
+          is_valid = is_itr->valid;
+          if (is_valid) {
+            // Placement new on top of the old one
+            new (rect_itr) 
+              Realm::PointInRectIterator<4,coord_t>(is_itr->rect);
+            p = Point<4,coord_t>(rect_itr->p);
+            rect_valid = rect_itr->valid;
+          } else {
+            rect_valid = false;
+          }
+        } else {
+          p = Point<4,coord_t>(rect_itr->p); 
         }
         break;
       }
@@ -1656,8 +1735,8 @@ namespace Legion {
     : m(rhs.m), n(rhs.n)
   //----------------------------------------------------------------------------
   {
-    assert(m < ::MAX_POINT_DIM);
-    assert(n < ::MAX_POINT_DIM);
+    assert(m <= ::MAX_POINT_DIM);
+    assert(n <= ::MAX_POINT_DIM);
     for (int i = 0; i < m; i++)
       for (int j = 0; j < n; j++)
         matrix[i * n + j] = rhs.matrix[i * n + j];
@@ -1669,8 +1748,8 @@ namespace Legion {
     : m(M), n(N)
   //----------------------------------------------------------------------------
   {
-    assert(m < ::MAX_POINT_DIM);
-    assert(n < ::MAX_POINT_DIM);
+    assert(m <= ::MAX_POINT_DIM);
+    assert(n <= ::MAX_POINT_DIM);
     for (int i = 0; i < M; i++)
       for (int j = 0; j < N; j++)
         matrix[i * n + j] = rhs[i][j];
@@ -1682,8 +1761,8 @@ namespace Legion {
   {
     m = rhs.m;
     n = rhs.n;
-    assert(m < ::MAX_POINT_DIM);
-    assert(n < ::MAX_POINT_DIM);
+    assert(m <= ::MAX_POINT_DIM);
+    assert(n <= ::MAX_POINT_DIM);
     for (int i = 0; i < m; i++)
       for (int j = 0; j < n; j++)
         matrix[i * n + j] = rhs.matrix[i * n + j];
@@ -1698,8 +1777,8 @@ namespace Legion {
   {
     m = M;
     n = N;
-    assert(m < ::MAX_POINT_DIM);
-    assert(n < ::MAX_POINT_DIM);
+    assert(m <= ::MAX_POINT_DIM);
+    assert(n <= ::MAX_POINT_DIM);
     for (int i = 0; i < M; i++)
       for (int j = 0; j < N; j++)
         matrix[i * n + j] = rhs[i][j];

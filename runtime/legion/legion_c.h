@@ -131,7 +131,7 @@ extern "C" {
 // have to do this by hand here. To avoid this bitrotting, at least
 // make the preprocessor check that the value is equal to what we
 // expect.
-#define MAX_DOMAIN_DIM 6 // 2 * LEGION_MAX_RECT_DIM
+#define MAX_DOMAIN_DIM 8 // 2 * LEGION_MAX_RECT_DIM
 #if MAX_DOMAIN_DIM != 2 * LEGION_MAX_RECT_DIM // sanity check value
 #error Mismatch in MAX_DOMAIN_DIM
 #endif
@@ -156,7 +156,7 @@ extern "C" {
 // have to do this by hand here. To avoid this bitrotting, at least
 // make the preprocessor check that the value is equal to what we
 // expect.
-#define MAX_MATRIX_DIM 9
+#define MAX_MATRIX_DIM 16
 #if MAX_MATRIX_DIM != LEGION_MAX_POINT_DIM * LEGION_MAX_POINT_DIM // sanity check
 #error Mismatch in MAX_MATRIX_DIM
 #endif
