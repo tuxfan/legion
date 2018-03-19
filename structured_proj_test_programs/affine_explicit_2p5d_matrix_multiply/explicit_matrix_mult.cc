@@ -263,8 +263,8 @@ class TimeOrderingFunctor : public StructuredOrderingFunctor
 class LeftMatrixProjectionFunctor : public StructuredProjectionFunctor
 {
   public:
-    LeftMatrixProjectionFunctor(HighLevelRuntime *rt, int k_coeff, int mod_by)
-      : StructuredProjectionFunctor(rt), k_coeff(k_coeff), mod_by(mod_by) {}
+    LeftMatrixProjectionFunctor(int k_coeff, int mod_by)
+      : StructuredProjectionFunctor(), k_coeff(k_coeff), mod_by(mod_by) {}
 
     ~LeftMatrixProjectionFunctor() {}
 
@@ -330,8 +330,8 @@ class LeftMatrixProjectionFunctor : public StructuredProjectionFunctor
 class RightMatrixProjectionFunctor : public StructuredProjectionFunctor
 {
   public:
-    RightMatrixProjectionFunctor(HighLevelRuntime *rt, int k_coeff, int mod_by)
-      : StructuredProjectionFunctor(rt), k_coeff(k_coeff), mod_by(mod_by) {}
+    RightMatrixProjectionFunctor(int k_coeff, int mod_by)
+      : StructuredProjectionFunctor(), k_coeff(k_coeff), mod_by(mod_by) {}
 
     ~RightMatrixProjectionFunctor() {}
 
@@ -397,8 +397,8 @@ class RightMatrixProjectionFunctor : public StructuredProjectionFunctor
 class ProductMatrixProjectionFunctor : public StructuredProjectionFunctor
 {
   public:
-    ProductMatrixProjectionFunctor(HighLevelRuntime *rt, int k_coeff, int mod_by)
-      : StructuredProjectionFunctor(rt), k_coeff(k_coeff), mod_by(mod_by) {}
+    ProductMatrixProjectionFunctor(int k_coeff, int mod_by)
+      : StructuredProjectionFunctor(), k_coeff(k_coeff), mod_by(mod_by) {}
 
     ~ProductMatrixProjectionFunctor() {}
 
@@ -528,13 +528,6 @@ void top_level_task(const Task *task,
 
   int root_p_c = find_sq_rt(num_processors/c_val);
   int root_p_c3 = find_sq_rt(num_processors/(c_val*c_val*c_val));
-
-  runtime->register_projection_functor(MAT_1_PROJ_ID,
-      new LeftMatrixProjectionFunctor(runtime, root_p_c3, root_p_c));
-  runtime->register_projection_functor(MAT_2_PROJ_ID,
-      new RightMatrixProjectionFunctor(runtime, root_p_c3, root_p_c));
-  runtime->register_projection_functor(MAT_3_PROJ_ID,
-      new ProductMatrixProjectionFunctor(runtime, root_p_c3, root_p_c));
 
   if (num_rows % root_p_c != 0 ||
       num_cols % root_p_c != 0)
@@ -1035,6 +1028,30 @@ int main(int argc, char **argv)
   }
 
   Runtime::register_reduction_op<SumReduction>(SUM_REDUCE_ID);
+
+  // This is SUPER ugly, but the fastest thing I can think to do right
+  // now if just recompute these two values here (including parsing args again).
+  {
+    int num_processors = 8;
+    int c_val = 2;
+    for (int i = 1; i < argc; i++)
+    {
+      if (!strcmp(argv[i],"-p"))
+        num_processors = atoi(argv[++i]);
+      if (!strcmp(argv[i],"-c"))
+        c_val = atoi(argv[++i]);
+    }
+
+    int root_p_c = find_sq_rt(num_processors/c_val);
+    int root_p_c3 = find_sq_rt(num_processors/(c_val*c_val*c_val));
+
+    Runtime::preregister_projection_functor(MAT_1_PROJ_ID,
+        new LeftMatrixProjectionFunctor(root_p_c3, root_p_c));
+    Runtime::preregister_projection_functor(MAT_2_PROJ_ID,
+        new RightMatrixProjectionFunctor(root_p_c3, root_p_c));
+    Runtime::preregister_projection_functor(MAT_3_PROJ_ID,
+        new ProductMatrixProjectionFunctor(root_p_c3, root_p_c));
+  }
 
   // Add the callback for the projection function
   HighLevelRuntime::set_registration_callback(registration_callback);

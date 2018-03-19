@@ -184,10 +184,29 @@ void SliceMapper::slice_task(const MapperContext      ctx,
         for (PointInRectIterator<3> pir(rect);
               pir(); pir++, idx++)
         {
-          Rect<3> slice(*pir, *pir);
-          output.slices[idx] = TaskSlice(slice,
-              cached_procs[idx % cached_procs.size()],
-              false/*recurse*/, true/*stealable*/);
+          Rect<3> slice_rect(*pir, *pir);
+          TaskSlice slice;
+          slice.domain = Domain(slice_rect);
+          slice.proc = cached_procs[idx % cached_procs.size()];
+          slice.recurse = false;
+          slice.stealable = true;
+          output.slices.push_back(slice);
+        }
+        break;
+      }
+    case 4:
+      {
+        Rect<4> rect = input.domain;
+        for (PointInRectIterator<4> pir(rect);
+              pir(); pir++, idx++)
+        {
+          Rect<4> slice_rect(*pir, *pir);
+          TaskSlice slice;
+          slice.domain = Domain(slice_rect);
+          slice.proc = cached_procs[idx % cached_procs.size()];
+          slice.recurse = false;
+          slice.stealable = true;
+          output.slices.push_back(slice);
         }
         break;
       }
@@ -236,8 +255,8 @@ class TimeOrderingFunctor : public StructuredOrderingFunctor
 class LeftMatrixProjectionFunctor : public StructuredProjectionFunctor
 {
   public:
-    LeftMatrixProjectionFunctor(HighLevelRuntime *rt, int k_coeff, int mod_by)
-      : StructuredProjectionFunctor(rt), k_coeff(k_coeff), mod_by(mod_by) {}
+    LeftMatrixProjectionFunctor(int k_coeff, int mod_by)
+      : StructuredProjectionFunctor(), k_coeff(k_coeff), mod_by(mod_by) {}
 
     ~LeftMatrixProjectionFunctor() {}
 
@@ -298,8 +317,8 @@ class LeftMatrixProjectionFunctor : public StructuredProjectionFunctor
 class RightMatrixProjectionFunctor : public StructuredProjectionFunctor
 {
   public:
-    RightMatrixProjectionFunctor(HighLevelRuntime *rt, int k_coeff, int mod_by)
-      : StructuredProjectionFunctor(rt), k_coeff(k_coeff), mod_by(mod_by) {}
+    RightMatrixProjectionFunctor(int k_coeff, int mod_by)
+      : StructuredProjectionFunctor(), k_coeff(k_coeff), mod_by(mod_by) {}
 
     ~RightMatrixProjectionFunctor() {}
 
@@ -361,8 +380,8 @@ class RightMatrixProjectionFunctor : public StructuredProjectionFunctor
 class ProductMatrixProjectionFunctor : public StructuredProjectionFunctor
 {
   public:
-    ProductMatrixProjectionFunctor(HighLevelRuntime *rt, int k_coeff, int mod_by)
-      : StructuredProjectionFunctor(rt), k_coeff(k_coeff), mod_by(mod_by) {}
+    ProductMatrixProjectionFunctor(int k_coeff, int mod_by)
+      : StructuredProjectionFunctor(), k_coeff(k_coeff), mod_by(mod_by) {}
 
     ~ProductMatrixProjectionFunctor() {}
 
@@ -484,13 +503,6 @@ void top_level_task(const Task *task,
 
   int root_p_c = find_sq_rt(num_processors/c_val);
   int root_p_c3 = find_sq_rt(num_processors/(c_val*c_val*c_val));
-
-  runtime->register_projection_functor(MAT_1_PROJ_ID,
-      new LeftMatrixProjectionFunctor(runtime, root_p_c3, root_p_c));
-  runtime->register_projection_functor(MAT_2_PROJ_ID,
-      new RightMatrixProjectionFunctor(runtime, root_p_c3, root_p_c));
-  runtime->register_projection_functor(MAT_3_PROJ_ID,
-      new ProductMatrixProjectionFunctor(runtime, root_p_c3, root_p_c));
 
   if (num_rows % root_p_c != 0 ||
       num_cols % root_p_c != 0)
@@ -956,6 +968,30 @@ int main(int argc, char **argv)
   {
     if (!strcmp(argv[i],"-sm"))
       Runtime::add_registration_callback(mapper_registration);
+  }
+
+  // This is SUPER ugly, but the fastest thing I can think to do right
+  // now if just recompute these two values here (including parsing args again).
+  {
+    int num_processors = 8;
+    int c_val = 2;
+    for (int i = 1; i < argc; i++)
+    {
+      if (!strcmp(argv[i],"-p"))
+        num_processors = atoi(argv[++i]);
+      if (!strcmp(argv[i],"-c"))
+        c_val = atoi(argv[++i]);
+    }
+
+    int root_p_c = find_sq_rt(num_processors/c_val);
+    int root_p_c3 = find_sq_rt(num_processors/(c_val*c_val*c_val));
+
+    Runtime::preregister_projection_functor(MAT_1_PROJ_ID,
+        new LeftMatrixProjectionFunctor(root_p_c3, root_p_c));
+    Runtime::preregister_projection_functor(MAT_2_PROJ_ID,
+        new RightMatrixProjectionFunctor(root_p_c3, root_p_c));
+    Runtime::preregister_projection_functor(MAT_3_PROJ_ID,
+        new ProductMatrixProjectionFunctor(root_p_c3, root_p_c));
   }
 
   Runtime::register_reduction_op<SumReduction>(SUM_REDUCE_ID);

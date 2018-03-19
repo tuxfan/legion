@@ -2500,16 +2500,30 @@ namespace Legion {
     void AffineExpression::pack_expression(Serializer &rez) const
     //--------------------------------------------------------------------------
     {
-      // to be implemented soon, just to compile
-      assert(0);
+      rez.serialize(coefficients.dim);
+      for (int i = 0; i < coefficients.dim; i++)
+      {
+        rez.serialize(coefficients[i]);
+      }
+      rez.serialize(offset);
+      rez.serialize(divisor);
+      rez.serialize(mod_divisor);
+      rez.serialize(is_const);
     }
 
     //--------------------------------------------------------------------------
     void AffineExpression::unpack_expression(Deserializer &derez)
     //--------------------------------------------------------------------------
     {
-      // to be implemented soon, just to compile
-      assert(0);
+      derez.deserialize(coefficients.dim);
+      for (int i = 0; i < coefficients.dim; i++)
+      {
+        derez.deserialize(coefficients[i]);
+      }
+      derez.deserialize(offset);
+      derez.deserialize(divisor);
+      derez.deserialize(mod_divisor);
+      derez.deserialize(is_const);
     }
 
     //--------------------------------------------------------------------------
