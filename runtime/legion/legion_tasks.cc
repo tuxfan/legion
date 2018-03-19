@@ -4402,6 +4402,25 @@ namespace Legion {
       }
     }
 
+    // DELETE THIS
+    // a helper function to get a string of a domain point
+    std::string stringify_domain_point(DomainPoint &p)
+    {
+      std::ostringstream stringStream;
+      stringStream << "(";
+      for (int i = 0; i < p.dim - 1; i++)
+      {
+        stringStream << p[i];
+        stringStream << ", ";
+      }
+      if (p.dim > 0)
+      {
+        stringStream << p[p.dim - 1];
+      }
+      stringStream << ")";
+      return stringStream.str();
+    }
+
     //--------------------------------------------------------------------------
     void MultiTask::analyze_structured_slices(void)
     //--------------------------------------------------------------------------
@@ -4418,7 +4437,7 @@ namespace Legion {
       }
 
       std::vector<std::set<RtEvent> > slice_dependency_events;
-      std::vector<SliceTask*> slices_vec;
+      std::vector<SliceTask*> slices_vec(slices.size());
 
       // Since the ordering functor is monotonic in the launch domain
       // (in any domain), a slice's ordering can be based on its lowest point
@@ -4426,18 +4445,21 @@ namespace Legion {
       StructuredOrderingFunctor *ordering_func =
         runtime->find_ordering_functor(oid);
 
-      for(std::list<SliceTask*>::const_iterator it = slices.begin();
-          it != slices.end(); ++it)
       {
-        SliceTask *slice = *it;
-        runtime->forest->find_launch_space_domain(slice->internal_space,
-            slice->internal_domain);
-        slice->set_structured_slice_mapped_trigger(
-            Runtime::create_rt_user_event());
-        slice_dependency_events.push_back(std::set<RtEvent>());
-        slice_orders.push_back(
-            ordering_func->get_min_value(slice->internal_domain));
-        slices_vec.push_back(slice);
+        int slice_idx = 0;
+        for(std::list<SliceTask*>::const_iterator it = slices.begin();
+            it != slices.end(); ++it, ++slice_idx)
+        {
+          SliceTask *slice = *it;
+          runtime->forest->find_launch_space_domain(slice->internal_space,
+              slice->internal_domain);
+          slice->set_structured_slice_mapped_trigger(
+              Runtime::create_rt_user_event());
+          slice_dependency_events.push_back(std::set<RtEvent>());
+          slice_orders[slice_idx] =
+              ordering_func->get_min_value(slice->internal_domain);
+          slices_vec[slice_idx] = slice;
+        }
       }
 
       std::vector<std::vector<AffineConstraint> > dnf_constraints =
@@ -4501,7 +4523,7 @@ namespace Legion {
                     left_min_value, left_mod_div);
                 int left_max_mod = AffineExpression::mod(
                     left_max_value, left_mod_div);
-                if (left_min_mod > left_max_mod)
+                if (left_min_mod <= left_max_mod)
                 {
                   left_lo[cidx].push_back(left_min_mod);
                   left_hi[cidx].push_back(left_max_mod);
@@ -4546,7 +4568,7 @@ namespace Legion {
                     right_min_value, right_mod_div);
                 int right_max_mod = AffineExpression::mod(
                     right_max_value, right_mod_div);
-                if (right_min_mod > right_max_mod)
+                if (right_min_mod <= right_max_mod)
                 {
                   right_lo[cidx].push_back(right_min_mod);
                   right_hi[cidx].push_back(right_max_mod);
@@ -4567,6 +4589,7 @@ namespace Legion {
             }
           }
 
+//make
           std::vector<std::vector<int> > left_lo_acc;
           std::vector<std::vector<int> > left_hi_acc;
           std::vector<std::vector<int> > right_lo_acc;
@@ -4612,29 +4635,57 @@ namespace Legion {
               true_vec, true_vec);
           int cur_order_value = slice_orders[slice_idx];
 
+          std::set<int>::iterator point_vals_it;
           for (unsigned i = 0; i < points_in_range.size(); i++)
           {
             point = points_in_range[i];
-            SliceTask *conflicting_slice = slices_vec[point.value()];
-            if (conflicting_slice != (*it))
+            std::set<int> *point_values = point.value();
+            for (point_vals_it = (*point_values).begin(); point_vals_it !=
+                (*point_values).end(); ++point_vals_it)
             {
-              if (slice_orders[point.value()] < cur_order_value)
+              int point_value = *point_vals_it;
+              SliceTask *conflicting_slice = slices_vec[point_value];
+              if (conflicting_slice != (*it))
               {
-                slice_dependency_events[slice_idx].insert(
-                    conflicting_slice->get_structured_slice_mapped_trigger());
-              }
-              else if (cur_order_value < slice_orders[point.value()])
-              {
-                slice_dependency_events[point.value()].insert(
-                    (*it)->get_structured_slice_mapped_trigger());
-              }
+                Domain other_domain = conflicting_slice->internal_domain;
+                Domain my_domain = (*it)->internal_domain;
+                DomainPoint other_lo = other_domain.lo();
+                DomainPoint other_hi = other_domain.hi();
+                DomainPoint my_lo = my_domain.lo();
+                DomainPoint my_hi = my_domain.hi();
+                DomainPoint first_lo, first_hi, second_lo, second_hi;
+
+                if (slice_orders[point_value] < cur_order_value)
+                {
+                  slice_dependency_events[slice_idx].insert(
+                      conflicting_slice->get_structured_slice_mapped_trigger());
+                  first_lo = other_lo;
+                  first_hi = other_hi;
+                  second_lo = my_lo;
+                  second_hi = my_hi;
+                }
+                else if (cur_order_value < slice_orders[point_value])
+                {
+                  slice_dependency_events[point_value].insert(
+                      (*it)->get_structured_slice_mapped_trigger());
+                  first_lo = my_lo;
+                  first_hi = my_hi;
+                  second_lo = other_lo;
+                  second_hi = other_hi;
+                }
 #ifdef DEBUG_LEGION
-              else
-              {
-                // conflict between two slices with the same order value
-                assert(0);
-              }
+                else
+                {
+                  // conflict between two slices with the same order value
+                  assert(0);
+                }
 #endif
+                printf("Domain from %s to %s depends on domain from %s to %s\n",
+                    stringify_domain_point(second_lo).c_str(),
+                    stringify_domain_point(second_hi).c_str(),
+                    stringify_domain_point(first_lo).c_str(),
+                    stringify_domain_point(first_hi).c_str());
+              }
             }
           }
 
@@ -4645,26 +4696,53 @@ namespace Legion {
           for (unsigned i = 0; i < points_in_range.size(); i++)
           {
             point = points_in_range[i];
-            SliceTask *conflicting_slice = slices_vec[point.value()];
-            if (conflicting_slice != (*it))
+            std::set<int> *point_values = point.value();
+            for (point_vals_it = (*point_values).begin(); point_vals_it !=
+                (*point_values).end(); ++point_vals_it)
             {
-              if (slice_orders[point.value()] < cur_order_value)
+              int point_value = *point_vals_it;
+              SliceTask *conflicting_slice = slices_vec[point_value];
+              if (conflicting_slice != (*it))
               {
-                slice_dependency_events[slice_idx].insert(
-                    conflicting_slice->get_structured_slice_mapped_trigger());
-              }
-              else if (cur_order_value < slice_orders[point.value()])
-              {
-                slice_dependency_events[point.value()].insert(
-                    (*it)->get_structured_slice_mapped_trigger());
-              }
+                Domain other_domain = conflicting_slice->internal_domain;
+                Domain my_domain = (*it)->internal_domain;
+                DomainPoint other_lo = other_domain.lo();
+                DomainPoint other_hi = other_domain.hi();
+                DomainPoint my_lo = my_domain.lo();
+                DomainPoint my_hi = my_domain.hi();
+                DomainPoint first_lo, first_hi, second_lo, second_hi;
+
+                if (slice_orders[point_value] < cur_order_value)
+                {
+                  slice_dependency_events[slice_idx].insert(
+                      conflicting_slice->get_structured_slice_mapped_trigger());
+                  first_lo = other_lo;
+                  first_hi = other_hi;
+                  second_lo = my_lo;
+                  second_hi = my_hi;
+                }
+                else if (cur_order_value < slice_orders[point_value])
+                {
+                  slice_dependency_events[point_value].insert(
+                      (*it)->get_structured_slice_mapped_trigger());
+                  first_lo = my_lo;
+                  first_hi = my_hi;
+                  second_lo = other_lo;
+                  second_hi = other_hi;
+                }
 #ifdef DEBUG_LEGION
-              else
-              {
-                // conflict between two slices with the same order value
-                assert(0);
-              }
+                else
+                {
+                  // conflict between two slices with the same order value
+                  assert(0);
+                }
 #endif
+                printf("Domain from %s to %s depends on domain from %s to %s\n",
+                    stringify_domain_point(second_lo).c_str(),
+                    stringify_domain_point(second_hi).c_str(),
+                    stringify_domain_point(first_lo).c_str(),
+                    stringify_domain_point(first_hi).c_str());
+              }
             }
           }
         }
@@ -5191,17 +5269,11 @@ namespace Legion {
 #ifdef DEBUG_LEGION
           else
           {
-            printf("Other point task (%d, %d, %d, %d), order %d\n",
-                conflicting_point_task->index_point[0],
-                conflicting_point_task->index_point[1],
-                conflicting_point_task->index_point[2],
-                conflicting_point_task->index_point[3],
+            printf("Other point task %s, order %d\n",
+                stringify_domain_point(conflicting_point_task->index_point).c_str(),
                 conflicting_point_order);
-            printf("Other point task (%d, %d, %d, %d), order %d\n",
-                (*it)->index_point[0],
-                (*it)->index_point[1],
-                (*it)->index_point[2],
-                (*it)->index_point[3],
+            printf("Current point task %s, order %d\n",
+                stringify_domain_point((*it)->index_point).c_str(),
                 cur_point_order);
             // two conflicting points in the same launch should not
             // have the same order value

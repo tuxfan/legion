@@ -941,9 +941,9 @@ void check_task(const Task *task,
     int expected = 1;
     expected = x + y + 1;
 
-    printf("At point (%lld, %lld)\n", (*pir)[0], (*pir)[1]);
-    printf("Checking for values %d and %d... expected %d, found %d\n",
-        x, y, expected, val);
+    //printf("At point (%lld, %lld)\n", (*pir)[0], (*pir)[1]);
+    //printf("Checking for values %d and %d... expected %d, found %d\n",
+        //x, y, expected, val);
     
     if (expected != val)
     {
