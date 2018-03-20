@@ -37,6 +37,21 @@ discussed design:
 5) steps 1-4 will be based on set\_garbage\_collection\_priority and how verified\_regions are set. We will be adding a new list to each task, similar to verified\_regions, that will represent edges\_ending\_in\_hardened\_regions.
 
 
+what about two sibling tasks that map the same instance, and one hardens it, the other does not
+how to show thsi is working, if the application is too fast, then delete meta task on the logical region is called which deletes the region irrespective of whether its GC_NEVER_PRIORITY
+
+REACTIVE
+faulty task
+   catch it
+   poison propagation
+   identify recovery point
+   trigger_recover
+
+SEMANTICS
+regions and instances and consistency
+
+PROACTIVE
+    mark instances as harden
 
 \subsubsection{Interaction of need\_preserve with the commit wavefront}
 \subsubsection{Obtaining dependence graph in the mapper before calling need\_preserve} 
