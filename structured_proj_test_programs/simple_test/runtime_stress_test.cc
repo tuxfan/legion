@@ -624,7 +624,7 @@ void init_field_task(const Task *task,
   FieldID fid_val_write = *(++fields);
   //const int pointx = task->index_point.point_data[0];
   //const int pointy = task->index_point.point_data[1];
-  //fprintf(stderr, "Initializing fields %d and %d for block (%d, %d) "
+  //printf("Initializing fields %d and %d for block (%d, %d) "
       //"with region id %d...\n",
       //fidx, fidy, pointx, pointy,
       //task->regions[0].region.get_index_space().get_id());
@@ -657,10 +657,10 @@ void compute_task_angle(const Task *task,
   //printf("Starting the compute task at point (%d, %d) in wave %d at time %lld\n", pointx, pointy, pointx + pointy, Realm::Clock::current_time_in_microseconds());
   /* UNCOMMENT BELOW FOR DEBUG PRINT STATEMENTS
 
-  fprintf(stderr, "Starting the compute task.\n");
+  printf("Starting the compute task.\n");
   const int pointx = task->index_point.point_data[0];
   const int pointy = task->index_point.point_data[1];
-  fprintf(stderr, "At point (%d, %d).  My region is %d.  X Region is %d.  "
+  printf("At point (%d, %d).  My region is %d.  X Region is %d.  "
     "Y Region is %d.\n",
     pointx, pointy,
     task->regions[2].region.get_index_space().get_id(),
@@ -767,10 +767,10 @@ void compute_task_axis_aligned(const Task *task,
 {
   /* UNCOMMENT BELOW FOR DEBUG PRINT STATEMENTS
 
-  fprintf(stderr, "Starting the compute task.\n");
+  printf("Starting the compute task.\n");
   const int pointx = task->index_point.point_data[0];
   const int pointy = task->index_point.point_data[1];
-  fprintf(stderr, "At point (%d, %d).  My region is %d.  "
+  printf("At point (%d, %d).  My region is %d.  "
     "Other Region is %d.\n",
     pointx, pointy,
     task->regions[1].region.get_index_space().get_id(),
