@@ -391,6 +391,9 @@ void top_level_task(const Task *task,
   double sim_time = 1e-6 * (ts_end - ts_start);
   printf("ELAPSED TIME = %7.7f s\n", sim_time);
 
+  // We got what we need, force the run to end
+  assert(0);
+
   // Finally, we launch a single task to check the results.
   RectDims rect_dims;
   rect_dims.side_length_x = side_length_x;
