@@ -16,7 +16,6 @@ for ((trial=1; trial<=$TRIALS; trial++ ))
 do
   for nodes in 1 2
   do
-    hostfile="hostfile$nodes"
     dim=`expr 4 \* $nodes`
     for sleep_us in 0 1000 10000
     do

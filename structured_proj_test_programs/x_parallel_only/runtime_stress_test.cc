@@ -834,6 +834,8 @@ void compute_task_axis_aligned(const Task *task,
   const int angle = compute_args.angle;
   const int parallel_length  = compute_args.parallel_length;
 
+  usleep(compute_args.sleep_ms);
+
   FieldID val_prev = *(task->regions[0].privilege_fields.begin());
   FieldID val_curr = *(task->regions[1].privilege_fields.begin());
 

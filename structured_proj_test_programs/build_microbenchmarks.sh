@@ -1,3 +1,5 @@
+#!/bin/bash
+
 set -e
 
 cd x_parallel_only
