@@ -37,6 +37,9 @@ discussed design:
 5) steps 1-4 will be based on set\_garbage\_collection\_priority and how verified\_regions are set. We will be adding a new list to each task, similar to verified\_regions, that will represent edges\_ending\_in\_hardened\_regions.
 
 
+quash_operation:
+  847 line in realm/proc_impl.cc tells us that we should set the poisoned to true and ensure that the start_event.has_triggered_faultaware(poisoned) returns true
+
 what about two sibling tasks that map the same instance, and one hardens it, the other does not
     - alex raised this, we discussed that trigger recover would check 
     - but the way we are doing it now, we are doing unverfied_regions.erase based on even on guy below us who will call harden on a region instance
