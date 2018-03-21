@@ -967,8 +967,8 @@ namespace Legion {
       // true if the generation is older than our current generation.
       if (target == this)
       {
-        if (target_gen == gen)
-          report_interfering_requirements(target_idx, idx);
+        //if (target_gen == gen)
+          //report_interfering_requirements(target_idx, idx);
         // Can't remove this if we are tracing
         if (tracing)
         {

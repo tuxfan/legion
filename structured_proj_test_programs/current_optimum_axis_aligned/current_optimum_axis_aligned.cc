@@ -18,6 +18,7 @@
 #include <cassert>
 #include <cstdlib>
 #include "legion.h"
+#include <unistd.h>  // for sleep and usleep
 using namespace Legion;
 using namespace LegionRuntime::Accessor;
 
@@ -35,8 +36,6 @@ using namespace LegionRuntime::Accessor;
 enum TaskIDs {
   TOP_LEVEL_TASK_ID,
   INIT_FIELD_TASK_ID,
-  INIT_LAUNCHER_HELPER_TASK_ID,
-  COMPUTE_LAUNCHER_HELPER_TASK_ID,
   COMPUTE_TASK_ID,
   CHECK_TASK_ID,
   PAUSE_TASK_ID,
@@ -48,15 +47,95 @@ enum FieldIDs {
   FID_VAL,
 };
 
+enum ProjIDs {
+  X_PROJ = 1,
+  Y_PROJ = 2,
+  ID_PROJ = 3,
+};
+
 struct RectDims {
   int side_length_x;
   int side_length_y;
 };
 
 struct ComputeArgs {
-  int angle;
+  int sleep_ms;
   int parallel_length;
+  int wave_num;
 };
+
+class IDProjectionFunctor : public ProjectionFunctor
+{
+  public:
+    IDProjectionFunctor()
+      : ProjectionFunctor() {}
+
+    ~IDProjectionFunctor() {}
+
+    virtual LogicalRegion project(Context ctx, Task *task, unsigned index,
+                                  LogicalRegion upper_bound,
+                                  const DomainPoint &point)
+    {
+      assert(0);
+    }
+
+    virtual LogicalRegion project(Context ctx, Task *task, unsigned index,
+                                  LogicalPartition upper_bound,
+                                  const DomainPoint &point)
+    {
+      ComputeArgs compute_args = *((ComputeArgs *)task->args);
+      const int point_in_launch = point[0];
+      const int wave_num = compute_args.wave_num;
+      
+      Point<2> proj_point(wave_num, point_in_launch);
+
+      LogicalRegion ret_region =
+          runtime->get_logical_subregion_by_color(ctx, upper_bound, DomainPoint(proj_point));
+      return ret_region;
+    }
+
+    virtual unsigned get_depth() const {
+      return 0;
+    }
+};
+
+
+//class SingleDiffProjectionFunctor : public StructuredProjectionFunctor
+class XDiffProjectionFunctor : public ProjectionFunctor
+{
+  public:
+    XDiffProjectionFunctor()
+      : ProjectionFunctor() {}
+
+    ~XDiffProjectionFunctor() {}
+
+    virtual LogicalRegion project(Context ctx, Task *task, unsigned index,
+                                  LogicalRegion upper_bound,
+                                  const DomainPoint &point)
+    {
+      assert(0);
+    }
+
+    virtual LogicalRegion project(Context ctx, Task *task, unsigned index,
+                                  LogicalPartition upper_bound,
+                                  const DomainPoint &point)
+    {
+      ComputeArgs compute_args = *((ComputeArgs *)task->args);
+      const int point_in_launch = point[0];
+      const int wave_num = compute_args.wave_num;
+      
+      Point<2> proj_point(wave_num + 1, point_in_launch);
+
+      LogicalRegion ret_region =
+          runtime->get_logical_subregion_by_color(ctx, upper_bound, DomainPoint(proj_point));
+      return ret_region;
+    }
+
+    virtual unsigned get_depth() const {
+      return 0;
+    }
+};
+
 
 void top_level_task(const Task *task,
                     const std::vector<PhysicalRegion> &regions,
@@ -67,7 +146,7 @@ void top_level_task(const Task *task,
   int num_iterations = 1;
   int num_subregions_x = 4; // Assumed to divide side_length_x
   int num_subregions_y = 4; // Assumed to divide side_length_y
-  int angle = 180; // angle is measured ccw from positive x-axis
+  int sleep_ms = 0; // how long each task should sleep in milliseconds
 
   // say it's disjoint by default,
   // give flag for toggling to force it to compute disjointedness
@@ -75,33 +154,33 @@ void top_level_task(const Task *task,
 
   // Check for any command line arguments
   {
-      const InputArgs &command_args = Runtime::get_input_args();
+    const InputArgs &command_args = Runtime::get_input_args();
     for (int i = 1; i < command_args.argc; i++)
     {
       if (!strcmp(command_args.argv[i],"-n"))
       {
-        side_length_x = 1 << atoi(command_args.argv[++i]);
+        side_length_x = atoi(command_args.argv[++i]);
         side_length_y = side_length_x;
       }
       if (!strcmp(command_args.argv[i],"-nx"))
-        side_length_x = 1 << atoi(command_args.argv[++i]);
+        side_length_x = atoi(command_args.argv[++i]);
       if (!strcmp(command_args.argv[i],"-ny"))
-        side_length_y = 1 << atoi(command_args.argv[++i]);
+        side_length_y = atoi(command_args.argv[++i]);
       if (!strcmp(command_args.argv[i],"-b"))
       {
-        num_subregions_x = 1 << atoi(command_args.argv[++i]);
+        num_subregions_x = atoi(command_args.argv[++i]);
         num_subregions_y = num_subregions_x;
       }
       if (!strcmp(command_args.argv[i],"-bx"))
-        num_subregions_x = 1 << atoi(command_args.argv[++i]);
+        num_subregions_x = atoi(command_args.argv[++i]);
       if (!strcmp(command_args.argv[i],"-by"))
-        num_subregions_y = 1 << atoi(command_args.argv[++i]);
+        num_subregions_y = atoi(command_args.argv[++i]);
       if (!strcmp(command_args.argv[i],"-i"))
         num_iterations = atoi(command_args.argv[++i]);
       if (!strcmp(command_args.argv[i],"-c"))
         partition_kind = COMPUTE_KIND;
-      if (!strcmp(command_args.argv[i],"-a"))
-        angle = atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-sms"))
+        sleep_ms = atoi(command_args.argv[++i]);
     }
   }
 
@@ -112,25 +191,17 @@ void top_level_task(const Task *task,
     assert(0);
   }
 
-  // Currently only support 2 different angles.
-  if (angle != 180 && angle != 270)
-  {
-    printf("Angle must be one of 180 or 270\n");
-    assert(0);
-  }
-
-  printf("Running computation for (%d, %d) dimensions at angle %d...\n",
-      side_length_x, side_length_y, angle);
+  printf("Running computation for (%d, %d) dimensions at angle 180...\n",
+      side_length_x, side_length_y);
   printf("Partitioning data into (%d, %d) sub-regions...\n", num_subregions_x,
       num_subregions_y);
 
-  // For this example we'll create a single logical region with three
+  // For this example we'll create a single logical region with two
   // fields.  We'll initialize the field identified by 'FID_X' and 'FID_Y' with
   // our input data and then compute the value and write into 'FID_VAL'.
-  Rect<2> elem_rect(Point<2>(0,0),
-      Point<2>(side_length_x-1, side_length_y-1));
-  IndexSpace is = runtime->create_index_space(ctx, 
-                          Domain(elem_rect));
+  Rect<2> elem_rect(Point<2>(0,0), Point<2>(side_length_x-1,
+      side_length_y-1));
+  IndexSpace is = runtime->create_index_space(ctx, elem_rect);
   FieldSpace fs = runtime->create_field_space(ctx);
   {
     FieldAllocator allocator = 
@@ -141,6 +212,7 @@ void top_level_task(const Task *task,
   }
   LogicalRegion top_lr = runtime->create_logical_region(ctx, is, fs);
 
+/* TODO: come back and delete this!
   int num_waves, parallel_size, subregions_per_wave, perp_size;
   if (angle == 180)
   {
@@ -156,141 +228,106 @@ void top_level_task(const Task *task,
     num_waves = num_subregions_y;
     subregions_per_wave = num_subregions_x;
   }
-  
+  */
+
   // Make our color_domain based on the number of subregions
-  // that we want to create, subtracting 1 for 0 indexing.
-  Rect<1> color_bounds(Point<1>(0), Point<1>(num_waves));
+  // that we want to create.  We create extra empty subregions
+  // around the outside of the grid so that the compute tasks
+  // can all work the same.
+  Rect<2> color_bounds(Point<2>(0,0),
+      Point<2>(num_subregions_x, num_subregions_y));
   Domain color_domain = Domain(color_bounds);
 
-  // Create two levels of partition so that we can launch
-  // the different wavefronts in parallel.
-  IndexPartition first_ip;
-  LogicalPartition first_lp;
+  // Create (possibly coarser) grid partition of the grid of points
+  IndexPartition grid_ip;
   {
-    DomainPointColoring d_coloring;
     const int points_per_partition_x = side_length_x/num_subregions_x;
     const int points_per_partition_y = side_length_y/num_subregions_y;
-
-    // we include an empty extra partition for the first compute task
-    for (int i = 0; i <= num_waves; i++)
-    {
-      if (i == num_waves)
-      {
-        // Map the last point to the empty domain
-        Rect<2> subrect(Point<2>(0,0),Point<2>(-1,-1));
-        d_coloring[DomainPoint(Point<1>(i))] = Domain(subrect);
-        continue;
-      }
-      int x_start, x_end, y_start, y_end;
-      if (angle == 180)
-      {
-        x_start = i * points_per_partition_x;
-        y_start = 0;
-        x_end = x_start + points_per_partition_x - 1;
-        y_end = side_length_y - 1;
-      }
-      else
-      {
-        x_start = 0;
-        y_start = i * points_per_partition_y;
-        x_end = side_length_x - 1;
-        y_end = y_start + points_per_partition_y - 1;
-      }
-      Rect<2> subrect(Point<2>(x_start, y_start),Point<2>(x_end, y_end));
-      d_coloring[DomainPoint(Point<1>(i))] = Domain(subrect);
-    }
-
-    first_ip = runtime->create_index_partition(
-        ctx, is, color_domain, d_coloring, partition_kind);
-    first_lp = runtime->get_logical_partition(ctx, top_lr, first_ip);
-
+    DomainPointColoring d_coloring;
     for (Domain::DomainPointIterator itr(color_domain); itr; itr++)
     {
-      Rect<1> sub_color_bounds(Point<1>(0),
-          Point<1>(subregions_per_wave-1));
-      Domain sub_color_domain = Domain(sub_color_bounds);
-      DomainPointColoring sub_d_coloring;
-      LogicalRegion to_partition = runtime->get_logical_subregion_by_color(ctx,
-          first_lp, itr.p);
-
-      for (Domain::DomainPointIterator itr2(sub_color_domain); itr2; itr2++)
+      // Make the empty bounding subregions.
+      if (itr.p[0] == num_subregions_x || itr.p[1] == num_subregions_y)
       {
-        if (itr.p[0] == num_waves)
-        {
-          // Further divide the empty region into more empty regions
-          // for symmetry
           Rect<2> subrect(Point<2>(0,0),Point<2>(-1,-1));
-          sub_d_coloring[itr2.p] = Domain(subrect);
+          d_coloring[itr.p] = Domain(subrect);
           continue;
-        }
-        int x_start, x_end, y_start, y_end;
-        if (angle == 180)
-        {
-          x_start = itr.p[0] * points_per_partition_x;
-          y_start = itr2.p[0] * points_per_partition_y;
-        }
-        else
-        {
-          x_start = itr2.p[0] * points_per_partition_x;
-          y_start = itr.p[0] * points_per_partition_y;
-        }
-        x_end = x_start + points_per_partition_x - 1;
-        y_end = y_start + points_per_partition_y - 1;
-
-        Rect<2> subrect(Point<2>(x_start, y_start),Point<2>(x_end, y_end));
-        sub_d_coloring[itr2.p] = Domain(subrect);
       }
-
-      runtime->create_index_partition(ctx, to_partition.get_index_space(),
-          sub_color_domain, sub_d_coloring, partition_kind);
+      int x_start = itr.p[0] * points_per_partition_x;
+      int y_start = itr.p[1] * points_per_partition_y;
+      int x_end = (itr.p[0] + 1) * points_per_partition_x - 1;
+      int y_end = (itr.p[1] + 1) * points_per_partition_y - 1;
+      Rect<2> subrect(Point<2>(x_start, y_start),Point<2>(x_end, y_end));
+      d_coloring[itr.p] = Domain(subrect);
     }
+
+
+    // Once we've computed our coloring then we can
+    // create our partition.
+    grid_ip = runtime->create_index_partition(ctx, is, color_domain,
+                                    d_coloring, partition_kind);
   }
 
-  for (int i = num_waves - 1; i >= 0; i--)
-  {
-    DomainPoint init_point = DomainPoint(Point<1>(i));
-    LogicalRegion init_region =
-        runtime->get_logical_subregion_by_color(first_lp, init_point);
+  // Once we've created our index partitions, we can get the
+  // corresponding logical partitions for the top_lr
+  // logical region.
+  LogicalPartition grid_lp = 
+    runtime->get_logical_partition(ctx, top_lr, grid_ip);
 
-    TaskLauncher init_helper_launcher(INIT_LAUNCHER_HELPER_TASK_ID,
-         TaskArgument(NULL, 0));
-    init_helper_launcher.add_region_requirement(
-        RegionRequirement(init_region,
-                          READ_WRITE, EXCLUSIVE, top_lr));
-    init_helper_launcher.add_field(0, FID_X);
-    init_helper_launcher.add_field(0, FID_Y);
-    init_helper_launcher.add_field(0, FID_VAL);
-    runtime->execute_task(ctx, init_helper_launcher);
-  }
+  // Our launch domain will again be only include the data subregions
+  // and not the dummy ones
+  Rect<2> launch_bounds(Point<2>(0,0),
+      Point<2>(num_subregions_x-1, num_subregions_y-1));
+  Domain launch_domain = Domain(launch_bounds);
+  ArgumentMap arg_map;
 
-  // Now we launch the computation to calculate the value
+  FutureMap fm;
+  // First initialize the 'FID_X' and 'FID_Y' fields with some data
+  IndexLauncher init_launcher(INIT_FIELD_TASK_ID, launch_domain,
+                              TaskArgument(NULL, 0), arg_map);
+  init_launcher.add_region_requirement(
+      RegionRequirement(grid_lp, 0/*projection ID*/,
+                        WRITE_DISCARD, EXCLUSIVE, top_lr));
+  init_launcher.add_field(0, FID_X);
+  init_launcher.add_field(0, FID_Y);
+  init_launcher.add_field(0, FID_VAL);
+  fm = runtime->execute_index_space(ctx, init_launcher);
+
+  fm.wait_all_results();
+  double ts_start = Realm::Clock::current_time_in_microseconds();
   for (int j = 0; j < num_iterations; j++)
   {
-    for (int i = num_waves - 1; i >= 0; i--)
+    for (int i = num_subregions_x - 1; i >= 0; i--)
     {
-      DomainPoint compute_point = DomainPoint(Point<1>(i));
-      DomainPoint data_point = DomainPoint(Point<1>(i+1));
-      LogicalRegion compute_region =
-          runtime->get_logical_subregion_by_color(first_lp, compute_point);
-      LogicalRegion data_region =
-          runtime->get_logical_subregion_by_color(first_lp, data_point);
-
       ComputeArgs compute_args;
-      compute_args.angle = angle;
-      compute_args.parallel_length = parallel_size;
-      TaskLauncher helper_launcher(COMPUTE_LAUNCHER_HELPER_TASK_ID,
-           TaskArgument(&compute_args, sizeof(ComputeArgs)));
-      helper_launcher.add_region_requirement(
-          RegionRequirement(compute_region,
-                            READ_WRITE, EXCLUSIVE, top_lr));
-      helper_launcher.add_region_requirement(
-          RegionRequirement(data_region,
+      compute_args.sleep_ms = sleep_ms;
+      compute_args.parallel_length = side_length_y;
+      compute_args.wave_num = i;
+
+      Rect<1> wave_launch_bounds(Point<1>(0),
+          Point<1>(num_subregions_y - 1));
+      Domain wave_launch_domain = Domain(wave_launch_bounds);
+
+      IndexLauncher compute_launcher(COMPUTE_TASK_ID, wave_launch_domain,
+           TaskArgument(&compute_args, sizeof(ComputeArgs)), arg_map);
+      compute_launcher.add_region_requirement(
+          RegionRequirement(grid_lp, X_PROJ,
                             READ_ONLY, EXCLUSIVE, top_lr));
-      helper_launcher.add_field(0, FID_VAL);
-      helper_launcher.add_field(1, FID_VAL);
-      runtime->execute_task(ctx, helper_launcher);
+      compute_launcher.add_region_requirement(
+          RegionRequirement(grid_lp, ID_PROJ,
+                            READ_WRITE, EXCLUSIVE, top_lr));
+      compute_launcher.add_field(0, FID_VAL);
+      compute_launcher.add_field(1, FID_VAL);
+
+      fm = runtime->execute_index_space(ctx, compute_launcher);
     }
+    fm.wait_all_results();
   }
+
+  fm.wait_all_results();
+  double ts_end = Realm::Clock::current_time_in_microseconds();
+  double sim_time = 1e-6 * (ts_end - ts_start);
+  printf("ELAPSED TIME = %7.7f s\n", sim_time);
 
   // Finally, we launch a single task to check the results.
   RectDims rect_dims;
@@ -303,7 +340,7 @@ void top_level_task(const Task *task,
   check_launcher.add_field(0, FID_X);
   check_launcher.add_field(0, FID_Y);
   check_launcher.add_field(0, FID_VAL);
-  runtime->execute_task(ctx, check_launcher);
+  //runtime->execute_task(ctx, check_launcher);
 
   // Clean up our region, index space, and field space
   runtime->destroy_logical_region(ctx, top_lr);
@@ -325,10 +362,6 @@ void init_field_task(const Task *task,
   FieldID fidx = *fields;
   FieldID fidy = *(++fields);
   FieldID fid_val_write = *(++fields);
-  const int pointx = task->index_point.point_data[0];
-  const int pointy = task->index_point.point_data[1];
-  printf("Initializing fields %d and %d for block (%d, %d)...\n",
-      fidx, fidy, pointx, pointy);
 
   RegionAccessor<AccessorType::Generic, int> accx = 
     regions[0].get_field_accessor(fidx).typeify<int>();
@@ -347,75 +380,6 @@ void init_field_task(const Task *task,
   }
 }
 
-void init_launcher_helper_task(const Task *task,
-                          const std::vector<PhysicalRegion> &regions,
-                          Context ctx, Runtime *runtime)
-{
-  assert(regions.size() == 1);
-  assert(task->regions.size() == 1);
-  assert(task->regions[0].privilege_fields.size() == 3);
-
-  LogicalRegion lr_0 = regions[0].get_logical_region();
-
-  LogicalPartition init_partition =
-      runtime->get_logical_partition_by_color(ctx, lr_0,
-                  DomainPoint(Point<1>(0)));
-
-  Domain init_launch_domain = runtime->get_index_partition_color_space(
-      init_partition.get_index_partition());
-
-  ArgumentMap arg_map;
-  IndexLauncher init_launcher(INIT_FIELD_TASK_ID, init_launch_domain,
-                              TaskArgument(NULL, 0), arg_map);
-  init_launcher.add_region_requirement(
-      RegionRequirement(init_partition, 0/*projection ID*/,
-                        WRITE_DISCARD, EXCLUSIVE, lr_0));
-  init_launcher.add_field(0, FID_X);
-  init_launcher.add_field(0, FID_Y);
-  init_launcher.add_field(0, FID_VAL);
-  runtime->execute_index_space(ctx, init_launcher);
-}
-
-void compute_launcher_helper_task(const Task *task,
-                          const std::vector<PhysicalRegion> &regions,
-                          Context ctx, Runtime *runtime)
-{
-  assert(regions.size() == 2);
-  assert(task->regions.size() == 2);
-  assert(task->regions[0].privilege_fields.size() == 1);
-  assert(task->regions[1].privilege_fields.size() == 1);
-  assert(task->arglen == sizeof(ComputeArgs));
-  ComputeArgs compute_args = *((ComputeArgs *)task->args);
-  //const int angle = compute_args.angle;
-
-  LogicalRegion lr_0 = regions[0].get_logical_region(); // The region to compute
-  LogicalRegion lr_1 = regions[1].get_logical_region(); // The data region
-
-  LogicalPartition compute_partition =
-      runtime->get_logical_partition_by_color(ctx, lr_0,
-                  DomainPoint(Point<1>(0)));
-  LogicalPartition data_partition = 
-      runtime->get_logical_partition_by_color(ctx, lr_1,
-                  DomainPoint(Point<1>(0)));
-
-  Domain compute_launch_domain = runtime->get_index_partition_color_space(
-      compute_partition.get_index_partition());
-  
-  ArgumentMap arg_map;
-  IndexLauncher compute_launcher(COMPUTE_TASK_ID, compute_launch_domain,
-       TaskArgument(&compute_args, sizeof(ComputeArgs)), arg_map);
-  compute_launcher.add_region_requirement(
-      RegionRequirement(data_partition, 0,
-                        READ_ONLY, EXCLUSIVE, lr_1));
-  compute_launcher.add_region_requirement(
-      RegionRequirement(compute_partition, 0,
-                        READ_WRITE, EXCLUSIVE, lr_0));
-  compute_launcher.add_field(0, FID_VAL);
-  compute_launcher.add_field(1, FID_VAL);
-
-  runtime->execute_index_space(ctx, compute_launcher);
-}
-
 // Compute the value triangle value for each point in the rectangle
 void compute_task(const Task *task,
                   const std::vector<PhysicalRegion> &regions,
@@ -425,40 +389,41 @@ void compute_task(const Task *task,
   assert(task->regions.size() == 2);
   assert(task->regions[0].privilege_fields.size() == 1);
   assert(task->regions[1].privilege_fields.size() == 1);
-  assert(task->arglen == sizeof(ComputeArgs));
   ComputeArgs compute_args = *((ComputeArgs *)task->args);
-  const int angle = compute_args.angle;
+  const int angle = 180;
   const int parallel_length  = compute_args.parallel_length;
-  
-  FieldID val_fid_prev_wave = *(task->regions[0].privilege_fields.begin());
-  FieldID val_fid_curr = *(task->regions[1].privilege_fields.begin());
+  usleep(compute_args.sleep_ms);
+  //usleep(compute_args.sleep_ms * 1000);
 
-  RegionAccessor<AccessorType::Generic, int> prev_wave_acc = 
-    regions[0].get_field_accessor(val_fid_prev_wave).typeify<int>();
-  RegionAccessor<AccessorType::Generic, int> curr_acc = 
-    regions[1].get_field_accessor(val_fid_curr).typeify<int>();
+  FieldID val_prev = *(task->regions[0].privilege_fields.begin());
+  FieldID val_curr = *(task->regions[1].privilege_fields.begin());
+
+  RegionAccessor<AccessorType::Generic, int> prev_acc =
+    regions[0].get_field_accessor(val_prev).typeify<int>();
+  RegionAccessor<AccessorType::Generic, int> curr_acc =
+    regions[1].get_field_accessor(val_curr).typeify<int>();
 
   Rect<2> rect = runtime->get_index_space_domain(ctx,
       task->regions[1].region.get_index_space());
 
-  Domain prev_wave_dom = runtime->get_index_space_domain(ctx,
+  Domain prev_dom = runtime->get_index_space_domain(ctx,
       task->regions[0].region.get_index_space());
-  size_t prev_wave_volume = prev_wave_dom.get_volume();
+  size_t prev_volume = prev_dom.get_volume();
 
   Point<2> lo = rect.lo;
   Point<2> hi = rect.hi;
   Point<2> cur_point;
-  int prev_wave_val;
-  Point<2> offset_prev_wave;
+  int prev_val;
+  Point<2> offset_prev_val;
   int primary_loop_index;
   if (angle == 180)
   {
-    offset_prev_wave = Point<2>(1,0);
+    offset_prev_val = Point<2>(1,0);
     primary_loop_index = 0;
   }
   else
   {
-    offset_prev_wave = Point<2>(0,1);
+    offset_prev_val = Point<2>(0,1);
     primary_loop_index = 1;
   }
 
@@ -475,26 +440,25 @@ void compute_task(const Task *task,
       {
         cur_point = Point<2>(j, i);
       }
-
-      const Point<2> idx_offset = cur_point + offset_prev_wave;
+      const Point<2> access_idx = cur_point + offset_prev_val;
       if (i == hi[primary_loop_index])
       {
-        if (prev_wave_volume > 0)
+        if (prev_volume > 0)
         {
-          prev_wave_val = prev_wave_acc.read(idx_offset);
+          prev_val = prev_acc.read(access_idx);
         }
         else
         {
           // make the starting value be the index of the minor axis
           // (parallel to wave direction)
-          prev_wave_val = parallel_length - 1 - j;
+          prev_val = parallel_length - 1 - j;
         }
       }
       else
       {
-        prev_wave_val = curr_acc.read(idx_offset);
+        prev_val = curr_acc.read(access_idx);
       }
-      int computed_val = prev_wave_val + 1;
+      int computed_val = prev_val + 1;
       curr_acc.write(cur_point, computed_val);
     }
   }
@@ -552,13 +516,14 @@ void check_task(const Task *task,
     int val = acc_val.read(*pir);
     int expected = x + y + 1;
 
-    //printf("At point (%lld, %lld).  Checking for values %d and %d... "
-    //    "expected %d, found %d\n", pir.p[0], pir.p[1], x, y, expected, val);
+    //printf("At point (%lld, %lld)\n", (*pir)[0], (*pir)[1]);
+    //printf("Checking for values %d and %d... expected %d, found %d\n",
+        //x, y, expected, val);
     
     if (expected != val)
     {
       all_passed = false;
-      break;
+      //break;
     }
   }
   if (all_passed)
@@ -576,14 +541,6 @@ int main(int argc, char **argv)
   Runtime::register_legion_task<init_field_task>(INIT_FIELD_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID,
       TaskConfigOptions(), "init_task");
-  Runtime::register_legion_task<init_launcher_helper_task>(
-      INIT_LAUNCHER_HELPER_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID,
-      TaskConfigOptions(false,true,false), "init_launcher_helper_task");
-  Runtime::register_legion_task<compute_launcher_helper_task>(
-      COMPUTE_LAUNCHER_HELPER_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID,
-      TaskConfigOptions(false,true,false), "compute_ launcher_helper_task");
   Runtime::register_legion_task<compute_task>(COMPUTE_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID,
       TaskConfigOptions(true, false, false), "compute_task");
@@ -593,6 +550,9 @@ int main(int argc, char **argv)
   Runtime::register_legion_task<check_task>(CHECK_TASK_ID,
       Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID,
       TaskConfigOptions(), "check_task");
+
+  Runtime::preregister_projection_functor(X_PROJ, new XDiffProjectionFunctor());
+  Runtime::preregister_projection_functor(ID_PROJ, new IDProjectionFunctor());
 
   return Runtime::start(argc, argv);
 }

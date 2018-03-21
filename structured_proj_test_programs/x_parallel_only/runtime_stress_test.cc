@@ -17,8 +17,8 @@
 #include <cstdio>
 #include <cassert>
 #include <cstdlib>
-#include <unistd.h>  // for sleep and usleep
 #include "legion.h"
+#include <unistd.h>  // for sleep and usleep
 
 #include "default_mapper.h"
 
@@ -52,6 +52,16 @@ enum FieldIDs {
   FID_VAL,
 };
 
+enum ProjIDs {
+  X_PROJ = 1,
+  Y_PROJ = 2,
+  ID_PROJ = 3,
+};
+
+enum OrderIDs {
+  FROM_TOP_RIGHT = 1,
+};
+
 struct RectDims {
   int side_length_x;
   int side_length_y;
@@ -68,17 +78,25 @@ struct ComputeArgs {
 // dependencies
 class SliceMapper : public DefaultMapper {
 public:
-  SliceMapper(Machine machine, Runtime *rt, Processor local);
+  SliceMapper(Machine machine, Runtime *rt, Processor local, int sl, bool x_only);
 public:
   virtual void slice_task(const MapperContext ctx,
                           const Task& task,
                           const SliceTaskInput& input,
                                 SliceTaskOutput& output);
+private:
+  void compute_cached_procs(std::vector<Processor> all_procs);
+public:
+  unsigned slice_side_length;
+  bool cached;
+  bool x_only;
+  std::vector<Processor> cached_procs;
 };
 
 // pass arguments through to Default
-SliceMapper::SliceMapper(Machine m, Runtime *rt, Processor p)
-  : DefaultMapper(rt->get_mapper_runtime(), m, p)
+SliceMapper::SliceMapper(Machine m, Runtime *rt, Processor p, int sl, bool x)
+  : DefaultMapper(rt->get_mapper_runtime(), m, p), slice_side_length(sl),
+  cached(false), x_only(x)
 {
 }
 
@@ -88,38 +106,82 @@ void SliceMapper::slice_task(const MapperContext      ctx,
                                    SliceTaskOutput&   output)
 {
   // Iterate over all the points and send them all over the world
-  output.slices.resize(input.domain.get_volume());
+  //output.slices.resize(input.domain.get_volume());
   unsigned idx = 0;
 
   Machine::ProcessorQuery all_procs(machine);
   all_procs.only_kind(local_cpus[0].kind());
   std::vector<Processor> procs(all_procs.begin(), all_procs.end());
+  //printf("there are %lu all procs size\n", procs.size());
+  if (!cached)
+  {
+    Machine::ProcessorQuery all_procs(machine);
+    all_procs.only_kind(local_cpus[0].kind());
+    std::vector<Processor> procs(all_procs.begin(), all_procs.end());
+    compute_cached_procs(procs);
+  }
 
   switch (input.domain.get_dim())
   {
     case 1:
       {
+        assert(0);
         Rect<1> rect = input.domain;
         for (PointInRectIterator<1> pir(rect);
               pir(); pir++, idx++)
         {
           Rect<1> slice(*pir, *pir);
           output.slices[idx] = TaskSlice(slice,
-              procs[idx % procs.size()],
+              cached_procs[idx % cached_procs.size()],
               false/*recurse*/, true/*stealable*/);
         }
         break;
       }
-    case 2:
+    case 2: // only care about this case for now
       {
-        Rect<2> rect = input.domain;
-        for (PointInRectIterator<2> pir(rect);
-              pir(); pir++, idx++)
+        if (x_only)
         {
-          Rect<2> slice(*pir, *pir);
-          output.slices[idx] = TaskSlice(slice,
-              procs[idx % procs.size()],
-              false/*recurse*/, true/*stealable*/);
+          Rect<2> rect = input.domain;
+          Point<2> lo = rect.lo;
+          Point<2> hi = rect.hi;
+          //printf("I have %lu procs, resizing to %d \n", cached_procs.size(), (hi[0] - lo[0] + 1) / slice_side_length);
+          //printf("using the slice mapper, side length %u\n", slice_side_length);
+          for (unsigned x = lo[0]; x < hi[0] + 1; x += slice_side_length)
+          {
+            Point<2> slice_lo(x, lo[1]);
+            Point<2> slice_hi(x + slice_side_length - 1, hi[1]);
+           // printf("x = %u slice goes from (%lld, %lld) to (%lld, %lld), mapped to %lu\n",
+            //  x, slice_lo[0], slice_lo[1], slice_hi[0], slice_hi[1], x % cached_procs.size());
+            Rect<2> slice(slice_lo, slice_hi);
+            output.slices.push_back(TaskSlice(slice, cached_procs[x % cached_procs.size()],
+              false/*recurse*/, true/*stealable*/));
+          }
+        }
+        else
+        {
+          Rect<2> rect = input.domain;
+          Point<2> lo = rect.lo;
+          Point<2> hi = rect.hi;
+          assert((hi[0] - lo[0] + 1) % slice_side_length == 0);
+          assert((hi[1] - lo[1] + 1) % slice_side_length == 0);
+          unsigned x_iter = (hi[0] - lo[0]) / slice_side_length + 1;
+          unsigned y_iter = (hi[1] - lo[1]) / slice_side_length + 1;
+          output.slices.resize(x_iter * y_iter);
+          //printf("using the slice mapper, side length %u\n", slice_side_length);
+          for (unsigned x = 0; x < x_iter; ++x)
+          {
+            for (unsigned y = 0; y < y_iter; ++y)
+            {
+              Point<2> slice_lo(x * slice_side_length, y * slice_side_length);
+              Point<2> slice_hi((x+1) * slice_side_length - 1, (y+1) * slice_side_length - 1);
+              //printf("x = %u, y = %u, slice goes from (%lld, %lld) to (%lld, %lld), mapped to %lu\n",
+                //x, y, slice_lo[0], slice_lo[1], slice_hi[0], slice_hi[1], x % cached_procs.size());
+              Rect<2> slice(slice_lo, slice_hi);
+              output.slices[idx] = TaskSlice(slice, cached_procs[x % cached_procs.size()],
+                false/*recurse*/, true/*stealable*/);
+              idx++;
+            }
+          }
         }
         break;
       }
@@ -131,7 +193,7 @@ void SliceMapper::slice_task(const MapperContext      ctx,
         {
           Rect<3> slice(*pir, *pir);
           output.slices[idx] = TaskSlice(slice,
-              procs[idx % procs.size()],
+              cached_procs[idx % cached_procs.size()],
               false/*recurse*/, true/*stealable*/);
         }
         break;
@@ -140,6 +202,209 @@ void SliceMapper::slice_task(const MapperContext      ctx,
       assert(false);
   }
 }
+
+void SliceMapper::compute_cached_procs(std::vector<Processor> all_procs)
+{
+  std::vector<AddressSpace> address_spaces;
+  for (unsigned i = 0; i < all_procs.size(); ++i)
+  {
+    Processor p = all_procs[i];
+    if (std::find(address_spaces.begin(), address_spaces.end(), p.address_space()) == address_spaces.end())
+    {
+      address_spaces.push_back(p.address_space());
+      cached_procs.push_back(p);
+    }
+  }
+  cached = true;
+}
+
+class FromTopRightOrderFunctor : public StructuredOrderingFunctor
+{
+  public:
+    FromTopRightOrderFunctor()
+      : StructuredOrderingFunctor(get_coefficients()) {}
+
+    ~FromTopRightOrderFunctor() {}
+
+  private:
+    static DomainPoint get_coefficients(void)
+    {
+      DomainPoint coeffs;
+      coeffs.dim = 2;
+      coeffs[0] = -1;
+      coeffs[1] = -1;
+      return coeffs;
+    }
+};
+
+class IDProjectionFunctor : public StructuredProjectionFunctor
+//class IDProjectionFunctor : public ProjectionFunctor
+{
+  public:
+    IDProjectionFunctor()
+      : StructuredProjectionFunctor() {}
+
+    ~IDProjectionFunctor() {}
+
+    virtual LogicalRegion project(Context ctx, Task *task, unsigned index,
+                                  LogicalRegion upper_bound,
+                                  const DomainPoint &point)
+    {
+      assert(0);
+    }
+
+    virtual LogicalRegion project(Context ctx, Task *task, unsigned index,
+                                  LogicalPartition upper_bound,
+                                  const DomainPoint &point)
+    {
+      LogicalRegion ret_region =
+          runtime->get_logical_subregion_by_color(ctx, upper_bound, point);
+      return ret_region;
+    }
+
+    virtual StructuredProjection project_structured(Context ctx)
+    {
+      StructuredProjectionStep first_step =
+        StructuredProjectionStep::make_step(1, 0 , 0, 1, 1, 0);
+      StructuredProjection sproj;
+      sproj.steps.push_back(first_step);
+      return sproj;
+    }
+
+    virtual AffineStructuredProjection affine_project_structured(Context ctx)
+    {
+      Transform<2,2> transform;
+      transform[0][0] = 1;
+      transform[0][1] = 0;
+      transform[1][0] = 0;
+      transform[1][1] = 1;
+      AffineStructuredProjectionStep first_step =
+        AffineStructuredProjectionStep(DomainTransform(transform));
+      AffineStructuredProjection sproj;
+      sproj.steps.push_back(first_step);
+      return sproj;
+    }
+
+    virtual unsigned get_depth() const {
+      return 0;
+    }
+};
+
+//class XDiffProjectionFunctor : public ProjectionFunctor
+class XDiffProjectionFunctor : public StructuredProjectionFunctor
+{
+  public:
+    XDiffProjectionFunctor()
+      : StructuredProjectionFunctor() {}
+
+    ~XDiffProjectionFunctor() {}
+
+    virtual LogicalRegion project(Context ctx, Task *task, unsigned index,
+                                  LogicalRegion upper_bound,
+                                  const DomainPoint &point)
+    {
+      assert(0);
+    }
+
+    virtual LogicalRegion project(Context ctx, Task *task, unsigned index,
+                                  LogicalPartition upper_bound,
+                                  const DomainPoint &point)
+    {
+      const Point<2> onex = Point<2>(1,0);
+      const Point<2> new_point = Point<2>(point) + onex;
+      LogicalRegion ret_region =
+          runtime->get_logical_subregion_by_color(ctx, upper_bound,
+          DomainPoint(new_point));
+      return ret_region;
+    }
+
+    virtual StructuredProjection project_structured(Context ctx)
+    {
+      StructuredProjectionStep first_step =
+        StructuredProjectionStep::make_step(1, 0 , 1, 1, 1, 0);
+      StructuredProjection sproj;
+      sproj.steps.push_back(first_step);
+      return sproj;
+    }
+
+    virtual AffineStructuredProjection affine_project_structured(Context ctx)
+    {
+      Transform<2,2> transform;
+      transform[0][0] = 1;
+      transform[0][1] = 0;
+      transform[1][0] = 0;
+      transform[1][1] = 1;
+      Point<2> offset(1, 0);
+      AffineStructuredProjectionStep first_step =
+        AffineStructuredProjectionStep(DomainTransform(transform),
+                                       DomainPoint(offset));
+      AffineStructuredProjection sproj;
+      sproj.steps.push_back(first_step);
+      return sproj;
+    }
+
+    virtual unsigned get_depth() const {
+      return 0;
+    }
+};
+
+//class YDiffProjectionFunctor : public ProjectionFunctor
+class YDiffProjectionFunctor : public StructuredProjectionFunctor
+{
+  public:
+    YDiffProjectionFunctor()
+      : StructuredProjectionFunctor() {}
+
+    ~YDiffProjectionFunctor() {}
+
+    virtual LogicalRegion project(Context ctx, Task *task, unsigned index,
+                                  LogicalRegion upper_bound,
+                                  const DomainPoint &point)
+    {
+      assert(0);
+    }
+
+    virtual LogicalRegion project(Context ctx, Task *task, unsigned index,
+                                  LogicalPartition upper_bound,
+                                  const DomainPoint &point)
+    {
+      const Point<2> oney = Point<2>(0,1);
+      const Point<2> new_point = Point<2>(point) + oney;
+      LogicalRegion ret_region =
+          runtime->get_logical_subregion_by_color(ctx, upper_bound,
+          DomainPoint(new_point));
+      return ret_region;
+    }
+
+    virtual StructuredProjection project_structured(Context ctx)
+    {
+      StructuredProjectionStep first_step =
+        StructuredProjectionStep::make_step(1, 0 , 0, 1, 1, 1);
+      StructuredProjection sproj;
+      sproj.steps.push_back(first_step);
+      return sproj;
+    }
+
+    virtual AffineStructuredProjection affine_project_structured(Context ctx)
+    {
+      Transform<2,2> transform;
+      transform[0][0] = 1;
+      transform[0][1] = 0;
+      transform[1][0] = 0;
+      transform[1][1] = 1;
+      Point<2> offset(0, 1);
+      AffineStructuredProjectionStep first_step =
+        AffineStructuredProjectionStep(DomainTransform(transform),
+                                       DomainPoint(offset));
+      AffineStructuredProjection sproj;
+      sproj.steps.push_back(first_step);
+      return sproj;
+    }
+
+    virtual unsigned get_depth() const {
+      return 0;
+    }
+};
 
 void top_level_task(const Task *task,
                     const std::vector<PhysicalRegion> &regions,
@@ -199,9 +464,9 @@ void top_level_task(const Task *task,
   }
 
   // Currently only support 2 different angles.
-  if (angle != 180 && angle !=  225 && angle != 270)
+  if (angle != 180 && angle != 225)
   {
-    printf("Angle must be one of 180 or 270\n");
+    printf("Angle must be one of 180 or 225\n");
     assert(0);
   }
 
@@ -289,104 +554,86 @@ void top_level_task(const Task *task,
 
   // Our launch domain will again be only include the data subregions
   // and not the dummy ones
-  //Rect<2> launch_bounds(Point<2>(0,0),
-      //Point<2>(num_subregions_x-1, num_subregions_y-1));
-  //Domain launch_domain = Domain(launch_bounds);
-  //ArgumentMap arg_map;
+  Rect<2> launch_bounds(Point<2>(0,0),
+      Point<2>(num_subregions_x-1, num_subregions_y-1));
+  Domain launch_domain = Domain(launch_bounds);
+  ArgumentMap arg_map;
 
+  FutureMap fm;
   // First initialize the 'FID_X' and 'FID_Y' fields with some data
-  Future f;
-  for (int x = num_subregions_x - 1; x >= 0; --x)
-  {
-    for (int y = num_subregions_y - 1; y >= 0; --y)
-    {
-      const Point<2> cur_point = Point<2>(x,y);
-      LogicalRegion cur_region =
-          runtime->get_logical_subregion_by_color(grid_lp, cur_point);
+  IndexLauncher init_launcher(INIT_FIELD_TASK_ID, launch_domain,
+                              TaskArgument(NULL, 0), arg_map);
+  init_launcher.add_region_requirement(
+      RegionRequirement(grid_lp, 0/*projection ID*/,
+                        WRITE_DISCARD, EXCLUSIVE, top_lr));
+  init_launcher.add_field(0, FID_X);
+  init_launcher.add_field(0, FID_Y);
+  init_launcher.add_field(0, FID_VAL);
+  fm = runtime->execute_index_space(ctx, init_launcher);
 
-      TaskLauncher init_launcher(INIT_FIELD_TASK_ID,
-                                  TaskArgument(NULL, 0));
-      init_launcher.add_region_requirement(
-          RegionRequirement(cur_region,
-                            WRITE_DISCARD, EXCLUSIVE, top_lr));
-      init_launcher.add_field(0, FID_X);
-      init_launcher.add_field(0, FID_Y);
-      init_launcher.add_field(0, FID_VAL);
-      f = runtime->execute_task(ctx, init_launcher);
-    }
-  }
-
-  f.get_void_result();
   // Now we launch the computation to calculate Pascal's triangle
+  fm.wait_all_results();
   double ts_start = Realm::Clock::current_time_in_microseconds();
   for (int j = 0; j < num_iterations; j++)
   {
-    for (int x = num_subregions_x - 1; x >= 0; --x)
+    if (angle == 225)
     {
-      for (int y = num_subregions_y - 1; y >= 0; --y)
-      {
-        const Point<2> cur_point = Point<2>(x,y);
-        const Point<2> onex = cur_point + Point<2>(1,0);
-        const Point<2> oney = cur_point + Point<2>(0,1);
-        LogicalRegion cur_region =
-            runtime->get_logical_subregion_by_color(grid_lp, cur_point);
-        if (angle == 225)
-        {
-          ComputeArgs compute_args;
-          compute_args.angle = angle; // unused, but might as well be correct
-          compute_args.parallel_length = 0; //unused
-          compute_args.sleep_ms = sleep_ms;
-          LogicalRegion x_region =
-              runtime->get_logical_subregion_by_color(grid_lp, onex);
-          LogicalRegion y_region =
-              runtime->get_logical_subregion_by_color(grid_lp, oney);
+      ComputeArgs compute_args;
+      compute_args.angle = angle; // unused, but might as well be correct
+      compute_args.parallel_length = 0; //unused
+      compute_args.sleep_ms = sleep_ms;
+      IndexLauncher compute_launcher(COMPUTE_TASK_ANGLE_ID, launch_domain,
+           TaskArgument(&compute_args, sizeof(ComputeArgs)), arg_map);
+      compute_launcher.set_ordering_id(FROM_TOP_RIGHT);
+      compute_launcher.add_region_requirement(
+          RegionRequirement(grid_lp, X_PROJ,
+                            READ_ONLY, EXCLUSIVE, top_lr));
+      compute_launcher.add_region_requirement(
+          RegionRequirement(grid_lp, Y_PROJ,
+                            READ_ONLY, EXCLUSIVE, top_lr));
+      compute_launcher.add_region_requirement(
+          RegionRequirement(grid_lp, ID_PROJ,
+                            READ_WRITE, EXCLUSIVE, top_lr));
+      compute_launcher.add_field(0, FID_VAL);
+      compute_launcher.add_field(1, FID_VAL);
+      compute_launcher.add_field(2, FID_VAL);
 
-          TaskLauncher compute_launcher(COMPUTE_TASK_ANGLE_ID,
-              TaskArgument(&compute_args, sizeof(ComputeArgs)));
-          compute_launcher.add_region_requirement(
-              RegionRequirement(x_region, READ_ONLY, EXCLUSIVE, top_lr));
-          compute_launcher.add_region_requirement(
-              RegionRequirement(y_region, READ_ONLY, EXCLUSIVE, top_lr));
-          compute_launcher.add_region_requirement(
-              RegionRequirement(cur_region, READ_WRITE, EXCLUSIVE, top_lr));
-          compute_launcher.add_field(0, FID_VAL);
-          compute_launcher.add_field(1, FID_VAL);
-          compute_launcher.add_field(2, FID_VAL);
-          f = runtime->execute_task(ctx, compute_launcher);
-        }
-        else
-        {
-          LogicalRegion dep_region;
-          if (angle == 180)
-          {
-            dep_region =
-                runtime->get_logical_subregion_by_color(grid_lp, onex);
-          }
-          else
-          {
-            dep_region =
-                runtime->get_logical_subregion_by_color(grid_lp, oney);
-          }
-          ComputeArgs compute_args;
-          compute_args.angle = angle;
-          compute_args.parallel_length = parallel_size;
-          compute_args.sleep_ms = sleep_ms;
-          TaskLauncher compute_launcher(COMPUTE_TASK_AXIS_ALIGNED_ID,
-              TaskArgument(&compute_args, sizeof(ComputeArgs)));
-          compute_launcher.add_region_requirement(
-              RegionRequirement(dep_region, READ_ONLY, EXCLUSIVE, top_lr));
-          compute_launcher.add_region_requirement(
-              RegionRequirement(cur_region, READ_WRITE, EXCLUSIVE, top_lr));
-          compute_launcher.add_field(0, FID_VAL);
-          compute_launcher.add_field(1, FID_VAL);
-          f = runtime->execute_task(ctx, compute_launcher);
-        }
-      }
+      fm = runtime->execute_index_space(ctx, compute_launcher);
     }
-    f.get_void_result();
+    else
+    {
+      ProjectionID proj_id;
+      if (angle == 180)
+      {
+        proj_id = X_PROJ;
+      }
+      else
+      {
+        proj_id = Y_PROJ;
+      }
+      ComputeArgs compute_args;
+      compute_args.angle = angle;
+      compute_args.parallel_length = parallel_size;
+      compute_args.sleep_ms = sleep_ms;
+      IndexLauncher compute_launcher(COMPUTE_TASK_AXIS_ALIGNED_ID,
+          launch_domain, TaskArgument(&compute_args, sizeof(ComputeArgs)),
+          arg_map);
+      compute_launcher.set_ordering_id(FROM_TOP_RIGHT);
+      compute_launcher.add_region_requirement(
+          RegionRequirement(grid_lp, proj_id,
+                            READ_ONLY, EXCLUSIVE, top_lr));
+      compute_launcher.add_region_requirement(
+          RegionRequirement(grid_lp, ID_PROJ,
+                            READ_WRITE, EXCLUSIVE, top_lr));
+      compute_launcher.add_field(0, FID_VAL);
+      compute_launcher.add_field(1, FID_VAL);
+
+      fm = runtime->execute_index_space(ctx, compute_launcher);
+    }
+    fm.wait_all_results();
   }
 
-  f.get_void_result();
+  fm.wait_all_results();
   double ts_end = Realm::Clock::current_time_in_microseconds();
   double sim_time = 1e-6 * (ts_end - ts_start);
   printf("ELAPSED TIME = %7.7f s\n", sim_time);
@@ -454,6 +701,9 @@ void compute_task_angle(const Task *task,
                         const std::vector<PhysicalRegion> &regions,
                         Context ctx, Runtime *runtime)
 {
+  //const int pointx = task->index_point.point_data[0];
+  //const int pointy = task->index_point.point_data[1];
+  //printf("Starting the compute task at point (%d, %d) in wave %d at time %lld\n", pointx, pointy, pointx + pointy, Realm::Clock::current_time_in_microseconds());
   /* UNCOMMENT BELOW FOR DEBUG PRINT STATEMENTS
 
   printf("Starting the compute task.\n");
@@ -470,6 +720,10 @@ void compute_task_angle(const Task *task,
   assert(task->regions[0].privilege_fields.size() == 1);
   assert(task->regions[1].privilege_fields.size() == 1);
   assert(task->regions[2].privilege_fields.size() == 1);
+  
+  FieldID val_fid_x_diff = *(task->regions[0].privilege_fields.begin());
+  FieldID val_fid_y_diff = *(task->regions[1].privilege_fields.begin());
+  FieldID val_fid_curr = *(task->regions[2].privilege_fields.begin());
 
   // Sleep the specified amount
   ComputeArgs compute_args = *((ComputeArgs *)task->args);
@@ -477,10 +731,7 @@ void compute_task_angle(const Task *task,
   //printf(" I am sleeping for base %d ms, multiplier %f, for a final value of %d\n", compute_args.sleep_ms, compute_args.sleep_multiplier, compute_args.sleep_ms * compute_args.sleep_multiplier);
   usleep(compute_args.sleep_ms);
   //usleep(compute_args.sleep_ms * 1000);
-  
-  FieldID val_fid_x_diff = *(task->regions[0].privilege_fields.begin());
-  FieldID val_fid_y_diff = *(task->regions[1].privilege_fields.begin());
-  FieldID val_fid_curr = *(task->regions[2].privilege_fields.begin());
+  //usleep(6250);
 
   RegionAccessor<AccessorType::Generic, int> x_diff_acc = 
     regions[0].get_field_accessor(val_fid_x_diff).typeify<int>();
@@ -698,7 +949,7 @@ void check_task(const Task *task,
     if (expected != val)
     {
       all_passed = false;
-      break;
+    //  break;
     }
   }
   if (all_passed)
@@ -710,12 +961,38 @@ void check_task(const Task *task,
 void mapper_registration(Machine machine, Runtime *rt,
                           const std::set<Processor> &local_procs)
 {
+  int slice_side_length = 1;
+  bool x_only = false;
+  const InputArgs &command_args = Runtime::get_input_args();
+  for (int i = 1; i < command_args.argc; i++)
+  {
+      if (!strcmp(command_args.argv[i],"-ssl"))
+      {
+        slice_side_length = atoi(command_args.argv[++i]);
+      }
+      if (!strcmp(command_args.argv[i],"-a"))
+      {
+        int angle = atoi(command_args.argv[++i]);
+        if (angle == 180)
+        {
+          x_only = true;
+        }
+      }
+  }
   for (std::set<Processor>::const_iterator it = local_procs.begin();
         it != local_procs.end(); it++)
   {
     rt->replace_default_mapper(
-        new SliceMapper(machine, rt, *it), *it);
+        new SliceMapper(machine, rt, *it, slice_side_length, x_only), *it);
   }
+}
+
+
+void registration_callback(Machine machine, HighLevelRuntime *rt,
+                               const std::set<Processor> &local_procs)
+{
+  rt->register_ordering_functor(
+      FROM_TOP_RIGHT, new FromTopRightOrderFunctor());
 }
 
 int main(int argc, char **argv)
@@ -745,5 +1022,33 @@ int main(int argc, char **argv)
       Runtime::add_registration_callback(mapper_registration);
   }
 
+  Runtime::preregister_projection_functor(X_PROJ, new XDiffProjectionFunctor());
+  Runtime::preregister_projection_functor(Y_PROJ, new YDiffProjectionFunctor());
+  Runtime::preregister_projection_functor(ID_PROJ, new IDProjectionFunctor());
+
+  // Add the callback for the projection function
+  HighLevelRuntime::set_registration_callback(registration_callback);
+
   return Runtime::start(argc, argv);
 }
+
+
+/*
+TIMING CODE:
+
+  double ts_start = Realm::Clock::current_time_in_microseconds();
+  for (int i = 0; i < MAX_ITERATION; i++)
+  {
+    iteration = i;
+    BFSTask bfs_task(graph.in_pointer_lp, graph.in_pointer,
+                     graph.in_vtx_lp, graph.in_vtx,
+                     graph.in_index_lp, graph.in_index,
+                     graph.dist_lp[(i+1)%2], graph.dist[(i+1)%2],
+                     graph.dist[i%2], task_space, local_args, &iteration);
+    fm = runtime->execute_index_space(ctx, bfs_task);
+  }
+  fm.wait_all_results();
+  double ts_end = Realm::Clock::current_time_in_microseconds();
+  double sim_time = 1e-6 * (ts_end - ts_start);
+  printf("ELAPSED TIME = %7.7f s\n", sim_time);
+*/

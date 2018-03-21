@@ -4680,11 +4680,11 @@ namespace Legion {
                   assert(0);
                 }
 #endif
-                printf("Domain from %s to %s depends on domain from %s to %s\n",
-                    stringify_domain_point(second_lo).c_str(),
-                    stringify_domain_point(second_hi).c_str(),
-                    stringify_domain_point(first_lo).c_str(),
-                    stringify_domain_point(first_hi).c_str());
+                //printf("Domain from %s to %s depends on domain from %s to %s\n",
+                    //stringify_domain_point(second_lo).c_str(),
+                    //stringify_domain_point(second_hi).c_str(),
+                    //stringify_domain_point(first_lo).c_str(),
+                    //stringify_domain_point(first_hi).c_str());
               }
             }
           }
@@ -4737,11 +4737,11 @@ namespace Legion {
                   assert(0);
                 }
 #endif
-                printf("Domain from %s to %s depends on domain from %s to %s\n",
-                    stringify_domain_point(second_lo).c_str(),
-                    stringify_domain_point(second_hi).c_str(),
-                    stringify_domain_point(first_lo).c_str(),
-                    stringify_domain_point(first_hi).c_str());
+                //printf("Domain from %s to %s depends on domain from %s to %s\n",
+                    //stringify_domain_point(second_lo).c_str(),
+                    //stringify_domain_point(second_hi).c_str(),
+                    //stringify_domain_point(first_lo).c_str(),
+                    //stringify_domain_point(first_hi).c_str());
               }
             }
           }
@@ -5269,12 +5269,12 @@ namespace Legion {
 #ifdef DEBUG_LEGION
           else
           {
-            printf("Other point task %s, order %d\n",
-                stringify_domain_point(conflicting_point_task->index_point).c_str(),
-                conflicting_point_order);
-            printf("Current point task %s, order %d\n",
-                stringify_domain_point((*it)->index_point).c_str(),
-                cur_point_order);
+            //printf("Other point task %s, order %d\n",
+                //stringify_domain_point(conflicting_point_task->index_point).c_str(),
+                //conflicting_point_order);
+            //printf("Current point task %s, order %d\n",
+                //stringify_domain_point((*it)->index_point).c_str(),
+                //cur_point_order);
             // two conflicting points in the same launch should not
             // have the same order value
             assert(0);
@@ -7793,7 +7793,7 @@ namespace Legion {
     void IndexTask::perform_structured_dependence_analysis()
     //--------------------------------------------------------------------------
     {
-      printf("performing structured dependence analysis\n");
+      //printf("performing structured dependence analysis\n");
       std::vector<std::vector<RegionRequirement> > proj_reqs_by_tree;
       std::vector<std::vector<ProjectionFunction*> > proj_funcs_by_tree;
       //std::vector<ProjectionFunction*> proj_funcs;
@@ -7913,8 +7913,8 @@ namespace Legion {
             ProjectionAnalysisConstraint *constraint =
               runtime->forest->compute_proj_constraint(proj1, proj2,
                   sample_region)->simplify();
-            printf("Constraints after simplifying:\n%s\n",
-              constraint->stringify().c_str());
+            //printf("Constraints after simplifying:\n%s\n",
+              //constraint->stringify().c_str());
             constraints.push_back(*constraint);
           }
         }
