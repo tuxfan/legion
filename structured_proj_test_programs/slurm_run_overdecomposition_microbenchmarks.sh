@@ -30,19 +30,15 @@ do
     index_command="srun -n $NODES --tasks-per-node 1 --cpu_bind none --mpibind=off ./current_optimum_angle/current_optimum_angle -i $ITERATIONS -nx $dim -bx $dim -ny $dim -by $dim -sms $sleep_us -ll:cpu 4 -ll:util 1"
     no_proj_command="srun -n $NODES --tasks-per-node 1 --cpu_bind none --mpibind=off ./zero_projections/zero_projections -i $ITERATIONS -nx $dim -bx $dim -ny $dim -by $dim -sms $sleep_us -a 225 -ll:cpu 4 -ll:util 1"
 
-    (>&2 echo $affine_command)
     echo $affine_command
     $affine_command
 
-    (>&2 echo $affine_command_base_ssl)
     echo $affine_command_base_ssl
     $affine_command_base_ssl
 
-    (>&2 echo $index_command)
     echo $index_command
     $index_command
 
-    (>&2 echo $no_proj_command)
     echo $no_proj_command
     $no_proj_command
   done
