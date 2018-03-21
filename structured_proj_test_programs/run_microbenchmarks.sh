@@ -30,7 +30,7 @@ do
 
     for sleep_us in 0 1000 10000 100000
     do
-      affine_command="mpirun -hostfile $hostfile -n $nodes -npernode 1 --bind-to none ./x_parallel_only/runtime_stress_test -i $ITERATIONS -nx 1 -bx 1 -ny $dim -by $dim -sms $sleep_us -sm -ssl 4 -a 180 -ll:cpu 4 -ll:util 1"
+      affine_command="mpirun -hostfile $hostfile -n $nodes -npernode 1 --bind-to none ./x_parallel_only/runtime_stress_test -i $ITERATIONS -nx 1 -bx 1 -ny $dim -by $dim -sms $sleep_us -a 180 -ll:cpu 4 -ll:util 1"
       index_command="mpirun -hostfile $hostfile -n $nodes -npernode 1 --bind-to none ./current_optimum_axis_aligned/current_optimum_axis_aligned -i $ITERATIONS -nx 1 -bx 1 -ny $dim -by $dim -sms $sleep_us -ll:cpu 4 -ll:util 1"
       no_proj_command="mpirun -hostfile $hostfile -n $nodes -npernode 1 --bind-to none ./zero_projections/zero_projections -i $ITERATIONS -nx 1 -bx 1 -ny $dim -by $dim -sms $sleep_us -a 180 -ll:cpu 4 -ll:util 1"
 

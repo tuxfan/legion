@@ -78,7 +78,7 @@ struct ComputeArgs {
 // dependencies
 class SliceMapper : public DefaultMapper {
 public:
-  SliceMapper(Machine machine, Runtime *rt, Processor local, int sl, bool x_only);
+  SliceMapper(Machine machine, Runtime *rt, Processor local, int sl, bool y_only);
 public:
   virtual void slice_task(const MapperContext ctx,
                           const Task& task,
@@ -89,14 +89,14 @@ private:
 public:
   unsigned slice_side_length;
   bool cached;
-  bool x_only;
+  bool y_only;
   std::vector<Processor> cached_procs;
 };
 
 // pass arguments through to Default
-SliceMapper::SliceMapper(Machine m, Runtime *rt, Processor p, int sl, bool x)
+SliceMapper::SliceMapper(Machine m, Runtime *rt, Processor p, int sl, bool y)
   : DefaultMapper(rt->get_mapper_runtime(), m, p), slice_side_length(sl),
-  cached(false), x_only(x)
+  cached(false), y_only(y)
 {
 }
 
@@ -139,21 +139,21 @@ void SliceMapper::slice_task(const MapperContext      ctx,
       }
     case 2: // only care about this case for now
       {
-        if (x_only)
+        if (y_only)
         {
           Rect<2> rect = input.domain;
           Point<2> lo = rect.lo;
           Point<2> hi = rect.hi;
           //printf("I have %lu procs, resizing to %d \n", cached_procs.size(), (hi[0] - lo[0] + 1) / slice_side_length);
           //printf("using the slice mapper, side length %u\n", slice_side_length);
-          for (unsigned x = lo[0]; x < hi[0] + 1; x += slice_side_length)
+          for (unsigned y = lo[1]; y < hi[1] + 1; y += slice_side_length)
           {
-            Point<2> slice_lo(x, lo[1]);
-            Point<2> slice_hi(x + slice_side_length - 1, hi[1]);
+            Point<2> slice_lo(lo[0], y);
+            Point<2> slice_hi(hi[0], y + slice_side_length - 1);
            // printf("x = %u slice goes from (%lld, %lld) to (%lld, %lld), mapped to %lu\n",
             //  x, slice_lo[0], slice_lo[1], slice_hi[0], slice_hi[1], x % cached_procs.size());
             Rect<2> slice(slice_lo, slice_hi);
-            output.slices.push_back(TaskSlice(slice, cached_procs[x % cached_procs.size()],
+            output.slices.push_back(TaskSlice(slice, cached_procs[y % cached_procs.size()],
               false/*recurse*/, true/*stealable*/));
           }
         }
