@@ -725,9 +725,20 @@ void mapper_registration(Machine machine, Runtime *rt,
 
 int main(int argc, char **argv)
 {
+  Processor::Kind top_level_proc = Processor::LOC_PROC;
+  for (int i = 1; i < argc; i++)
+  {
+    if (!strcmp(argv[i],"-ll:io"))
+    {
+      int io_procs = atoi(argv[++i]);
+      if (io_procs >= 1)
+        top_level_proc = Processor::IO_PROC;
+    }
+  }
+
   Runtime::set_top_level_task_id(TOP_LEVEL_TASK_ID);
   Runtime::register_legion_task<top_level_task>(TOP_LEVEL_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID,
+      top_level_proc, true/*single*/, false/*index*/, AUTO_GENERATE_ID,
       TaskConfigOptions(), "top level task");
   Runtime::register_legion_task<init_field_task>(INIT_FIELD_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID,
