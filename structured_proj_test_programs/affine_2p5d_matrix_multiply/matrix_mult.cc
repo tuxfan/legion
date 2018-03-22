@@ -691,15 +691,6 @@ void top_level_task(const Task *task,
   launch_hi[3] = root_p_c3 - 1;
 
   Domain mult_launch_domain(launch_lo, launch_hi);
-  printf("mult_launch domain from (%lld, %lld, %lld, %lld) to (%lld, %lld, %lld, %lld)\n",
-      launch_lo[0],
-      launch_lo[1],
-      launch_lo[2],
-      launch_lo[3],
-      launch_hi[0],
-      launch_hi[1],
-      launch_hi[2],
-      launch_hi[3]);
 
   // now we launch the actual computation
   fm.wait_all_results();
@@ -1004,9 +995,20 @@ void registration_callback(Machine machine, HighLevelRuntime *rt,
 
 int main(int argc, char **argv)
 {
+  Processor::Kind top_level_proc = Processor::LOC_PROC;
+  for (int i = 1; i < argc; i++)
+  {
+    if (!strcmp(argv[i],"-ll:io"))
+    {
+      int io_procs = atoi(argv[++i]);
+      if (io_procs >= 1)
+        top_level_proc = Processor::IO_PROC;
+    }
+  }
+
   Runtime::set_top_level_task_id(TOP_LEVEL_TASK_ID);
   Runtime::register_legion_task<top_level_task>(TOP_LEVEL_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID,
+      top_level_proc, true/*single*/, false/*index*/, AUTO_GENERATE_ID,
       TaskConfigOptions(), "top level task");
   Runtime::register_legion_task<init_task>(INIT_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID,
