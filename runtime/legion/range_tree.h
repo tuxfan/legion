@@ -74,6 +74,26 @@ namespace RangeTree {
                                 std::vector<Point<T, S> > &points,
                                 S &value)
         {
+          bool same_point = true;
+          for (unsigned dim = 0; dim < lo.size(); dim++)
+          {
+            if (lo[dim] != hi[dim])
+            {
+              same_point = false;
+              break;
+            }
+          }
+          if (same_point)
+          {
+            std::vector<T> corner_vec(lo.size());
+            for (unsigned dim = 0; dim < lo.size(); dim++)
+            {
+              corner_vec[dim] = lo[dim];
+            }
+            points.push_back(Point<T,S>(corner_vec, value));
+            return;
+          }
+
           int num_corners = 0x1 << lo.size();
           for (int corner = 0; corner < num_corners; corner++)
           {

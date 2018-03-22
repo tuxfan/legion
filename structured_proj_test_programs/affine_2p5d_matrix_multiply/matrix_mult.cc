@@ -521,7 +521,7 @@ void top_level_task(const Task *task,
     {
       if (!strcmp(command_args.argv[i],"-n"))
       {
-        num_rows = 1 << atoi(command_args.argv[++i]);
+        num_rows = atoi(command_args.argv[++i]);
         num_cols = num_rows;
       }
       if (!strcmp(command_args.argv[i],"-p"))
