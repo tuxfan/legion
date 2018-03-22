@@ -62,6 +62,7 @@ enum ProjIDs {
   MAT_1_PROJ_ID = 1,
   MAT_2_PROJ_ID = 2,
   MAT_3_PROJ_ID = 3,
+  FLATTEN_PROJ_ID = 4,
 };
 
 struct CheckTaskArgs {
@@ -244,11 +245,44 @@ class TimeOrderingFunctor : public StructuredOrderingFunctor
     {
       DomainPoint coeffs;
       coeffs.dim = 4;
-      coeffs[0] = 1;
-      coeffs[1] = 1;
-      coeffs[2] = 1;
+      coeffs[0] = 0;
+      coeffs[1] = 0;
+      coeffs[2] = 0;
       coeffs[3] = 1;
       return coeffs;
+    }
+};
+
+class FlattenProjectionFunctor : public ProjectionFunctor
+{
+  public:
+    FlattenProjectionFunctor()
+      : ProjectionFunctor() {}
+
+    ~FlattenProjectionFunctor() {}
+
+    virtual LogicalRegion project(Context ctx, Task *task, unsigned index,
+                                  LogicalRegion upper_bound,
+                                  const DomainPoint &point)
+    {
+      assert(0);
+    }
+
+    virtual LogicalRegion project(Context ctx, Task *task, unsigned index,
+                                  LogicalPartition upper_bound,
+                                  const DomainPoint &point)
+    {
+      Point<2> point_in_matrix;
+      point_in_matrix[0] = point[0];
+      point_in_matrix[1] = point[1];
+
+      LogicalRegion ret_region =
+          runtime->get_logical_subregion_by_color(ctx, upper_bound, DomainPoint(point_in_matrix));
+      return ret_region;
+    }
+
+    virtual unsigned get_depth() const {
+      return 0;
     }
 };
 
@@ -281,7 +315,7 @@ class LeftMatrixProjectionFunctor : public StructuredProjectionFunctor
 
     virtual AffineStructuredProjection affine_project_structured(Context ctx)
     {
-      Transform<2,4> transform;
+      Transform<3,4> transform;
       transform[0][0] = 1;
       transform[0][1] = 0;
       transform[0][2] = 0;
@@ -292,9 +326,14 @@ class LeftMatrixProjectionFunctor : public StructuredProjectionFunctor
       transform[1][2] = -1*k_coeff;
       transform[1][3] = -1;
 
-      Point<2> offset(0, 0);
-      Point<2> div_point(1, 1);
-      Point<2> mod_point(0, mod_by);
+      transform[2][0] = 0;
+      transform[2][1] = 0;
+      transform[2][2] = 1;
+      transform[2][3] = 0;
+
+      Point<3> offset(0, 0, 0);
+      Point<3> div_point(1, 1, 1);
+      Point<3> mod_point(0, mod_by, 0);
       AffineStructuredProjectionStep first_step =
         AffineStructuredProjectionStep(DomainTransform(transform),
                                        DomainPoint(offset));
@@ -343,7 +382,7 @@ class RightMatrixProjectionFunctor : public StructuredProjectionFunctor
 
     virtual AffineStructuredProjection affine_project_structured(Context ctx)
     {
-      Transform<2,4> transform;
+      Transform<3,4> transform;
       transform[0][0] = 1;
       transform[0][1] = 1;
       transform[0][2] = -1*k_coeff;
@@ -354,10 +393,14 @@ class RightMatrixProjectionFunctor : public StructuredProjectionFunctor
       transform[1][2] = 0;
       transform[1][3] = 0;
 
+      transform[2][0] = 0;
+      transform[2][1] = 0;
+      transform[2][2] = 1;
+      transform[2][3] = 0;
 
-      Point<2> offset(0, 0);
-      Point<2> div_point(1, 1);
-      Point<2> mod_point(mod_by, 0);
+      Point<3> offset(0, 0, 0);
+      Point<3> div_point(1, 1, 1);
+      Point<3> mod_point(mod_by, 0, 0);
       AffineStructuredProjectionStep first_step =
         AffineStructuredProjectionStep(DomainTransform(transform),
                                        DomainPoint(offset));
@@ -416,7 +459,6 @@ class ProductMatrixProjectionFunctor : public StructuredProjectionFunctor
       transform[1][1] = 1;
       transform[1][2] = 0;
       transform[1][3] = 0;
-
 
       Point<2> offset(0, 0);
       AffineStructuredProjectionStep first_step =
@@ -523,15 +565,24 @@ void top_level_task(const Task *task,
     assert(0);
   }
 
+  if (num_iterations != 1)
+  {
+    printf("currently only testing for one iteration\n");
+  }
+
   printf("Running computation for (%d, %d) dimensions, p = %d, c = %d...\n",
       num_rows, num_cols, num_processors, c_val);
   printf("Partitioning data into (%d, %d) sub-regions...\n",
       num_subregions_rows, num_subregions_cols);
 
   // We will create a logical region for each matrix
-  Rect<2> elem_rect(Point<2>(0,0), Point<2>(num_rows-1,
-      num_cols-1));
+  Rect<3> elem_rect(Point<3>(0,0,0), Point<3>(num_rows-1,
+      num_cols-1, c_val-1));
   IndexSpace is = runtime->create_index_space(ctx, elem_rect);
+  Rect<2> elem_rect_flat(Point<2>(0,0), Point<2>(num_rows-1,
+      num_cols-1));
+  IndexSpace is_flat = runtime->create_index_space(ctx, elem_rect_flat);
+
   FieldSpace fs = runtime->create_field_space(ctx);
   {
     FieldAllocator allocator = 
@@ -540,32 +591,62 @@ void top_level_task(const Task *task,
   }
   LogicalRegion m1_lr = runtime->create_logical_region(ctx, is, fs);
   LogicalRegion m2_lr = runtime->create_logical_region(ctx, is, fs);
-  LogicalRegion m3_lr = runtime->create_logical_region(ctx, is, fs);
+  LogicalRegion m3_lr = runtime->create_logical_region(ctx, is_flat, fs);
 
   // Make our color_domain based on the number of subregions
   // that we want to create.
-  Rect<2> color_bounds(Point<2>(0,0),
-      Point<2>(num_subregions_rows-1, num_subregions_cols-1));
-  IndexSpace color_is = runtime->create_index_space(ctx, color_bounds);
-  Domain color_domain = runtime->get_index_space_domain(ctx, color_is);
+  IndexPartition grid_ip, grid_ip_flat;
+  Domain color_domain;
+  {
+    Rect<3> color_bounds(Point<3>(0,0,0),
+        Point<3>(num_subregions_rows-1, num_subregions_cols-1,c_val-1));
+    IndexSpace color_is = runtime->create_index_space(ctx, color_bounds);
+    color_domain = runtime->get_index_space_domain(ctx, color_is);
 
-  Transform<2,2> transform;
-  transform[0][0] = rows_per_subregion;
-  transform[0][1] = 0;
-  transform[1][0] = 0;
-  transform[1][1] = cols_per_subregion;
+    Transform<3,3> transform;
+    transform[0][0] = rows_per_subregion;
+    transform[0][1] = 0;
+    transform[0][2] = 0;
+    transform[1][0] = 0;
+    transform[1][1] = cols_per_subregion;
+    transform[1][2] = 0;
+    transform[2][0] = 0;
+    transform[2][1] = 0;
+    transform[2][2] = 1;
 
-  Rect<2> extent_rect(Point<2>(0,0),
-      Point<2>(rows_per_subregion - 1, cols_per_subregion - 1));
-  Domain extent(extent_rect);
+    Rect<3> extent_rect(Point<3>(0,0,0),
+        Point<3>(rows_per_subregion - 1, cols_per_subregion - 1, 0));
+    Domain extent(extent_rect);
 
-  IndexPartition grid_ip =
-      runtime->create_partition_by_restriction(ctx,
-                                               is,
-                                               color_is,
-                                               DomainTransform(transform),
-                                               extent,
-                                               DISJOINT_KIND);
+    grid_ip = runtime->create_partition_by_restriction(ctx,
+                                                 is,
+                                                 color_is,
+                                                 DomainTransform(transform),
+                                                 extent,
+                                                 DISJOINT_KIND);
+  }
+  {
+    Rect<2> color_bounds(Point<2>(0,0),
+        Point<2>(num_subregions_rows-1, num_subregions_cols-1));
+    IndexSpace color_is = runtime->create_index_space(ctx, color_bounds);
+
+    Transform<2,2> transform;
+    transform[0][0] = rows_per_subregion;
+    transform[0][1] = 0;
+    transform[1][0] = 0;
+    transform[1][1] = cols_per_subregion;
+
+    Rect<2> extent_rect(Point<2>(0,0),
+        Point<2>(rows_per_subregion - 1, cols_per_subregion - 1));
+    Domain extent(extent_rect);
+
+    grid_ip_flat = runtime->create_partition_by_restriction(ctx,
+                                                 is_flat,
+                                                 color_is,
+                                                 DomainTransform(transform),
+                                                 extent,
+                                                 DISJOINT_KIND);
+  }
 
   // Once we've created our index partitions, we can get the
   // corresponding logical partitions for the top_lr
@@ -575,9 +656,10 @@ void top_level_task(const Task *task,
   LogicalPartition m2_grid_lp = 
     runtime->get_logical_partition(ctx, m2_lr, grid_ip);
   LogicalPartition m3_grid_lp = 
-    runtime->get_logical_partition(ctx, m3_lr, grid_ip);
+    runtime->get_logical_partition(ctx, m3_lr, grid_ip_flat);
 
   ArgumentMap arg_map;
+  FutureMap fm;
   IndexLauncher init_launcher(INIT_TASK_ID, color_domain,
                               TaskArgument(NULL, 0), arg_map);
   init_launcher.add_region_requirement(
@@ -587,12 +669,12 @@ void top_level_task(const Task *task,
       RegionRequirement(m2_grid_lp, 0/*projection ID*/,
                         WRITE_DISCARD, EXCLUSIVE, m2_lr));
   init_launcher.add_region_requirement(
-      RegionRequirement(m3_grid_lp, 0/*projection ID*/,
+      RegionRequirement(m3_grid_lp, FLATTEN_PROJ_ID /*projection ID*/,
                         WRITE_DISCARD, EXCLUSIVE, m3_lr));
   init_launcher.add_field(0, FID_VAL);
   init_launcher.add_field(1, FID_VAL);
   init_launcher.add_field(2, FID_VAL);
-  runtime->execute_index_space(ctx, init_launcher);
+  fm = runtime->execute_index_space(ctx, init_launcher);
 
   DomainPoint launch_lo, launch_hi;
   launch_lo.dim = 4;
@@ -610,6 +692,8 @@ void top_level_task(const Task *task,
 
   Domain mult_launch_domain(launch_lo, launch_hi);
 
+  // now we launch the actual computation
+  fm.wait_all_results();
   double ts_start = Realm::Clock::current_time_in_microseconds();
   for (int iter = 0; iter < num_iterations; iter++)
   {
@@ -618,59 +702,20 @@ void top_level_task(const Task *task,
     mult_launcher.set_ordering_id(TIME_ORDERING_ID);
     mult_launcher.add_region_requirement(
         RegionRequirement(m1_grid_lp, MAT_1_PROJ_ID,
-                          READ_ONLY, EXCLUSIVE, m1_lr));
+                          READ_WRITE, EXCLUSIVE, m1_lr));
     mult_launcher.add_region_requirement(
         RegionRequirement(m2_grid_lp, MAT_2_PROJ_ID,
-                          READ_ONLY, EXCLUSIVE, m2_lr));
+                          READ_WRITE, EXCLUSIVE, m2_lr));
     mult_launcher.add_region_requirement(
         RegionRequirement(m3_grid_lp, MAT_3_PROJ_ID,
-                          READ_WRITE, EXCLUSIVE, m3_lr));
-    //mult_launcher.add_region_requirement(
-        //RegionRequirement(m3_grid_lp, MAT_3_PROJ_ID,
-                          //SUM_REDUCE_ID, EXCLUSIVE, m3_lr));
+                          SUM_REDUCE_ID, EXCLUSIVE, m3_lr));
     mult_launcher.add_field(0, FID_VAL);
     mult_launcher.add_field(1, FID_VAL);
     mult_launcher.add_field(2, FID_VAL);
-    runtime->execute_index_space(ctx, mult_launcher);
-
-    for (int t = 0; false && t < root_p_c3; t++)
-    {
-      for (int i = 0; i < num_subregions_rows; i++)
-      {
-        for (int j = 0; j < num_subregions_cols; j++)
-        {
-          for (int k = 0; k < c_val; k++)
-          {
-            int r = real_mod(j + i - k * root_p_c3 - t, root_p_c);
-            //printf("i = %d, j = %d, k = %d, t = %d, r = %d\n", i, j, k, t, r);
-            Point<2> m1_point(i, r);
-            Point<2> m2_point(r, j);
-            Point<2> m3_point(i, j);
-
-            LogicalRegion m1_subregion =
-                runtime->get_logical_subregion_by_color(ctx, m1_grid_lp, m1_point); 
-            LogicalRegion m2_subregion =
-                runtime->get_logical_subregion_by_color(ctx, m2_grid_lp, m2_point); 
-            LogicalRegion m3_subregion =
-                runtime->get_logical_subregion_by_color(ctx, m3_grid_lp, m3_point); 
-
-            TaskLauncher mult_launcher(MULT_TASK_ID, TaskArgument(NULL, 0));
-            mult_launcher.add_region_requirement(
-                RegionRequirement(m1_subregion, READ_ONLY, EXCLUSIVE, m1_lr));
-            mult_launcher.add_region_requirement(
-                RegionRequirement(m2_subregion, READ_ONLY, EXCLUSIVE, m2_lr));
-            mult_launcher.add_region_requirement(
-                RegionRequirement(m3_subregion, SUM_REDUCE_ID, EXCLUSIVE, m3_lr));
-            mult_launcher.add_field(0, FID_VAL);
-            mult_launcher.add_field(1, FID_VAL);
-            mult_launcher.add_field(2, FID_VAL);
-            runtime->execute_task(ctx, mult_launcher);
-          }
-        }
-      }
-    }
+    fm = runtime->execute_index_space(ctx, mult_launcher);
   }
 
+  fm.wait_all_results();
   double ts_end = Realm::Clock::current_time_in_microseconds();
   double sim_time = 1e-6 * (ts_end - ts_start);
   printf("ELAPSED TIME = %7.7f s\n", sim_time);
@@ -726,15 +771,16 @@ void init_task(const Task *task,
   RegionAccessor<AccessorType::Generic, int> acc_m3 = 
     regions[2].get_field_accessor(mat3_vals).typeify<int>();
 
-  Rect<2> rect = runtime->get_index_space_domain(ctx,
+  Rect<3> rect = runtime->get_index_space_domain(ctx,
       task->regions[0].region.get_index_space());
   //printf("calling the init method\n");
-  for (PointInRectIterator<2> pir(rect); pir(); pir++)
+  for (PointInRectIterator<3> pir(rect); pir(); pir++)
   {
     //printf("writing at point (%lld, %lld)\n", (*pir)[0], (*pir)[1]);
     acc_m1.write(*pir, (*pir)[0] + (*pir)[1]);
     acc_m2.write(*pir, (*pir)[0] - (*pir)[1]);
-    acc_m3.write(*pir, 0);
+    Point<2> m3_point((*pir)[0] ,(*pir)[1]);
+    acc_m3.write(m3_point, 0);
   }
   //printf("\n\n");
 }
@@ -768,14 +814,14 @@ void mult_task(const Task *task,
   RegionAccessor<AccessorType::Generic, int> acc_m3 = 
     regions[2].get_field_accessor(m3_field_val).typeify<int>();
 
-  Rect<2> m1_rect = runtime->get_index_space_domain(ctx,
+  Rect<3> m1_rect = runtime->get_index_space_domain(ctx,
       task->regions[0].region.get_index_space());
-  Rect<2> m2_rect = runtime->get_index_space_domain(ctx,
+  Rect<3> m2_rect = runtime->get_index_space_domain(ctx,
       task->regions[1].region.get_index_space());
 
-  Point<2> m1_lo = m1_rect.lo;
-  Point<2> m1_hi = m1_rect.hi;
-  Point<2> m2_lo = m2_rect.lo;
+  Point<3> m1_lo = m1_rect.lo;
+  Point<3> m1_hi = m1_rect.hi;
+  Point<3> m2_lo = m2_rect.lo;
 
   // ONLY FOR SQUARE MATRICES
   long long int dim = m1_hi[1] - m1_lo[1] + 1;
@@ -791,8 +837,8 @@ void mult_task(const Task *task,
       int m2_col = m2_lo[1] + col;
       for (long long int k = 0; k < dim; k++)
       {
-        Point<2> m1_point(m1_row, m1_col + k);
-        Point<2> m2_point(m2_row + k, m2_col);
+        Point<3> m1_point(m1_row, m1_col + k, m1_lo[2]);
+        Point<3> m2_point(m2_row + k, m2_col, m2_lo[2]);
         //printf("at (%lld, %lld), (%lld, %lld): read values %d and %d\n",
             //m1_row, m1_col+k, m2_row+k, m2_col,
             //acc_m1.read(m1_point), acc_m2.read(m2_point));
@@ -804,7 +850,7 @@ void mult_task(const Task *task,
 
       // UNCOMMENT THIS FOR READ/WRITE priveleges and add to value below
       //int cur_value = acc_m3.read(m3_point);
-      acc_m3.write(m3_point, acc_m3.read(m3_point) + value);
+      acc_m3.write(m3_point, value);
     }
   }
   //printf("\n\n");
@@ -839,7 +885,7 @@ void check_task(const Task *task,
     regions[2].get_field_accessor(mat3_vals).typeify<int>();
 
   Rect<2> rect = runtime->get_index_space_domain(ctx,
-      task->regions[0].region.get_index_space());
+      task->regions[2].region.get_index_space());
 
   Point<2> lo = rect.lo;
   Point<2> hi = rect.hi;
@@ -857,11 +903,11 @@ void check_task(const Task *task,
       int value = 0;
       for (long long int k = 0; k < inner_dim; k++)
       {
-        Point<2> m1_point(row, k);
-        Point<2> m2_point(k, col);
+        Point<3> m1_point(row, k, 0);
+        Point<3> m2_point(k, col, 0);
         value += acc_m1.read(m1_point) * acc_m2.read(m2_point);
       }
-      int m3_value = acc_m3.read(Point<2>(row, col));
+      int m3_value = acc_m3.read(m3_point);
       if (m3_value != value)
       {
         printf("Incorrect value at index (%lld, %lld).  Found %d, expected %d\n",
@@ -888,7 +934,7 @@ void check_task(const Task *task,
     {
       for (long long int col = lo[1]; col < hi[1]+1; col++)
       {
-        int value = acc_m1.read(Point<2>(row, col));
+        int value = acc_m1.read(Point<3>(row, col, 0));
         printf("%d ", value);
       }
       printf("\n");
@@ -900,7 +946,7 @@ void check_task(const Task *task,
     {
       for (long long int col = lo[1]; col < hi[1]+1; col++)
       {
-        int value = acc_m2.read(Point<2>(row, col));
+        int value = acc_m2.read(Point<3>(row, col, 0));
         printf("%d ", value);
       }
       printf("\n");
@@ -949,9 +995,20 @@ void registration_callback(Machine machine, HighLevelRuntime *rt,
 
 int main(int argc, char **argv)
 {
+  Processor::Kind top_level_proc = Processor::LOC_PROC;
+  for (int i = 1; i < argc; i++)
+  {
+    if (!strcmp(argv[i],"-ll:io"))
+    {
+      int io_procs = atoi(argv[++i]);
+      if (io_procs >= 1)
+        top_level_proc = Processor::IO_PROC;
+    }
+  }
+
   Runtime::set_top_level_task_id(TOP_LEVEL_TASK_ID);
   Runtime::register_legion_task<top_level_task>(TOP_LEVEL_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID,
+      top_level_proc, true/*single*/, false/*index*/, AUTO_GENERATE_ID,
       TaskConfigOptions(), "top level task");
   Runtime::register_legion_task<init_task>(INIT_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID,
@@ -986,6 +1043,8 @@ int main(int argc, char **argv)
     int root_p_c = find_sq_rt(num_processors/c_val);
     int root_p_c3 = find_sq_rt(num_processors/(c_val*c_val*c_val));
 
+    Runtime::preregister_projection_functor(FLATTEN_PROJ_ID,
+        new FlattenProjectionFunctor());
     Runtime::preregister_projection_functor(MAT_1_PROJ_ID,
         new LeftMatrixProjectionFunctor(root_p_c3, root_p_c));
     Runtime::preregister_projection_functor(MAT_2_PROJ_ID,

@@ -5221,16 +5221,26 @@ namespace Legion {
       StructuredOrderingFunctor *ord_func =
         runtime->find_ordering_functor(oid);
       std::map<std::vector<int>, std::vector<PointTask*>> lhs_values_map;
+      //for (unsigned cidx = 0; cidx < affine_constraints.size(); cidx++)
+      //{
+        //printf("%s = %s\n",
+          //affine_constraints[cidx].lhs->stringify().c_str(),
+          //affine_constraints[cidx].lhs->stringify().c_str());
+      //}
       for (std::vector<PointTask*>::const_iterator it = local_points.begin();
             it != local_points.end(); it++)
       {
         std::vector<int> lhs_values;
+        //printf("Task for point %s\n",
+                //stringify_domain_point((*it)->index_point).c_str());
         for (unsigned cidx = 0; cidx < affine_constraints.size(); cidx++)
         {
           int lhs_value =
               affine_constraints[cidx].lhs->evaluate((*it)->index_point);
           lhs_values.push_back(lhs_value);
+          //printf("lhs_value is %d\n", lhs_value);
         }
+        //printf("\n");
         lhs_values_map[lhs_values].push_back(*it);
       }
 
@@ -5240,12 +5250,16 @@ namespace Legion {
       {
         int cur_point_order = ord_func->get_order_value((*it)->index_point);
         std::vector<int> rhs_values;
+        //printf("Task for point %s\n",
+                //stringify_domain_point((*it)->index_point).c_str());
         for (unsigned cidx = 0; cidx < affine_constraints.size(); cidx++)
         {
           int rhs_value =
               affine_constraints[cidx].rhs->evaluate((*it)->index_point);
           rhs_values.push_back(rhs_value);
+          //printf("rhs_value is %d\n", rhs_value);
         }
+        //printf("\n");
 
         for (unsigned i = 0; i < lhs_values_map[rhs_values].size(); i++)
         {
@@ -5260,11 +5274,17 @@ namespace Legion {
           {
             conflicting_point_task->map_preconditions.insert(
                 point_task_events[(*it)->index_point]);
+            //printf("Task for point %s depends on task for point %s\n",
+                //stringify_domain_point(conflicting_point_task->index_point).c_str(),
+                //stringify_domain_point((*it)->index_point).c_str());
           }
           else if (cur_point_order > conflicting_point_order)
           {
             (*it)->map_preconditions.insert(
                 point_task_events[conflicting_point_task->index_point]);
+            //printf("Task for point %s depends on task for point %s\n",
+                //stringify_domain_point((*it)->index_point).c_str(),
+                //stringify_domain_point(conflicting_point_task->index_point).c_str());
           }
 #ifdef DEBUG_LEGION
           else
