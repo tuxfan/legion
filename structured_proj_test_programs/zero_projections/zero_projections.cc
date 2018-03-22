@@ -295,7 +295,7 @@ void top_level_task(const Task *task,
   //ArgumentMap arg_map;
 
   // First initialize the 'FID_X' and 'FID_Y' fields with some data
-  Future f;
+  std::vector<Future> init_futures;
   for (int x = num_subregions_x - 1; x >= 0; --x)
   {
     for (int y = num_subregions_y - 1; y >= 0; --y)
@@ -312,12 +312,17 @@ void top_level_task(const Task *task,
       init_launcher.add_field(0, FID_X);
       init_launcher.add_field(0, FID_Y);
       init_launcher.add_field(0, FID_VAL);
-      f = runtime->execute_task(ctx, init_launcher);
+      init_futures.push_back(runtime->execute_task(ctx, init_launcher));
     }
   }
 
-  f.get_void_result();
+  for (unsigned i = 0; i < init_futures.size(); i++)
+  {
+    init_futures[i].get_void_result();
+  }
   // Now we launch the computation to calculate Pascal's triangle
+  Future f;
+  std::vector<Future> parallel_futures;
   double ts_start = Realm::Clock::current_time_in_microseconds();
   for (int j = 0; j < num_iterations; j++)
   {
@@ -379,14 +384,39 @@ void top_level_task(const Task *task,
               RegionRequirement(cur_region, READ_WRITE, EXCLUSIVE, top_lr));
           compute_launcher.add_field(0, FID_VAL);
           compute_launcher.add_field(1, FID_VAL);
-          f = runtime->execute_task(ctx, compute_launcher);
+          parallel_futures.push_back(runtime->execute_task(ctx, compute_launcher));
         }
       }
     }
-    f.get_void_result();
+    if (angle == 225)
+    {
+      f.get_void_result();
+    }
+    else
+    {
+      for (unsigned f_idx = 0; f_idx < parallel_futures.size(); f_idx++)
+      {
+        parallel_futures[f_idx].get_void_result();
+      }
+      parallel_futures.clear();
+    }
   }
 
-  f.get_void_result();
+  if (angle == 225)
+  {
+    f.get_void_result();
+  }
+  else
+  {
+    // not running this second loop for now for timing purposes
+    // it is already checked above
+    for (unsigned f_idx = 0; f_idx < parallel_futures.size() && false; f_idx++)
+    {
+      parallel_futures[f_idx].get_void_result();
+    }
+    parallel_futures.clear();
+  }
+
   double ts_end = Realm::Clock::current_time_in_microseconds();
   double sim_time = 1e-6 * (ts_end - ts_start);
   printf("ELAPSED TIME = %7.7f s\n", sim_time);
