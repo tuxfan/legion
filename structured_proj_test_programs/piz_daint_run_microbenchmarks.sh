@@ -9,6 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=6000MB
 
+date
+
 TRIALS=1
 ITERATIONS=10
 
@@ -50,3 +52,5 @@ do
     done
   done
 done
+
+date

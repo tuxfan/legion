@@ -105,6 +105,11 @@ void SliceMapper::slice_task(const MapperContext      ctx,
                              const SliceTaskInput&    input,
                                    SliceTaskOutput&   output)
 {
+  if (slice_side_length == 0)
+  {
+    DefaultMapper::slice_task(ctx, task, input, output);
+    return;
+  }
   // Iterate over all the points and send them all over the world
   //output.slices.resize(input.domain.get_volume());
   unsigned idx = 0;
