@@ -121,6 +121,41 @@ extern "C" {
   NEW_BLOCKIFY_TYPE(legion_blockify_3d_t, legion_point_3d_t);
 #undef NEW_BLOCKIFY_TYPE
 
+#define NEW_TRANSFORM_TYPE(T, X, Y) \
+  typedef struct T { coord_t trans[X][Y]; } T
+  NEW_TRANSFORM_TYPE(legion_transform_1x1_t, 1, 1);
+  NEW_TRANSFORM_TYPE(legion_transform_1x2_t, 1, 2);
+  NEW_TRANSFORM_TYPE(legion_transform_1x3_t, 1, 3);
+  NEW_TRANSFORM_TYPE(legion_transform_2x1_t, 2, 1);
+  NEW_TRANSFORM_TYPE(legion_transform_2x2_t, 2, 2);
+  NEW_TRANSFORM_TYPE(legion_transform_2x3_t, 2, 3);
+  NEW_TRANSFORM_TYPE(legion_transform_3x1_t, 3, 1);
+  NEW_TRANSFORM_TYPE(legion_transform_3x2_t, 3, 2);
+  NEW_TRANSFORM_TYPE(legion_transform_3x3_t, 3, 3);
+#undef NEW_TRANSFORM_TYPE
+
+#define NEW_AFFINE_TRANSFORM_TYPE(T, TT, PT) \
+  typedef struct T { TT transform; PT offset; } T
+  NEW_AFFINE_TRANSFORM_TYPE(legion_affine_transform_1x1_t, 
+                            legion_transform_1x1_t, legion_point_1d_t);
+  NEW_AFFINE_TRANSFORM_TYPE(legion_affine_transform_1x2_t,
+                            legion_transform_1x2_t, legion_point_1d_t);
+  NEW_AFFINE_TRANSFORM_TYPE(legion_affine_transform_1x3_t,
+                            legion_transform_1x3_t, legion_point_1d_t);
+  NEW_AFFINE_TRANSFORM_TYPE(legion_affine_transform_2x1_t, 
+                            legion_transform_2x1_t, legion_point_2d_t);
+  NEW_AFFINE_TRANSFORM_TYPE(legion_affine_transform_2x2_t,
+                            legion_transform_2x2_t, legion_point_2d_t);
+  NEW_AFFINE_TRANSFORM_TYPE(legion_affine_transform_2x3_t,
+                            legion_transform_2x3_t, legion_point_2d_t);
+  NEW_AFFINE_TRANSFORM_TYPE(legion_affine_transform_3x1_t, 
+                            legion_transform_3x1_t, legion_point_3d_t);
+  NEW_AFFINE_TRANSFORM_TYPE(legion_affine_transform_3x2_t,
+                            legion_transform_3x2_t, legion_point_3d_t);
+  NEW_AFFINE_TRANSFORM_TYPE(legion_affine_transform_3x3_t,
+                            legion_transform_3x3_t, legion_point_3d_t);
+#undef NEW_AFFINE_TRANSFORM_TYPE
+
   /**
    * @see Legion::Domain
    */
@@ -441,6 +476,64 @@ extern "C" {
    */
   size_t
   legion_domain_get_volume(legion_domain_t d);
+
+  // -----------------------------------------------------------------------
+  // Domain Transform Operations
+  // -----------------------------------------------------------------------
+
+  legion_domain_transform_t
+  legion_domain_transform_from_1x1(legion_transform_1x1_t t);
+
+  legion_domain_transform_t
+  legion_domain_transform_from_1x2(legion_transform_1x2_t t);
+
+  legion_domain_transform_t
+  legion_domain_transform_from_1x3(legion_transform_1x3_t t);
+
+  legion_domain_transform_t
+  legion_domain_transform_from_2x1(legion_transform_2x1_t t);
+
+  legion_domain_transform_t
+  legion_domain_transform_from_2x2(legion_transform_2x2_t t);
+
+  legion_domain_transform_t
+  legion_domain_transform_from_2x3(legion_transform_2x3_t t);
+
+  legion_domain_transform_t
+  legion_domain_transform_from_3x1(legion_transform_3x1_t t);
+
+  legion_domain_transform_t
+  legion_domain_transform_from_3x2(legion_transform_3x2_t t);
+
+  legion_domain_transform_t
+  legion_domain_transform_from_3x3(legion_transform_3x3_t t);
+
+  legion_domain_affine_transform_t
+  legion_domain_affine_transform_from_1x1(legion_affine_transform_1x1_t t);
+
+  legion_domain_affine_transform_t
+  legion_domain_affine_transform_from_1x2(legion_affine_transform_1x2_t t);
+
+  legion_domain_affine_transform_t
+  legion_domain_affine_transform_from_1x3(legion_affine_transform_1x3_t t);
+
+  legion_domain_affine_transform_t
+  legion_domain_affine_transform_from_2x1(legion_affine_transform_2x1_t t);
+
+  legion_domain_affine_transform_t
+  legion_domain_affine_transform_from_2x2(legion_affine_transform_2x2_t t);
+
+  legion_domain_affine_transform_t
+  legion_domain_affine_transform_from_2x3(legion_affine_transform_2x3_t t);
+
+  legion_domain_affine_transform_t
+  legion_domain_affine_transform_from_3x1(legion_affine_transform_3x1_t t);
+
+  legion_domain_affine_transform_t
+  legion_domain_affine_transform_from_3x2(legion_affine_transform_3x2_t t);
+
+  legion_domain_affine_transform_t
+  legion_domain_affine_transform_from_3x3(legion_affine_transform_3x3_t t);
 
   // -----------------------------------------------------------------------
   // Domain Point Operations
@@ -1861,6 +1954,12 @@ extern "C" {
                          bool block /* = false */);
 
   /**
+   * @see Legion::Future::is_ready()
+   */
+  bool
+  legion_future_is_ready(legion_future_t handle);
+
+  /**
    * @see Legion::Future::get_untyped_pointer()
    */
   const void *
@@ -1875,6 +1974,14 @@ extern "C" {
   // -----------------------------------------------------------------------
   // Future Map Operations
   // -----------------------------------------------------------------------
+
+  /**
+   * @return Caller takes ownership of return value.
+   *
+   * @see Legion::FutureMap::FutureMap()
+   */
+  legion_future_map_t
+  legion_future_map_copy(legion_future_map_t handle);
 
   /**
    * @param handle Caller must have ownership of parameter `handle`.
@@ -2580,7 +2687,12 @@ extern "C" {
                                            void *base_ptr,
                                            bool column_major);
 
-  void
+  /**
+   * @return Caller takes ownership of return value
+   *
+   * @see Legion::Runtime::detach_external_resource()
+   */
+  legion_future_t
   legion_detach_external_resource(legion_runtime_t runtime,
                                   legion_context_t ctx,
                                   legion_physical_region_t handle);
@@ -3363,6 +3475,15 @@ extern "C" {
     legion_registration_callback_pointer_t callback);
 
   /**
+   * @see Legion::Runtime::generate_library_mapper_ids()
+   */
+  legion_mapper_id_t
+  legion_runtime_generate_library_mapper_ids(
+      legion_runtime_t runtime,
+      const char *library_name,
+      size_t count);
+
+  /**
    * @see Legion::Runtime::replace_default_mapper()
    */
   void
@@ -3372,6 +3493,15 @@ extern "C" {
     legion_processor_t proc);
 
   /**
+   * @see Legion::Runtime::generate_library_projection_ids()
+   */
+  legion_projection_id_t
+  legion_runtime_generate_library_projection_ids(
+      legion_runtime_t runtime,
+      const char *library_name,
+      size_t count);
+
+  /**
    * @see Legion::Runtime::register_projection_functor()
    */
   void
@@ -3379,6 +3509,15 @@ extern "C" {
     legion_projection_id_t id,
     legion_projection_functor_logical_region_t region_functor,
     legion_projection_functor_logical_partition_t partition_functor);
+
+  /**
+   * @see Legion::Runtime::generate_library_task_ids()
+   */
+  legion_task_id_t
+  legion_runtime_generate_library_task_ids(
+      legion_runtime_t runtime,
+      const char *library_name,
+      size_t count);
 
   /**
    * @see Legion::Runtime::register_task_variant()
@@ -3451,21 +3590,6 @@ extern "C" {
     legion_task_id_t id /* = AUTO_GENERATE_ID */,
     const char *task_name /* = NULL*/,
     bool global,
-    legion_execution_constraint_set_t execution_constraints,
-    legion_task_layout_constraint_set_t layout_constraints,
-    legion_task_config_options_t options,
-    const char *module_name,
-    const char *function_name,
-    const void *userdata,
-    size_t userlen);
-
-  /**
-   * @see Legion::Runtime::preregister_task_variant()
-   */
-  legion_task_id_t
-  legion_runtime_preregister_task_variant_python_source(
-    legion_task_id_t id /* = AUTO_GENERATE_ID */,
-    const char *task_name /* = NULL*/,
     legion_execution_constraint_set_t execution_constraints,
     legion_task_layout_constraint_set_t layout_constraints,
     legion_task_config_options_t options,

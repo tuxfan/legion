@@ -21,6 +21,8 @@ import argparse, hashlib, multiprocessing, os, platform, re, subprocess, sys, tr
 def discover_llvm_version():
     if platform.node().startswith('titan'):
         return '38'
+    elif os.environ.get('LMOD_SYSTEM_NAME') == 'summit': # Summit doesn't set hostname
+        return '38'
     else:
         return '39'
 
@@ -43,6 +45,8 @@ def discover_conduit():
         return 'psm'
     elif platform.node().startswith('titan'):
         return 'gemini'
+    elif os.environ.get('LMOD_SYSTEM_NAME') == 'summit': # Summit doesn't set hostname
+        return 'ibv'
     else:
         raise Exception('Please set CONDUIT in your environment')
 
@@ -163,7 +167,14 @@ def install_llvm(llvm_dir, llvm_install_dir, llvm_version, llvm_use_cmake, cmake
         pass # Hope this means it already exists
     assert(os.path.isdir(llvm_dir))
 
-    if llvm_version == '38':
+    if llvm_version == '35':
+        llvm_tarball = os.path.join(llvm_dir, 'llvm-3.5.2.src.tar.xz')
+        llvm_source_dir = os.path.join(llvm_dir, 'llvm-3.5.2.src')
+        clang_tarball = os.path.join(llvm_dir, 'cfe-3.5.2.src.tar.xz')
+        clang_source_dir = os.path.join(llvm_dir, 'cfe-3.5.2.src')
+        download(llvm_tarball, 'http://sapling.stanford.edu/~eslaught/llvm/3.5.2/llvm-3.5.2.src.tar.xz', '85faf7cbd518dabeafc4d3f7e909338fc1dab3c4', insecure=insecure)
+        download(clang_tarball, 'http://sapling.stanford.edu/~eslaught/llvm/3.5.2/cfe-3.5.2.src.tar.xz', '50291e4c4ced8fcee3cca40bff0afb19fcc356e2', insecure=insecure)
+    elif llvm_version == '38':
         llvm_tarball = os.path.join(llvm_dir, 'llvm-3.8.1.src.tar.xz')
         llvm_source_dir = os.path.join(llvm_dir, 'llvm-3.8.1.src')
         clang_tarball = os.path.join(llvm_dir, 'cfe-3.8.1.src.tar.xz')
@@ -177,6 +188,8 @@ def install_llvm(llvm_dir, llvm_install_dir, llvm_version, llvm_use_cmake, cmake
         clang_source_dir = os.path.join(llvm_dir, 'cfe-3.9.1.src')
         download(llvm_tarball, 'http://sapling.stanford.edu/~eslaught/llvm/3.9.1/llvm-3.9.1.src.tar.xz', 'ce801cf456b8dacd565ce8df8288b4d90e7317ff', insecure=insecure)
         download(clang_tarball, 'http://sapling.stanford.edu/~eslaught/llvm/3.9.1/cfe-3.9.1.src.tar.xz', '95e4be54b70f32cf98a8de36821ea5495b84add8', insecure=insecure)
+    else:
+        assert False
 
     if not cache:
         extract(llvm_dir, llvm_tarball, 'xz')
@@ -258,7 +271,9 @@ def driver(prefix_dir=None, cache=False, legion_use_cmake=False, llvm_version=No
         if 'HOST_CXX' not in os.environ:
             raise Exception('Please set HOST_CXX in your environment')
 
-    if llvm_version == '38':
+    if llvm_version == '35':
+        llvm_use_cmake = False
+    elif llvm_version == '38':
         llvm_use_cmake = False
     elif llvm_version == '39':
         llvm_use_cmake = True
@@ -373,7 +388,7 @@ if __name__ == '__main__':
         default=os.environ.get('USE_CMAKE') == 1,
         help='Use CMake to build Legion.')
     parser.add_argument(
-        '--llvm-version', dest='llvm_version', required=False, choices=('38', '39'),
+        '--llvm-version', dest='llvm_version', required=False, choices=('35', '38', '39'),
         default=discover_llvm_version(),
         help='Select LLVM version.')
     parser.add_argument(
