@@ -105,6 +105,11 @@ void SliceMapper::slice_task(const MapperContext      ctx,
                              const SliceTaskInput&    input,
                                    SliceTaskOutput&   output)
 {
+  if (slice_side_length == 0)
+  {
+    DefaultMapper::slice_task(ctx, task, input, output);
+    return;
+  }
   // Iterate over all the points and send them all over the world
   //output.slices.resize(input.domain.get_volume());
   unsigned idx = 0;
@@ -638,6 +643,9 @@ void top_level_task(const Task *task,
   double sim_time = 1e-6 * (ts_end - ts_start);
   printf("ELAPSED TIME = %7.7f s\n", sim_time);
 
+  // We got what we need, force the run to end
+  assert(0);
+
   // Finally, we launch a single task to check the results.
   RectDims rect_dims;
   rect_dims.side_length_x = side_length_x;
@@ -999,9 +1007,23 @@ void registration_callback(Machine machine, HighLevelRuntime *rt,
 
 int main(int argc, char **argv)
 {
+  // If using the slicing mapper, add it's callback
+  Processor::Kind top_level_proc = Processor::LOC_PROC;
+  for (int i = 1; i < argc; i++)
+  {
+    if (!strcmp(argv[i],"-sm"))
+      Runtime::add_registration_callback(mapper_registration);
+    if (!strcmp(argv[i],"-ll:io"))
+    {
+      int io_procs = atoi(argv[++i]);
+      if (io_procs >= 1)
+        top_level_proc = Processor::IO_PROC;
+    }
+  }
+
   Runtime::set_top_level_task_id(TOP_LEVEL_TASK_ID);
   Runtime::register_legion_task<top_level_task>(TOP_LEVEL_TASK_ID,
-      Processor::LOC_PROC, true/*single*/, false/*index*/, AUTO_GENERATE_ID,
+      top_level_proc, true/*single*/, false/*index*/, AUTO_GENERATE_ID,
       TaskConfigOptions(), "top level task");
   Runtime::register_legion_task<init_field_task>(INIT_FIELD_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID,
@@ -1016,13 +1038,6 @@ int main(int argc, char **argv)
   Runtime::register_legion_task<check_task>(CHECK_TASK_ID,
       Processor::LOC_PROC, true/*single*/, true/*index*/, AUTO_GENERATE_ID,
       TaskConfigOptions(), "check task");
-
-  // If using the slicing mapper, add it's callback
-  for (int i = 1; i < argc; i++)
-  {
-    if (!strcmp(argv[i],"-sm"))
-      Runtime::add_registration_callback(mapper_registration);
-  }
 
   Runtime::preregister_projection_functor(X_PROJ, new XDiffProjectionFunctor());
   Runtime::preregister_projection_functor(Y_PROJ, new YDiffProjectionFunctor());
