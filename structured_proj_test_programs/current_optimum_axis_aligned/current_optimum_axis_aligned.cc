@@ -327,10 +327,10 @@ void top_level_task(const Task *task,
   fm.wait_all_results();
   double ts_end = Realm::Clock::current_time_in_microseconds();
   double sim_time = 1e-6 * (ts_end - ts_start);
-  printf("ELAPSED TIME = %7.7f s\n", sim_time);
+  fprintf(stderr, "ELAPSED TIME = %7.7f s\n", sim_time);
 
   // We got what we need, force the run to end
-  assert(0);
+  //assert(0);
 
   // Finally, we launch a single task to check the results.
   RectDims rect_dims;
@@ -346,9 +346,9 @@ void top_level_task(const Task *task,
   //runtime->execute_task(ctx, check_launcher);
 
   // Clean up our region, index space, and field space
-  runtime->destroy_logical_region(ctx, top_lr);
-  runtime->destroy_field_space(ctx, fs);
-  runtime->destroy_index_space(ctx, is);
+  //runtime->destroy_logical_region(ctx, top_lr);
+  //runtime->destroy_field_space(ctx, fs);
+  //runtime->destroy_index_space(ctx, is);
 }
 
 // The standard initialize field task from earlier examples
