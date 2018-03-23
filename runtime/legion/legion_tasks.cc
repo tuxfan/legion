@@ -7177,7 +7177,7 @@ namespace Legion {
       args.proxy_this = this;
       args.needs_versioning = needs_versioning;
       return runtime->issue_runtime_meta_task(args,
-          LG_THROUGHPUT_DEFERRED_PRIORITY, this, precondition);
+          LG_THROUGHPUT_DEFERRED_PRIORITY, precondition);
     }
 
     //--------------------------------------------------------------------------
