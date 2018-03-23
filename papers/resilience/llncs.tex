@@ -7,46 +7,62 @@
 \documentclass{llncs}
 %
 \usepackage{makeidx}  % allows for indexgeneration
+\usepackage{graphicx}
 %
 \begin{document}
 
 \mainmatter              % start of the contributions
 %
-\title{As Much As You Want: Resilience in Legion}
+\title{As Much Resilience As You Want: \\A Resilient Legion}
 %
 \titlerunning{Resilience in Legion}
  
 \author{Karthik Murthy \and
 Mike Bauer \and 
-Sean Treichler \and
+Kyushick Lee \and
+Yongkee Kwon \and
+Todd Warszawski\and 
 Wonchan Lee \and
 Elliott Slaughter \and
-Alex Aiken
+Sean Treichler \and
+Alex Aiken \and
+Mattan Erez
 }
 %
 \authorrunning{Karthik Murthy et al.} 
 \institute{Stanford University, USA,\\
-\email{kmurthy@stanford.edu}}
+%\email{kmurthy@stanford.edu}
+}
 
 \maketitle              % typeset the title of the contribution
 
-\begin{abstract}
-\dots
+\begin{abstract} 
+Resilient is an important aspect of scaling applications on
+large clusters. As we approach parallelism profiles of several millions and long running applications, we need to ensure that ineffect ``we reach the end".
+Defining the policy interaction with the programming model features necessitates that we revisit the memory concistency model. 
+Recoverability, a critical step in
+resilience, opens the door to optimizations such as speculation. We also
+evaluate this.  \dots
 \keywords{resilience}
 \end{abstract}
+
 %
-\section{Introduction}
-\section{Resilience Policy}
-\section{Interaction of Resilience Policy with Legion Features}
-\section{Implementation}
-\section{Experiments}
-\subsection{local recover vs global recovery}
-\subsection{compute/comm vs no-failure/single failure/multi-failure}
-\subsection{S3D, Pennant, Stencil, Circuit}
-\section{Resilience Application: Speculation}
-\section{Mapper-guided Policies}
-\subsection{UT Austin}
-\section{Related Work}
+\input{introduction}
+
+\input{resilience_overview}
+
+\input{resilience_policy_with_legion_features}
+
+\input{resilience_implementation}
+
+\input{speculation}
+
+\input{experiments}
+
+\input{extensions}
+
+\input{related_work}
+
 \section{Conclusion}
 
 %
