@@ -26,7 +26,7 @@ do
     for sleep_us in 0 1000 10000
     do
       affine_command="srun -n $nodes -N $nodes --tasks-per-node 1 --cpu_bind none ./x_parallel_only/runtime_stress_test -i $ITERATIONS -nx $dim -bx $dim -ny $dim -by $dim -sms $sleep_us -sm -ssl 8 -a 225 -ll:cpu $cpus_per_node -ll:util $util_per_node -ll:io $io_per_node"
-      index_command="srun -n $nodes -N $nodes --tasks-per-node 1 --cpu_bind none ./current_optimum_angle/current_optimum_angle -i $ITERATIONS -nx $dim -bx $dim -ny $dim -by $dim -sms $sleep_us -ll:cpu $cpus_per_node -ll:util $util_per_node -ll:io $io_per_node"
+      index_command="srun -n $nodes -N $nodes --tasks-per-node 1 --cpu_bind none ./current_optimum_angle/current_optimum_angle -i $ITERATIONS -nx $dim -bx $dim -ny $dim -by $dim -sms $sleep_us -sm -ssl 8 -ll:cpu $cpus_per_node -ll:util $util_per_node -ll:io $io_per_node"
       no_proj_command="srun -n $nodes -N $nodes --tasks-per-node 1 --cpu_bind none ./zero_projections/zero_projections -i $ITERATIONS -nx $dim -bx $dim -ny $dim -by $dim -sms $sleep_us -a 225 -ll:cpu $cpus_per_node -ll:util $util_per_node -ll:io $io_per_node -lg:window $window"
 
       echo $affine_command
