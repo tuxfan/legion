@@ -226,37 +226,50 @@ namespace Realm {
     }
 
     // no duplicates for now
-    assert(measurements.count((ProfilingMeasurementID)T::ID) == 0);
+    //ksmurthy: during resilience, we explicitly add OP_STATUS as bad when exception occurs, 
+    //in those cases, when we eenter here, there is already a profiling measurement,
+    //accounting for that, we should nto assert, and use whatever is reported there
+    bool should_actually_add_measurement = false;
+    if((ProfilingMeasurementID)T::ID == PMID_OP_STATUS) {
+      if(measurements.count((ProfilingMeasurementID)T::ID) > 0) {
+        should_actually_add_measurement = false;
+      } else { 
+        should_actually_add_measurement = true;
+      }
+    } else {
+      assert(measurements.count((ProfilingMeasurementID)T::ID) == 0);
+      should_actually_add_measurement = true;
+    }
 
-    // serialize the data
-    Serialization::DynamicBufferSerializer dbs(128);
-#ifndef NDEBUG
-    bool ok =
-#endif
-      dbs << data;
-    assert(ok);
 
-    // measurement data is stored in a ByteArray
-    ByteArray& md = measurements[(ProfilingMeasurementID)T::ID];
-    ByteArray b = dbs.detach_bytearray(-1);  // no trimming
-    md.swap(b);  // avoids a copy
+    if(should_actually_add_measurement) {
+      // serialize the data
+      Serialization::DynamicBufferSerializer dbs(128);
+      #ifndef NDEBUG
+        bool ok =
+      #endif
+        dbs << data;
+      assert(ok);
+      // measurement data is stored in a ByteArray
+      ByteArray& md = measurements[(ProfilingMeasurementID)T::ID];
+      ByteArray b = dbs.detach_bytearray(-1);  // no trimming
+      md.swap(b);  // avoids a copy
 
-    // update the number of remaining measurements for each profiling request that wanted this
-    //  if the count hits zero, we can either send the request immediately or mark that we want to
-    //  later
-    for(std::vector<const ProfilingRequest *>::const_iterator it2 = it->second.begin();
-	it2 != it->second.end();
-	it2++) {
-      std::map<const ProfilingRequest *, int>::iterator it3 = measurements_left.find(*it2);
-      assert(it3 != measurements_left.end());
-      it3->second--;
-      if(it3->second == 0) {
-	if(send_complete_responses) {
-	  measurements_left.erase(it3);
-	  send_response(**it2);
-	} else {
-	  completed_requests_present = true;
-	}
+      // update the number of remaining measurements for each profiling request that wanted this
+      //  if the count hits zero, we can either send the request immediately or mark that we want to
+      //  later
+      for(std::vector<const ProfilingRequest *>::const_iterator it2 = it->second.begin(); it2 != it->second.end(); it2++) {
+        std::map<const ProfilingRequest *, int>::iterator it3 = measurements_left.find(*it2);
+        assert(it3 != measurements_left.end());
+        it3->second--;
+        if(it3->second == 0) {
+        	if(send_complete_responses) {
+	          measurements_left.erase(it3);
+	          send_response(**it2);
+	        } else {
+	          completed_requests_present = true;
+	        }
+        }
       }
     }
 
@@ -264,18 +277,17 @@ namespace Realm {
     if(send_complete_responses && completed_requests_present) {
       std::map<const ProfilingRequest *, int>::iterator it = measurements_left.begin();
       while(it != measurements_left.end()) {
-	if(it->second > 0) {
-	  it++;
-	  continue;
-	}
+	      if(it->second > 0) {
+	        it++;
+	        continue;
+	      }
 
-	// make a copy of the iterator so we can increment it
-	std::map<const ProfilingRequest *, int>::iterator old = it;
-	it++;
-	send_response(*(old->first));
-	measurements_left.erase(old);
+	      // make a copy of the iterator so we can increment it
+	      std::map<const ProfilingRequest *, int>::iterator old = it;
+	      it++;
+	      send_response(*(old->first));
+	      measurements_left.erase(old);
       }
-      
       completed_requests_present = false;
     }
   }

@@ -1767,6 +1767,9 @@ namespace Legion {
 
       void retrieve_name(MapperContext ctx, LogicalPartition handle,
                                    const char *&result);
+    public://ksmurthy
+      void harden_physical_instances(MapperContext ctx, 
+                  unsigned region_idx, const PhysicalInstance &instance) const;
     public:
       //------------------------------------------------------------------------
       // Support for packing tunable values

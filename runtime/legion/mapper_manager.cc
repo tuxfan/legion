@@ -1829,6 +1829,22 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    void MapperManager::harden_physical_instances(MappingCallInfo *ctx,
+                           unsigned region_idx, const MappingInstance &instance)
+    //--------------------------------------------------------------------------
+    {
+      //ksmurthy
+      Legion::Internal::MappingCallInfo * inf = ctx;
+      Legion::Internal::Operation *op = ctx->operation; 
+      PhysicalManager *manager = instance.impl;
+      assert(!manager->is_virtual_manager());
+      pause_mapper_call(ctx);
+      manager->harden_physical_instance(mapper_id, processor);
+      op->mark_instance_hardened(instance);
+      resume_mapper_call(ctx); 
+    }
+
+    //--------------------------------------------------------------------------
     void MapperManager::set_garbage_collection_priority(MappingCallInfo *ctx,
                            const MappingInstance &instance, GCPriority priority)
     //--------------------------------------------------------------------------

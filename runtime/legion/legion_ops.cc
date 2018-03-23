@@ -689,43 +689,147 @@ namespace Legion {
       Runtime::trigger_event(mapped_event, wait_on);
     }
 
+
+
+//    //ksmurthy------------------------------------------------------------------
+//    void Operation::complete_execution_callable_from_profiling_response(RtEvent wait_on /*= Event::NO_EVENT*/)
+//    //--------------------------------------------------------------------------
+//    {
+//#ifdef DEBUG_LEGION
+//      {
+//        AutoLock o_lock(op_lock);
+//        assert(!executed);
+//        executed = true;
+//      }
+//#endif
+//#if 0
+//      if (!mapped_event.has_triggered() || !resolved_event.has_triggered())
+//      {
+//        RtEvent trigger_pre = 
+//          Runtime::merge_events(mapped_event, resolved_event);
+//        TriggerCompleteArgs args;
+//        args.proxy_this = this;
+//        runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
+//                                         this, trigger_pre);
+//        return;
+//      }
+// #endif
+//
+//      bool need_trigger = false;
+//      // Tell our parent that we are complete
+//      // It's important that we do this before we mark ourselves
+//      // completed in order to avoid race conditions
+//      if (track_parent)
+//        parent_ctx->register_child_complete(this);
+//      {
+//        AutoLock o_lock(op_lock);
+//#ifdef DEBUG_LEGION
+//        // ksmurthy removing TODO assert(mapped);
+//        assert(executed);
+//        assert(resolved);
+//        assert(!completed);
+//#endif
+//        completed = true;
+//        // Now that we have done the completion stage, we can 
+//        // mark trigger commit to false which will open all the
+//        // different path ways for doing commit, this also
+//        // means we need to check all the ways here because they
+//        // have been disable previously
+//        trigger_commit_invoked = false;
+//        // Check to see if we need to trigger commit
+//        if ((!Runtime::resilient_mode) || early_commit_request ||
+//            ((hardened && unverified_regions.empty())))
+//        {
+//          trigger_commit_invoked = true;
+//          need_trigger = true;
+//          gen++;
+//        }
+//        else if (outstanding_mapping_references == 0)
+//        {
+//#ifdef DEBUG_LEGION
+//          assert(dependence_tracker.commit != NULL);
+//#endif
+//          CommitDependenceTracker *tracker = dependence_tracker.commit;
+//          need_trigger = tracker->issue_commit_trigger(this, runtime);
+//          if (need_trigger)
+//          {
+//            trigger_commit_invoked = true;
+//            gen++;
+//          }
+//        }
+//      }
+//      if (need_completion_trigger)
+//        Runtime::trigger_event(completion_event);
+//
+//      // If we're not in resilient mode, then we can now
+//      // commit this operation
+//      if (need_trigger)
+//        trigger_commit();
+// 
+//    }
+
+
     //--------------------------------------------------------------------------
     void Operation::complete_execution(RtEvent wait_on /*= Event::NO_EVENT*/)
     //--------------------------------------------------------------------------
     {
-      if (wait_on.exists() && !wait_on.has_triggered())
-      {
-        // We have to defer the execution of this operation
-        DeferredExecArgs args;
-        args.proxy_this = this;
-        runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                         this, wait_on);
-        return;
+      bool check_for_resilience_capture = false;
+//      check_for_resilience_capture = this->get_operation_kind() == TASK_OP_KIND;
+//      if(check_for_resilience_capture) {
+//        Legion::Internal::TaskOp *tskop = dynamic_cast<Legion::Internal::TaskOp *>(this);
+//        if(tskop != NULL) {
+//          check_for_resilience_capture = 
+//            (tskop->get_task_kind() == Legion::Internal::TaskOp::INDIVIDUAL_TASK_KIND) &&
+//            (dynamic_cast<SingleTask *>(tskop) != NULL) &&
+//            (strcmp(tskop->get_task_name(),"top_level") != 0); 
+//        } else {
+//          assert(false);
+//        }
+//      }  
+      if(check_for_resilience_capture) {
+       //ksmurthy
+       //shouldnt do anything, because we should handle it inside 
+       //profiling_response_reported based on how things go 
+
+      } else { 
+        //ksmurthy every other operation (i.e., non-taskop follows
+        //a traditional path   
+ 
+        if (wait_on.exists() && !wait_on.has_triggered())
+        {
+          // We have to defer the execution of this operation
+          DeferredExecArgs args;
+          args.proxy_this = this;
+          runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
+                                           this, wait_on);
+          return;
+        }
+        // Tell our parent context that we are done mapping
+        // It's important that this is done before we mark that we
+        // are executed to avoid race conditions
+        if (track_parent)
+          parent_ctx->register_child_executed(this);
+  #ifdef DEBUG_LEGION
+        {
+          AutoLock o_lock(op_lock);
+          assert(!executed);
+          executed = true;
+        }
+  #endif
+        // Now see if we are ready to complete this operation
+        if (!mapped_event.has_triggered() || !resolved_event.has_triggered())
+        {
+          RtEvent trigger_pre = 
+            Runtime::merge_events(mapped_event, resolved_event);
+          TriggerCompleteArgs args;
+          args.proxy_this = this;
+          runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
+                                           this, trigger_pre);
+        }
+        else // Do the trigger now
+          trigger_complete();
       }
-      // Tell our parent context that we are done mapping
-      // It's important that this is done before we mark that we
-      // are executed to avoid race conditions
-      if (track_parent)
-        parent_ctx->register_child_executed(this);
-#ifdef DEBUG_LEGION
-      {
-        AutoLock o_lock(op_lock);
-        assert(!executed);
-        executed = true;
-      }
-#endif
-      // Now see if we are ready to complete this operation
-      if (!mapped_event.has_triggered() || !resolved_event.has_triggered())
-      {
-        RtEvent trigger_pre = 
-          Runtime::merge_events(mapped_event, resolved_event);
-        TriggerCompleteArgs args;
-        args.proxy_this = this;
-        runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                         this, trigger_pre);
-      }
-      else // Do the trigger now
-        trigger_complete();
+
     }
 
     //--------------------------------------------------------------------------
@@ -741,6 +845,8 @@ namespace Legion {
 #endif
       Runtime::trigger_event(resolved_event, wait_on);
     }
+
+
 
     //--------------------------------------------------------------------------
     void Operation::complete_operation(RtEvent wait_on /*= Event::NO_EVENT*/)
@@ -799,6 +905,9 @@ namespace Legion {
       }
       if (need_completion_trigger)
         Runtime::trigger_event(completion_event);
+
+
+#if 0 //ksmurthy
       // finally notify all the operations we dependended on
       // that we validated their regions note we don't need
       // the lock since this was all set when we did our mapping analysis
@@ -811,6 +920,8 @@ namespace Legion {
         GenerationID ver_gen = incoming[it->first];
         it->first->notify_regions_verified(it->second, ver_gen);
       } 
+#endif
+
       // If we're not in resilient mode, then we can now
       // commit this operation
       if (need_trigger)
@@ -854,6 +965,42 @@ namespace Legion {
         deactivate();
     }
 
+//ksmurthy
+    //--------------------------------------------------------------------------
+    void Operation::mark_instance_hardened(const MappingInstance &instance)
+    //--------------------------------------------------------------------------
+    {
+      //TODO is there a switch here to handle different ops
+      if(get_operation_kind() != TASK_OP_KIND) return; 
+
+      Legion::Internal::InstanceManager *inst_mgr = instance.impl->as_instance_manager();
+      assert(inst_mgr->is_normal_instance());
+      Legion::Internal::PhysicalManager *mgr = instance.impl;
+      Legion::Internal::TaskOp *tsk= dynamic_cast<Legion::Internal::TaskOp *>(this);
+      if(tsk == NULL) return;
+      //assert(this->mapped);//to ensure that incoming can be used 
+
+      //TODO what does it mean for other TaskOp kinds like Point, Index, Slice
+      //revisit with MIKE TODO
+      if(tsk->get_task_kind() != Legion::Internal::TaskOp::INDIVIDUAL_TASK_KIND) return;
+
+      std::set<Legion::Internal::PhysicalManager *> regions;
+      regions.insert(mgr);//(inst_mgr->region_node.index);
+
+      //my job is to not delete myself, but tell my parents that their region
+      //instance outputs are now hardened, and hence, call them to see 
+      //if they can delete themselves.
+      for (std::map<Operation*,std::set<unsigned> >::const_iterator it =
+            verify_regions.begin(); it != verify_regions.end(); it++)
+      {
+        //it->second is a set of region indices
+        //check if the instance of region index is the same
+        //if so then add it to the  
+	      it->first->notify_regions_verified(regions, incoming[it->first]); 
+      }
+   }
+//ksmurthy
+
     //--------------------------------------------------------------------------
     void Operation::harden_operation(void)
     //--------------------------------------------------------------------------
@@ -877,26 +1024,26 @@ namespace Legion {
         trigger_commit();
     }
 
-/////ksmurthy BEGIN
     //--------------------------------------------------------------------------
     void Operation::quash_operation(GenerationID gen, bool restart)
     //--------------------------------------------------------------------------
     {
+      printf("you have to do something here OP+QUASH+OPERATION\n");
       // TODO: actually handle quashing of operations
-      //ksmurthy this was the only line: assert(false);
-      //ok some notes, there are two things to do
-      //get the error code to determine whether we can recover here
-      //get the list of physical instances on which the task depended on
-      //and see what are the current available physical instance
-      //see which are read and write
-      //then determine that I should restart execution from here
-      //else call the parent
-      //this should be done in the inherited classes, e.g., TaskOp that inherit
-      //s from this class, and singleTask that inherits from TaskOp
+      //assert(false);
     }
-/////ksmurthy END
 
-    //--------------------------------------------------------------------
+    //--------------------------------------------------------------------------
+    bool Operation::some_task_failed(GenerationID gen, bool restart)
+    //--------------------------------------------------------------------------
+    {
+      printf("you have to do something here OP+TASK+FAILED\n");
+      // TODO: actually handle quashing of operations
+      //assert(false); //ksmurthy a child of operation should have a valid impl
+      return false;
+    }
+
+    //--------------------------------------------------------------------------
     void Operation::request_early_commit(void)
     //--------------------------------------------------------------------------
     {
@@ -1049,8 +1196,9 @@ namespace Legion {
       {
         incoming[target] = target_gen;
         // If we registered a mapping dependence then we can verify
-        if (validates)
+        if (validates) {
           verify_regions[target].insert(idx);
+        }
       }
       if (tracing)
       {
@@ -1208,6 +1356,54 @@ namespace Legion {
       logical_advances.clear();
     }
 
+
+    //ksmurthy------------------------------------------------------------------
+    void Operation::notify_regions_verified(
+              const std::set<Legion::Internal::PhysicalManager *> &regions, 
+              GenerationID our_gen)
+    //--------------------------------------------------------------------------
+    {
+
+      //at this time, TODO we are doing it for individual task, single types
+      Legion::Internal::TaskOp *tsk = dynamic_cast<Legion::Internal::TaskOp *>(this);
+      if(tsk == NULL) return;
+      if(dynamic_cast<Legion::Internal::SingleTask *>(tsk) == NULL) return; 
+      Legion::Internal::SingleTask *stsk = dynamic_cast<Legion::Internal::SingleTask *>(tsk);
+
+      bool need_trigger = false;
+      {
+        AutoLock o_lock(op_lock);
+#ifdef DEBUG_LEGION
+        assert(our_gen <= gen); // better not be ahead of where we are now
+#endif
+        if ((our_gen == gen) && !trigger_commit_invoked)
+        {
+          for(unsigned idx = 0; idx < stsk->get_physical_instances().size(); ++idx) {
+            for (std::set<Legion::Internal::PhysicalManager *>::const_iterator it = regions.begin();
+                it != regions.end(); it++) {
+            if(stsk->get_physical_instances()[idx][0].get_manager() == *it)
+              unverified_regions.erase(idx);
+            }
+          }
+          if(unverified_regions.empty()) {
+            hardened = true;
+          }
+          for (std::map<Operation*,std::set<unsigned> >::const_iterator it =
+                  verify_regions.begin(); it != verify_regions.end(); it++) {
+              GenerationID ver_gen = incoming[it->first];
+              it->first->notify_regions_verified(regions, ver_gen);
+          }
+          if (hardened && !trigger_commit_invoked){
+            need_trigger = true;
+            trigger_commit_invoked = true;
+            gen++;
+          }
+        }
+      }
+      if (need_trigger)
+        trigger_commit();
+    }
+
     //--------------------------------------------------------------------------
     void Operation::notify_regions_verified(const std::set<unsigned> &regions,
                                             GenerationID our_gen)
@@ -1222,13 +1418,18 @@ namespace Legion {
         if ((our_gen == gen) && !trigger_commit_invoked)
         {
           for (std::set<unsigned>::const_iterator it = regions.begin();
-                it != regions.end(); it++)
-          {
+                it != regions.end(); it++) {
             unverified_regions.erase(*it);
           }
-          if (hardened && unverified_regions.empty()
-              && !trigger_commit_invoked)
-          {
+          if(unverified_regions.empty()) {
+            hardened = true;
+          }
+          for (std::map<Operation*,std::set<unsigned> >::const_iterator it =
+                  verify_regions.begin(); it != verify_regions.end(); it++) {
+              GenerationID ver_gen = incoming[it->first];
+              it->first->notify_regions_verified(regions, ver_gen);
+          }
+          if (hardened && !trigger_commit_invoked){
             need_trigger = true;
             trigger_commit_invoked = true;
             gen++;

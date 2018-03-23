@@ -1,4 +1,3 @@
-//sri
 /* Copyright 2017 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -5274,10 +5273,10 @@ namespace Legion {
     //--------------------------------------------------------------------------
     VirtualChannel::VirtualChannel(VirtualChannelKind kind,
                                    AddressSpaceID local_address_space,
-                                   size_t max_message_size, LegionProfiler *prof, LegionResilient *resl)
+                                   size_t max_message_size, LegionProfiler *prof)
     : sending_buffer((char*)malloc(max_message_size)),
     sending_buffer_size(max_message_size),
-    observed_recent(true), profiler(prof), resilient(resl)
+    observed_recent(true), profiler(prof)
     //--------------------------------------------------------------------------
     //
     {
@@ -5312,7 +5311,7 @@ namespace Legion {
     
     //--------------------------------------------------------------------------
     VirtualChannel::VirtualChannel(const VirtualChannel &rhs)
-    : sending_buffer(NULL), sending_buffer_size(0), profiler(NULL), resilient(NULL)
+    : sending_buffer(NULL), sending_buffer_size(0), profiler(NULL)
     //--------------------------------------------------------------------------
     {
       // should never be called
@@ -6063,11 +6062,6 @@ namespace Legion {
             runtime->handle_remote_context_response(derez);
             break;
           }
-          case SEND_REMOTE_CONTEXT_RELEASE:
-            {
-              runtime->handle_remote_context_release(derez);
-              break;
-            }
           case SEND_REMOTE_CONTEXT_FREE:
           {
             runtime->handle_remote_context_free(derez);
@@ -6333,7 +6327,7 @@ namespace Legion {
       for (unsigned idx = 0; idx < MAX_NUM_VIRTUAL_CHANNELS; idx++)
       {
         new (channels+idx) VirtualChannel((VirtualChannelKind)idx,
-                                          rt->address_space, max_message_size, runtime->profiler, runtime->resilient);
+                                          rt->address_space, max_message_size, runtime->profiler);
       }
     }
     
@@ -6520,6 +6514,13 @@ namespace Legion {
         }
       }
 #endif
+
+//ksmurthy FORCE SHUTDOWN for lg:resilient
+//      if(Runtime::resilient_mode)
+//        return;
+//ksmurthy
+
+
       if (result && (runtime->address_space == source))
       {
         log_shutdown.info("SHUTDOWN PHASE %d SUCCESS!", phase);
@@ -6704,6 +6705,11 @@ namespace Legion {
     RtEvent GarbageCollectionEpoch::launch(void)
     //--------------------------------------------------------------------------
     {
+
+      //ksmurthy debugging the lg:resilient non-termination problem TODO remove this return
+//      if(Runtime::resilient_mode)
+//        return RtEvent::NO_RT_EVENT;
+
       // Set remaining to the total number of collections
       remaining = collections.size();
       GarbageCollectionArgs args;
@@ -7632,8 +7638,7 @@ namespace Legion {
     ApEvent VariantImpl::dispatch_task(Processor target, SingleTask *task,
                                        TaskContext *ctx, ApEvent precondition,
                                        PredEvent predicate_guard, int priority,
-                                       Realm::ProfilingRequestSet &requests)//,
-																			 //Realm::ResiliencyRequestSet &resl_requests)
+                                       Realm::ProfilingRequestSet &requests)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
@@ -7641,9 +7646,6 @@ namespace Legion {
       assert(runtime->is_local(target) ||
              (target.kind() == Processor::PROC_GROUP));
 #endif
-      // ksmurthy 2017
-      if (runtime->resilient != NULL)
-        runtime->resilient->add_task_request();//rerequests, vid, task); 
       // Add any profiling requests
       if (runtime->profiler != NULL)
         runtime->profiler->add_task_request(requests, vid, task);
@@ -7654,8 +7656,6 @@ namespace Legion {
       runtime->increment_total_outstanding_tasks();
 #endif
       DETAILED_PROFILER(runtime, REALM_SPAWN_TASK_CALL);
-
-#if 1
       // If our ready event hasn't triggered, include it in the precondition
       if (predicate_guard.exists())
       {
@@ -7675,57 +7675,6 @@ namespace Legion {
         return ApEvent(target.spawn(descriptor_id, &ctx, sizeof(ctx), requests, 
                                     precondition, priority));
       }
-#else
-      //volatile int debug_wait = 0;
-      //while(debug_wait != 1);
-      // If our ready event hasn't triggered, include it in the precondition
-      if (predicate_guard.exists())
-	{
-	  // Merge in the predicate guard
-	  ApEvent pre = Runtime::merge_events(precondition, ready_event,
-					      ApEvent(predicate_guard));
-	  // Have to protect the result in case it misspeculates
-	  Realm::Event hasfaulted = target.spawn(descriptor_id, 
-						 &ctx, sizeof(ctx), requests, pre, priority);
-
-	  bool poisoned = false;
-	  if(hasfaulted.has_triggered_faultaware(poisoned)) { 
-	    if(poisoned) {
-	      MessageDescriptor NO_PROCESSOR_CONSTRAINT(1927002, "undefined RESILIENCY");
-	      log_run.error(NO_PROCESSOR_CONSTRAINT.id(),"hello, we should not have entered this branch");	
-				std::cout << "hello, we should not have entered this part of runtime.cc: 1927002" << std::endl;
-	      return ApEvent(Realm::Event::NO_EVENT);
-	    } else {
-	      return Runtime::ignorefaults(hasfaulted);
-	    }
-	  } else {
-	    MessageDescriptor NO_PROCESSOR_CONSTRAINT(1927002, "undefined RESILIENCY");
-	    log_run.error(NO_PROCESSOR_CONSTRAINT.id(),"hello, we should not have entered this branch");
-				std::cout << "hello, we should not have entered this part of runtime.cc: 1927002" << std::endl;
-	    return ApEvent(Realm::Event::NO_EVENT);
-	  }
-	}
-      else
-	{
-	  bool poisoned = false;
-	  if(ready_event.has_triggered_faultaware(poisoned)) {
-	    if(poisoned) {
-	      MessageDescriptor NO_PROCESSOR_CONSTRAINT(1927002, "undefined RESILIENCY");
-	      log_run.error(NO_PROCESSOR_CONSTRAINT.id(),"hello, we should not have entered this branch");	
-				std::cout << "hello, we should not have entered this part of runtime.cc: 1927002" << std::endl;
-	      return ApEvent(Realm::Event::NO_EVENT);
-	    }
-	  }
-	  // No predicate guard
-	  if (!ready_event.has_triggered())
-	    return ApEvent(target.spawn(descriptor_id, &ctx, sizeof(ctx),requests,
-					Runtime::merge_events(precondition, ready_event), priority));
-	  return ApEvent(target.spawn(descriptor_id, &ctx, sizeof(ctx), requests, 
-				      precondition, priority));
-	}
-#endif
-
-
     }
     
     //--------------------------------------------------------------------------
@@ -8767,8 +8716,7 @@ namespace Legion {
         mapper_runtime(new Legion::Mapping::MapperRuntime()),
         machine(m), address_space(unique), 
         total_address_spaces(address_spaces.size()),
-        runtime_stride(address_spaces.size()), profiler(NULL), 
-        /*ksmurthy 2017*/ resilient(NULL),
+        runtime_stride(address_spaces.size()), profiler(NULL),
         forest(new RegionTreeForest(this)), 
         has_explicit_utility_procs(!local_utilities.empty()), 
         prepared_for_shutdown(false),
@@ -8954,7 +8902,6 @@ namespace Legion {
     : external(NULL), mapper_runtime(NULL), machine(rhs.machine),
     address_space(0), total_address_spaces(0), runtime_stride(0),
     profiler(NULL), forest(NULL), has_explicit_utility_procs(false),
-    /*ksmurthy 2017*/ resilient(NULL), 
     local_procs(rhs.local_procs), proc_spaces(rhs.proc_spaces)
     //--------------------------------------------------------------------------
     {
@@ -8983,13 +8930,6 @@ namespace Legion {
         delete profiler;
         profiler = NULL;
       }
-      /*ksmurthy */
-      if (resilient != NULL) 
-      {
-				resilient->finalize();
-				delete resilient;
-				resilient = NULL;
-      } 
       delete forest;
       delete external;
       delete mapper_runtime;
@@ -12631,7 +12571,7 @@ namespace Legion {
     {
       if (ctx != DUMMY_CONTEXT)
         ctx->begin_runtime_call();
-      // TODO: implement this //KSMURTHY
+      // TODO: implement this
       assert(false);
       if (ctx != DUMMY_CONTEXT)
         ctx->end_runtime_call();
@@ -14498,15 +14438,6 @@ namespace Legion {
       find_messenger(target)->send_message(rez, SEND_REMOTE_CONTEXT_RESPONSE,
                                            CONTEXT_VIRTUAL_CHANNEL, true/*flush*/, true/*response*/);
     }
-
-    //--------------------------------------------------------------------------
-    void Runtime::send_remote_context_release(AddressSpaceID target,
-                                              Serializer &rez)
-    //--------------------------------------------------------------------------
-    {
-      find_messenger(target)->send_message(rez, SEND_REMOTE_CONTEXT_RELEASE,
-                                     CONTEXT_VIRTUAL_CHANNEL, true/*flush*/);
-    }
     
     //--------------------------------------------------------------------------
     void Runtime::send_remote_context_free(AddressSpaceID target,
@@ -15551,17 +15482,6 @@ namespace Legion {
       UniqueID context_uid = context->get_context_uid();
       register_remote_context(context_uid, context, preconditions);
     }
-
-    //--------------------------------------------------------------------------
-    void Runtime::handle_remote_context_release(Deserializer &derez)
-    //--------------------------------------------------------------------------
-    {
-      DerezCheck z(derez);
-      UniqueID context_uid;
-      derez.deserialize(context_uid);
-      InnerContext *context = find_context(context_uid);
-      context->invalidate_region_tree_contexts();
-    }
     
     //--------------------------------------------------------------------------
     void Runtime::handle_remote_context_free(Deserializer &derez)
@@ -15985,16 +15905,6 @@ namespace Legion {
       profiler->process_results(p, args, arglen);
     }
     
-    //ksmurthy 2017 ------------------------------------------------------------
-    void Runtime::process_resilience_task(Processor p,
-                                         const void *args, size_t arglen)
-    //--------------------------------------------------------------------------
-    {
-#ifdef DEBUG_LEGION
-      assert(resilient != NULL);
-#endif
-      resilient->process_results(p, args, arglen);
-    }
     //--------------------------------------------------------------------------
     void Runtime::process_message_task(const void *args, size_t arglen)
     //--------------------------------------------------------------------------
@@ -17919,6 +17829,8 @@ namespace Legion {
         context = finder->second;
         remote_contexts.erase(finder);
       }
+      // Invalidate the region tree context
+      context->invalidate_region_tree_contexts();
       // Remove our reference and delete it if we're done with it
       if (context->remove_reference())
         delete context;
@@ -19950,9 +19862,6 @@ continue;					\
       CodeDescriptor shutdown_task(Runtime::shutdown_runtime);
       CodeDescriptor lg_task(Runtime::legion_runtime_task);
       CodeDescriptor rt_profiling_task(Runtime::profiling_runtime_task);
-      //ksmurthy 2017
-      CodeDescriptor rt_resilience_task(Runtime::resilience_runtime_task);
-      //ksmurthy
       CodeDescriptor map_profiling_task(Runtime::profiling_mapper_task);
       CodeDescriptor launch_top_level_task(Runtime::launch_top_level);
       CodeDescriptor mpi_interop_task(Runtime::init_mpi_interop);
@@ -19977,11 +19886,6 @@ continue;					\
         registered_events.insert(RtEvent(
                                          Processor::register_task_by_kind(kinds[idx], false/*global*/,
                                                                           LG_LEGION_PROFILING_ID, rt_profiling_task, no_requests)));
-        //ksmurthy 2017
-        registered_events.insert(RtEvent(
-                                         Processor::register_task_by_kind(kinds[idx], false/*global*/,
-                                                                          LG_LEGION_RESILIENCE_ID, rt_resilience_task, no_requests)));
-        //ksmurthy
         registered_events.insert(RtEvent(
                                          Processor::register_task_by_kind(kinds[idx], false/*global*/,
                                                                           LG_MAPPER_PROFILING_ID, map_profiling_task, no_requests)));
@@ -20007,10 +19911,6 @@ continue;					\
                       LG_TASK_ID);
         log_run.print("Legion runtime profiling task Realm ID %d",
                       LG_LEGION_PROFILING_ID);
-        //ksmurthy 2017
-        log_run.print("Legion runtime resilience task Realm ID %d",
-                      LG_LEGION_RESILIENCE_ID);
-        //ksmurthy
         log_run.print("Legion mapper profiling task has Realm ID %d",
                       LG_MAPPER_PROFILING_ID);
         log_run.print("Legion launch top-level task has Realm ID %d",
@@ -20558,9 +20458,8 @@ continue;					\
         case LG_TOP_FINISH_TASK_ID:
         {
           TopFinishArgs *fargs = (TopFinishArgs*)args;
-          // Do this before deleting remote contexts
-          fargs->ctx->invalidate_region_tree_contexts();
           fargs->ctx->invalidate_remote_contexts();
+          fargs->ctx->invalidate_region_tree_contexts();
           if (fargs->ctx->remove_reference())
             delete fargs->ctx;
           break;
@@ -20927,18 +20826,7 @@ continue;					\
       Runtime *rt = Runtime::get_runtime(p);
       rt->process_profiling_task(p, args, arglen);
     }
-     //ksmurthy 2017 ------------------------------------------------------------------------
-    /*static*/ void Runtime::resilience_runtime_task(
-                                                    const void *args, size_t arglen, 
-                                                    const void *userdata, size_t userlen,
-                                                    Processor p)
-    //--------------------------------------------------------------------------
-    {
-      Runtime *rt = Runtime::get_runtime(p);
-      rt->process_resilience_task(p, args, arglen);
-    }
     
-  
     //--------------------------------------------------------------------------
     /*static*/ void Runtime::profiling_mapper_task(
                                                    const void *args, size_t arglen, 

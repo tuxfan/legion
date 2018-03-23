@@ -979,6 +979,16 @@ namespace Legion {
                                                       proc, priority);
     }
 
+    //--------------------------------------------------------------------------
+    void PhysicalManager::harden_physical_instance(MapperID mapper_id,
+                                            Processor proc)
+    //--------------------------------------------------------------------------
+    {
+      //TODO: for now, this is just set to GC_NEVER_PRIORITY
+      memory_manager->set_garbage_collection_priority(this, mapper_id,
+                                                      proc, GC_NEVER_PRIORITY);
+    }
+
     /////////////////////////////////////////////////////////////
     // InstanceManager 
     /////////////////////////////////////////////////////////////

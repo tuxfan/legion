@@ -293,7 +293,6 @@ namespace Legion {
       // The function to call when commit the operation is
       // ready to commit
       virtual void trigger_commit(void);
-
       // Helper function for deferring complete operations
       // (only used in a limited set of operations and not
       // part of the default pipeline)
@@ -445,6 +444,10 @@ namespace Legion {
       // been verified (flows up edges)
       void notify_regions_verified(const std::set<unsigned> &regions,
                                    GenerationID gen);
+      //ksmurthy resilience version of notify_regions_verified
+      void notify_regions_verified(
+              const std::set<Legion::Internal::PhysicalManager *> &regions,
+              GenerationID gen);
     public:
       // Help for finding the contexts for an operation
       InnerContext* find_logical_context(unsigned index);
@@ -472,6 +475,13 @@ namespace Legion {
                                       std::set<RtEvent> &ready_events);
     public:
       Runtime *const runtime;
+      //ksmurthy 
+//        void complete_execution_callable_from_profiling_response(RtEvent wait_on = RtEvent::NO_RT_EVENT);
+        bool some_task_failed(GenerationID gen, bool restart);
+        void mark_instance_hardened(const MappingInstance &instance);
+        //void mark_dependence_edge_hardened(unsigned int);
+        //std::map<Operation *, std::set<unsigned>> hardened_edges;
+      //ksmurthy
     protected:
       Reservation op_lock;
       GenerationID gen;

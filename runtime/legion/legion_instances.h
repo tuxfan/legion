@@ -180,6 +180,7 @@ namespace Legion {
       bool entails(const LayoutConstraintSet &constraints) const;
       bool conflicts(LayoutConstraints *constraints) const;
       bool conflicts(const LayoutConstraintSet &constraints) const;
+
     public:
       inline PhysicalInstance get_instance(void) const
       {
@@ -193,6 +194,10 @@ namespace Legion {
       void perform_deletion(RtEvent deferred_event);
       void set_garbage_collection_priority(MapperID mapper_id, Processor p,
                                            GCPriority priority); 
+
+    public: //ksmurthy
+      void harden_physical_instance(MapperID mapper_id, Processor p); 
+
     public:
       static inline DistributedID encode_instance_did(DistributedID did);
       static inline DistributedID encode_reduction_fold_did(DistributedID did);

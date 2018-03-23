@@ -668,6 +668,8 @@ namespace Legion {
       // an event might be filtered out for some fields, so we can't rely
       // on it to detect when we have outstanding gc meta-tasks
       std::set<ApEvent> outstanding_gc_events;
+
+
     public: //ksmurthy 2018
       // Keep track of the current version numbers for each field
       // This will allow us to detect when physical instances are no

@@ -997,7 +997,16 @@ namespace Legion {
             {
               default_report_failed_instance_creation(task, it->first, 
                                               task.target_proc, target_memory);
-            }
+            } else { // ksmurthy
+              if(!strcmp(task.get_task_name(),"init_task")) {
+                //ok instances is a vector as needed for different fields
+                //we want all these instances to survive
+                //deep down in the below call, we set the physicalmanager->harden
+                //TODO: we should not allow harden in premap stage
+                //runtime->harden_physical_instances(ctx, output.premapped_instances[it->first]);
+              }
+            } //ksmurthy
+
             continue;
           }
         }
@@ -1064,7 +1073,16 @@ namespace Legion {
         {
           default_report_failed_instance_creation(task, it->first, 
                                           task.target_proc, target_memory);
-        }
+        } else { // ksmurthy
+          if(!strcmp(task.get_task_name(),"init_task")) {
+            //ok instances is a vector as needed for different fields
+            //we want all these instances to survive
+            //deep down in the below call, we set the physicalmanager->harden
+            //TODO: we should not allow harden in premap stage
+            //runtime->harden_physical_instances(ctx, output.premapped_instances[it->first]);
+          }
+        } //ksmurthy
+
       }
       // If we have any restricted regions, put the task 
       // back on the origin processor
@@ -1378,7 +1396,16 @@ namespace Legion {
               {
                 default_report_failed_instance_creation(task, *it, 
                                             task.target_proc, target_memory);
-              }
+              } else { // ksmurthy
+                if(!strcmp(task.get_task_name(),"init_task")) {
+                  //ok instances is a vector as needed for different fields
+                  //we want all these instances to survive
+                  //deep down in the below call, we set the physicalmanager->harden
+                  //TODO: we should not allow harden for INNER TASKS, MIKE TODO
+                  //runtime->harden_physical_instances(ctx, output.chosen_instances[*it]);
+                }
+              } //ksmurthy
+
             }
           }
           return;
@@ -1436,7 +1463,16 @@ namespace Legion {
                 {
                   default_report_failed_instance_creation(task, idx, 
                                               task.target_proc, target_memory);
-                }
+                } else { // ksmurthy
+                  if(!strcmp(task.get_task_name(),"init_task")) {
+                    //ok instances is a vector as needed for different fields
+                    //we want all these instances to survive
+                    //deep down in the below call, we set the physicalmanager->harden
+                    //TODO: we should not allow harden in REDUCTIONS YET TODO
+                    //runtime->harden_physical_instances(ctx, output.chosen_instances[idx]);
+                  }
+                } //ksmurthy
+
               }
             }
           }
@@ -1495,7 +1531,15 @@ namespace Legion {
           {
             default_report_failed_instance_creation(task, idx, 
                                         task.target_proc, target_memory);
-          }
+          } else { // ksmurthy
+              if(!strcmp(task.get_task_name(),"init_task")) {
+                //ok instances is a vector as needed for different fields
+                //we want all these instances to survive
+                //deep down in the below call, we set the physicalmanager->harden
+                //TODO: we should not allow harden in REDUCTIONS YET TODO
+                //runtime->harden_physical_instances(ctx, output.chosen_instances[idx]);
+              }
+          } //ksmurthy
           continue;
         }
 	// Did the application request a virtual mapping for this requirement?
@@ -1541,7 +1585,28 @@ namespace Legion {
         {
           default_report_failed_instance_creation(task, idx,
                                       task.target_proc, target_memory);
-        }
+        } else { // ksmurthy
+#if 0
+            if(!strcmp(task.get_task_name(),"init_field2")) {
+              //ok instances is a vector as needed for different fields
+              //we want all these instances to survive
+              //deep down in the below call, we set the physicalmanager->harden
+              for(std::vector<PhysicalInstance>::const_iterator 
+                  it = output.chosen_instances[idx].begin(),
+                  ie = output.chosen_instances[idx].end(); it != ie; ++it)
+                runtime->harden_physical_instances(ctx, idx, *it);
+            }
+            if(!strcmp(task.get_task_name(),"daxpy")) {
+              //ok instances is a vector as needed for different fields
+              //we want all these instances to survive
+              //deep down in the below call, we set the physicalmanager->harden
+              for(std::vector<PhysicalInstance>::const_iterator 
+                  it = output.chosen_instances[idx].begin(),
+                  ie = output.chosen_instances[idx].end(); it != ie; ++it)
+                runtime->harden_physical_instances(ctx, idx, *it);
+            }
+#endif
+        } //ksmurthy
       }
       // Now that we are done, let's cache the result so we can use it later
       std::list<CachedTaskMapping> &map_list = cached_task_mappings[cache_key];
@@ -1859,8 +1924,9 @@ namespace Legion {
           FieldConstraint(needed_fields, false/*contig*/, false/*inorder*/));
       if (!default_make_instance(ctx, target_memory, creation_constraints, 
                 instances.back(), TASK_MAPPING, force_new_instances, 
-                true/*meets*/,  req))
+                true/*meets*/,  req)) {
         return false;
+      }
       return true;
     }
 
@@ -2354,10 +2420,18 @@ namespace Legion {
                                          const TaskProfilingInfo& input)
     //--------------------------------------------------------------------------
     {
+      //get the exec time for child task
+
+
+      //need_preserve(task->regions[idx]) for some idx. ksmurthy feb 28
+      //ask MIKE TODO (1) about the slide 18 from 2015 bootcamp about manipulating dependence graphs.
+      //TODO (2) ask whether we have this exposed, child->parent edge to get to the accumulated exec time on the parent
+
       log_mapper.spew("Default report_profiling for Task in %s", 
                       get_mapper_name());
       // We don't ask for any task profiling right now so assert if we see this
-      assert(false);
+      //ksmurthy for resilience, every task wants the pmid_op_status, so assert(true)
+      assert(true); //assert(false);
     }
 
     //--------------------------------------------------------------------------

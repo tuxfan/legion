@@ -1,4 +1,3 @@
-//sri
 /* Copyright 2017 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -242,10 +241,7 @@ namespace Legion {
       LG_LAUNCH_TOP_LEVEL_ID  = Realm::Processor::TASK_ID_FIRST_AVAILABLE+3,
       LG_MPI_INTEROP_ID       = Realm::Processor::TASK_ID_FIRST_AVAILABLE+4,
       LG_MPI_SYNC_ID          = Realm::Processor::TASK_ID_FIRST_AVAILABLE+5,
-			//ksmurthy: 2017 enabling resilience 
-      LG_LEGION_RESILIENCE_ID  = Realm::Processor::TASK_ID_FIRST_AVAILABLE+6,
-			//ksmurthy
-      TASK_ID_AVAILABLE       = Realm::Processor::TASK_ID_FIRST_AVAILABLE+7,
+      TASK_ID_AVAILABLE       = Realm::Processor::TASK_ID_FIRST_AVAILABLE+6,
     };
 
     // Enumeration of Legion runtime tasks
@@ -651,7 +647,6 @@ namespace Legion {
       SEND_LOGICAL_PARTITION_SEMANTIC_INFO,
       SEND_REMOTE_CONTEXT_REQUEST,
       SEND_REMOTE_CONTEXT_RESPONSE,
-      SEND_REMOTE_CONTEXT_RELEASE,
       SEND_REMOTE_CONTEXT_FREE,
       SEND_REMOTE_CONTEXT_PHYSICAL_REQUEST,
       SEND_REMOTE_CONTEXT_PHYSICAL_RESPONSE,
@@ -781,7 +776,6 @@ namespace Legion {
         "Send Logical Partition Semantic Info",                       \
         "Send Remote Context Request",                                \
         "Send Remote Context Response",                               \
-        "Send Remote Context Release",                                \
         "Send Remote Context Free",                                   \
         "Send Remote Context Physical Request",                       \
         "Send Remote Context Physical Response",                      \

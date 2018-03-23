@@ -6022,19 +6022,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       DETAILED_PROFILER(runtime, INVALIDATE_REGION_TREE_CONTEXTS_CALL);
-      // Send messages to invalidate any remote contexts
-      if (!remote_instances.empty())
-      {
-        UniqueID local_uid = get_unique_id();
-        Serializer rez;
-        {
-          RezCheck z(rez);
-          rez.serialize(local_uid);
-        }
-        for (std::map<AddressSpaceID,RemoteContext*>::const_iterator it = 
-              remote_instances.begin(); it != remote_instances.end(); it++)
-          runtime->send_remote_context_release(it->first, rez);
-      }
       // Invalidate all our region contexts
       for (unsigned idx = 0; idx < regions.size(); idx++)
       {
@@ -6073,6 +6060,7 @@ namespace Legion {
       // Clean up our instance top views
       if (!instance_top_views.empty())
       {
+        //ksmurthy this is where we 
         for (std::map<PhysicalManager*,InstanceView*>::const_iterator it = 
               instance_top_views.begin(); it != instance_top_views.end(); it++)
         {
@@ -7091,7 +7079,22 @@ namespace Legion {
             runtime->forest->remove_local_fields(it->first, to_remove);
         }
         local_fields.clear();
-      } 
+      }
+      // Invalidate our context if necessary before deactivating
+      // the wrapper as it will release the context
+      if (!top_level_context)
+      {
+#ifdef DEBUG_LEGION
+        assert(regions.size() == virtual_mapped.size());
+#endif
+        // Deactivate any region trees that we didn't virtually map
+        for (unsigned idx = 0; idx < regions.size(); idx++)
+          if (!virtual_mapped[idx])
+            runtime->forest->invalidate_versions(tree_context, 
+                                                 regions[idx].region);
+      }
+      else
+        runtime->forest->invalidate_all_versions(tree_context);
     }
 
     //--------------------------------------------------------------------------
@@ -7337,25 +7340,6 @@ namespace Legion {
 #endif
         return physical_contexts[index]; 
       }
-    }
-
-    //--------------------------------------------------------------------------
-    void RemoteContext::invalidate_region_tree_contexts(void)
-    //--------------------------------------------------------------------------
-    {
-      if (!top_level_context)
-      {
-#ifdef DEBUG_LEGION
-        assert(regions.size() == virtual_mapped.size());
-#endif
-        // Deactivate any region trees that we didn't virtually map
-        for (unsigned idx = 0; idx < regions.size(); idx++)
-          if (!virtual_mapped[idx])
-            runtime->forest->invalidate_versions(tree_context, 
-                                                 regions[idx].region);
-      }
-      else
-        runtime->forest->invalidate_all_versions(tree_context);
     }
 
     //--------------------------------------------------------------------------

@@ -259,6 +259,12 @@ namespace Legion {
       void invoke_handle_task_result(Mapper::MapperTaskResult *result,
                                      bool first_invocation = true,
                                      MappingCallInfo *info = NULL);
+
+    //ksmurthy
+    void harden_physical_instances(MappingCallInfo *ctx, unsigned region_idx,  
+                          const MappingInstance &instance);
+    //ksmurthy
+
     public:
       virtual bool is_locked(MappingCallInfo *info) = 0;
       virtual void lock_mapper(MappingCallInfo *info, bool read_only) = 0;

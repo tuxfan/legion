@@ -336,18 +336,22 @@ namespace Realm {
 						      const void *reason_data,
 						      size_t reason_size)
     {
+      //ksmurthy: making sure that we go through the applexception route
+	    throw ApplicationException(reason, reason_data, reason_size);
+#if 0
 #ifdef REALM_USE_EXCEPTIONS
       if(Thread::self()->exceptions_permitted()) {
-	throw ApplicationException(reason, reason_data, reason_size);
+	      throw ApplicationException(reason, reason_data, reason_size);
       } else
 #endif
       {
-	Processor p = get_executing_processor();
-	assert(p.exists());
-	log_poison.fatal() << "FATAL: no handler for reported processor fault: proc=" << p
-			   << " reason=" << reason;
-	assert(0);
+      	Processor p = get_executing_processor();
+      	assert(p.exists());
+      	log_poison.fatal() << "FATAL: no handler for reported processor fault: proc=" << p
+      			   << " reason=" << reason;
+      	assert(0);
       }
+#endif
     }
 
     // reports a problem with a processor in general (this is primarily for fault injection)
@@ -511,13 +515,15 @@ namespace Realm {
 
       bool poisoned = false;
       if (start_event.has_triggered_faultaware(poisoned)) {
-	if(poisoned) {
-	  log_poison.info() << "cancelling poisoned task - task=" << task << " after=" << task->get_finish_event();
-	  task->handle_poisoned_precondition(start_event);
-	} else
-	  enqueue_task(task);
-      } else
-	EventImpl::add_waiter(start_event, new DeferredTaskSpawn(this, task));
+	      if(poisoned) {
+	        log_poison.info() << "cancelling poisoned task - task=" << task << " after=" << task->get_finish_event();
+	        task->handle_poisoned_precondition(start_event);
+  	    } else {
+	        enqueue_task(task);
+        }
+      } else { 
+        EventImpl::add_waiter(start_event, new DeferredTaskSpawn(this, task));
+      }
     }
 
 
@@ -529,13 +535,12 @@ namespace Realm {
     bool DeferredTaskSpawn::event_triggered(Event e, bool poisoned)
     {
       if(poisoned) {
-	// cancel the task - this has to work
-	log_poison.info() << "cancelling poisoned task - task=" << task << " after=" << task->get_finish_event();
-	task->handle_poisoned_precondition(e);
-	return true;
+      	// cancel the task - this has to work
+      	log_poison.info() << "cancelling poisoned task - task=" << task << " after=" << task->get_finish_event();
+      	task->handle_poisoned_precondition(e);
+      } else {
+        proc->enqueue_task(task);
       }
-
-      proc->enqueue_task(task);
       return true;
     }
 
@@ -841,10 +846,11 @@ namespace Realm {
     bool poisoned = false;
     if (start_event.has_triggered_faultaware(poisoned)) {
       if(poisoned) {
-	log_poison.info() << "cancelling poisoned task - task=" << task << " after=" << task->get_finish_event();
-	task->handle_poisoned_precondition(start_event);
-      } else
-	enqueue_task(task);
+	      log_poison.info() << "cancelling poisoned task - task=" << task << " after=" << task->get_finish_event();
+	      task->handle_poisoned_precondition(start_event);
+      } else {
+	    enqueue_task(task);
+      }
     } else {
       EventImpl::add_waiter(start_event, new DeferredTaskSpawn(this, task));
     }

@@ -609,6 +609,15 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    void MapperRuntime::harden_physical_instances(MapperContext ctx,
+                    unsigned region_idx, const PhysicalInstance &instance) const
+    //--------------------------------------------------------------------------
+    {
+      //ksmurthy
+      ctx->manager->harden_physical_instances(ctx, region_idx, instance);
+    }
+
+    //--------------------------------------------------------------------------
     void MapperRuntime::set_garbage_collection_priority(MapperContext ctx,
                     const PhysicalInstance &instance, GCPriority priority) const
     //--------------------------------------------------------------------------

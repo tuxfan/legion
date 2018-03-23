@@ -34,7 +34,7 @@ namespace Realm {
   // through the wonders of templates, users should never need to work with 
   //  these IDs directly
   enum ProfilingMeasurementID {
-    PMID_OP_STATUS,    // completion status of operation
+    PMID_OP_STATUS,    // completion status of operation ksmurthy: why cannot I use this to track resilience ?? 
     PMID_OP_BACKTRACE,  // backtrace of a failed operation
     PMID_OP_TIMELINE,  // when task was ready, started, completed
     PMID_OP_EVENT_WAITS,  // intervals when operation is waiting on events

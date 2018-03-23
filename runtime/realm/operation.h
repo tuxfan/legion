@@ -18,7 +18,6 @@
 
 #include "realm/profiling.h"
 #include "realm/event_impl.h"
-#include "realm/resiliency.h"
 
 #include "activemsg.h"
 
@@ -114,9 +113,6 @@ namespace Realm {
     ProfilingRequestSet requests; 
     ProfilingMeasurementCollection measurements;
 
-		//ksmurthy
-		ResiliencyRequestTechnique resilient;
-    
     std::set<AsyncWorkItem *> all_work_items;
     int pending_work_items;  // uses atomics so we don't have to take lock to check
     int failed_work_items;

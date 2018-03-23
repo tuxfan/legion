@@ -38,7 +38,6 @@ namespace Realm {
     measurements.import_requests(requests); 
     timeline.record_create_time();
     wants_event_waits = measurements.wants_measurement<ProfilingMeasurements::OperationEventWaits>();
-    resilient.add_resiliency(RESILIENTID_RUN_UNTIL_COMPLETION);
   }
 
   inline void Operation::add_reference(void)

@@ -208,6 +208,9 @@ namespace Legion {
     public:
       virtual void trigger_dependence_analysis(void) = 0;
       virtual void trigger_complete(void);
+      //ksmurthy
+      virtual void trigger_complete_callable_from_profiling_response(void); 
+
       virtual void trigger_commit(void);
     public:
       virtual bool query_speculate(bool &value, bool &mapping_only);
@@ -448,10 +451,6 @@ namespace Legion {
     public:
       // Override these methods from operation class
       virtual void trigger_mapping(void); 
-			//ksmurthy begin
-			virtual void quash_operation(GenerationID, bool);
-			virtual bool trigger_recover(void);
-			//ksmurthy end
     protected:
       virtual void trigger_task_complete(void) = 0;
       virtual void trigger_task_commit(void) = 0;
@@ -467,6 +466,13 @@ namespace Legion {
                                  size_t res_size, bool owned) = 0; 
       virtual void handle_post_mapped(RtEvent pre = RtEvent::NO_RT_EVENT) = 0;
       virtual void handle_misspeculation(void) = 0;
+//ksmurthy
+      virtual void quash_operation(GenerationID gen, bool restart); 
+      virtual bool some_task_failed(GenerationID gen, bool restart);
+      virtual bool trigger_recover(void);
+      virtual void restart_task_resilience();
+      virtual void setup_profiling_opstatus_monitoring_for_resilient(Realm::ProfilingRequestSet &);
+//ksmurthy
     protected:
       // Boolean for each region saying if it is virtual mapped
       std::vector<bool> virtual_mapped;

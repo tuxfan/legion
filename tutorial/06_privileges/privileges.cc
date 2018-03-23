@@ -42,6 +42,7 @@ void top_level_task(const Task *task,
                     Context ctx, Runtime *runtime)
 {
   int num_elements = 1024; 
+  int iterations = 10;
   // See if we have any command line arguments to parse
   {
     const InputArgs &command_args = Runtime::get_input_args();
@@ -49,9 +50,11 @@ void top_level_task(const Task *task,
     {
       if (!strcmp(command_args.argv[i],"-n"))
         num_elements = atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-i"))
+        iterations = atoi(command_args.argv[++i]);
     }
   }
-  printf("Running daxpy for %d elements...\n", num_elements);
+  printf("Running daxpy for %d elements %d iterations...\n", num_elements, iterations);
 
   // Create our logical regions using the same schema that
   // we used in the previous example.
@@ -74,6 +77,7 @@ void top_level_task(const Task *task,
   LogicalRegion input_lr = runtime->create_logical_region(ctx, is, input_fs);
   LogicalRegion output_lr = runtime->create_logical_region(ctx, is, output_fs);
 
+while(iterations-- > 0) {
   // Instead of using an inline mapping to initialize the fields for
   // daxpy, in this case we will launch two separate tasks for initializing
   // each of the fields in parallel.  To launch the sub-tasks for performing
@@ -128,6 +132,7 @@ void top_level_task(const Task *task,
 
   runtime->execute_task(ctx, init_launcher);
 
+#if 1
   // Now we launch the task to perform the daxpy computation.  We pass
   // in the alpha value as an argument.  All the rest of the arguments
   // are RegionRequirements specifying that we are reading the two
@@ -135,8 +140,8 @@ void top_level_task(const Task *task,
   // region.  Legion will automatically compute data dependences
   // from the two init_field_tasks and will ensure that the program
   // order execution is obeyed.
-  const double alpha = drand48();
-  TaskLauncher daxpy_launcher(DAXPY_TASK_ID, TaskArgument(&alpha, sizeof(alpha)));
+  //const double alpha = drand48();
+  TaskLauncher daxpy_launcher(DAXPY_TASK_ID, TaskArgument(&iterations, sizeof(iterations)));
   daxpy_launcher.add_region_requirement(
       RegionRequirement(input_lr, READ_ONLY, EXCLUSIVE, input_lr));
   daxpy_launcher.add_field(0/*idx*/, FID_X);
@@ -147,6 +152,8 @@ void top_level_task(const Task *task,
 
   runtime->execute_task(ctx, daxpy_launcher);
 
+#endif
+#if 1
   // Finally we launch a task to perform the check on the output.  Note
   // that Legion will compute a data dependence on the first RegionRequirement
   // with the two init_field_tasks, but not on daxpy task since they 
@@ -154,7 +161,7 @@ void top_level_task(const Task *task,
   // Legion will compute a data dependence on the second region requirement
   // as the daxpy task was writing the 'Z' field on output_lr and this task
   // is reading the 'Z' field of the output_lr region.
-  TaskLauncher check_launcher(CHECK_TASK_ID, TaskArgument(&alpha, sizeof(alpha)));
+  TaskLauncher check_launcher(CHECK_TASK_ID, TaskArgument(&iterations, sizeof(iterations)));
   check_launcher.add_region_requirement(
       RegionRequirement(input_lr, READ_ONLY, EXCLUSIVE, input_lr));
   check_launcher.add_field(0/*idx*/, FID_X);
@@ -164,6 +171,10 @@ void top_level_task(const Task *task,
   check_launcher.add_field(1/*idx*/, FID_Z);
 
   runtime->execute_task(ctx, check_launcher);
+#endif
+}//end of iterations
+
+#if 0
 
   // Notice that we never once blocked waiting on the result of any sub-task
   // in the execution of the top-level task.  We don't even block before
@@ -181,6 +192,7 @@ void top_level_task(const Task *task,
   runtime->destroy_field_space(ctx, input_fs);
   runtime->destroy_field_space(ctx, output_fs);
   runtime->destroy_index_space(ctx, is);
+#endif
 }
 
 // Note that tasks get a physical region for every region requirement
@@ -228,8 +240,11 @@ void daxpy_task(const Task *task,
 {
   assert(regions.size() == 2);
   assert(task->regions.size() == 2);
-  assert(task->arglen == sizeof(double));
-  const double alpha = *((const double*)task->args);
+  assert(task->arglen == sizeof(int));
+  const double alpha = 0.08;
+  const int cur_iter = *((const int*) ((task->args)));
+  //const double alpha = *((const double*) (&(task->args[0])));
+  //const int itr = *((const int*) (&(task->args[1])));
 
   RegionAccessor<AccessorType::Generic, double> acc_x = 
     regions[0].get_field_accessor(FID_X).typeify<double>();
@@ -237,7 +252,9 @@ void daxpy_task(const Task *task,
     regions[0].get_field_accessor(FID_Y).typeify<double>();
   RegionAccessor<AccessorType::Generic, double> acc_z = 
     regions[1].get_field_accessor(FID_Z).typeify<double>();
-  printf("Running daxpy computation with alpha %.8g...\n", alpha);
+  printf("Running daxpy computation with alpha %.8g in iteration:%d...\n", alpha, cur_iter);
+  //if((1+((int)(drand48()*10)))%2 == 0)
+  //  throw std::exception();
   Domain dom = runtime->get_index_space_domain(ctx, 
       task->regions[0].region.get_index_space());
   Rect<1> rect = dom.get_rect<1>();
@@ -249,24 +266,32 @@ void daxpy_task(const Task *task,
   }
 }
 
+
 void check_task(const Task *task,
                 const std::vector<PhysicalRegion> &regions,
                 Context ctx, Runtime *runtime)
 {
+//printf("\nchecking an iteration\n");
   assert(regions.size() == 2);
   assert(task->regions.size() == 2);
-  assert(task->arglen == sizeof(double));
-  const double alpha = *((const double*)task->args);
+  assert(task->arglen == sizeof(int));
+  const double alpha = 0.08;
+  const int cur_iter = *((const int*) ((task->args)));
+  //const double alpha = *((const double*) ((task->args)));
+  //const double alpha = *((const double*) (&(task->args[0])));
+  //const int itr = *((const int*) (&(task->args[1])));
+
   RegionAccessor<AccessorType::Generic, double> acc_x = 
     regions[0].get_field_accessor(FID_X).typeify<double>();
   RegionAccessor<AccessorType::Generic, double> acc_y = 
     regions[0].get_field_accessor(FID_Y).typeify<double>();
   RegionAccessor<AccessorType::Generic, double> acc_z = 
     regions[1].get_field_accessor(FID_Z).typeify<double>();
-  printf("Checking results...");
+  printf("Running check computation with alpha %.8g. in iteration:%d..\n", alpha, cur_iter);
   Domain dom = runtime->get_index_space_domain(ctx, 
       task->regions[0].region.get_index_space());
   Rect<1> rect = dom.get_rect<1>();
+ 
   bool all_passed = true;
   for (GenericPointInRectIterator<1> pir(rect); pir; pir++)
   {
@@ -279,11 +304,13 @@ void check_task(const Task *task,
     if (expected != received)
       all_passed = false;
   }
-  if (all_passed)
-    printf("SUCCESS!\n");
-  else
+  if (!all_passed)
     printf("FAILURE!\n");
-}
+
+} 
+
+
+
 
 int main(int argc, char **argv)
 {
@@ -301,17 +328,20 @@ int main(int argc, char **argv)
     Runtime::preregister_task_variant<init_field_task>(registrar, "init_field");
   }
 
+#if 1
   {
     TaskVariantRegistrar registrar(DAXPY_TASK_ID, "daxpy");
     registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
     Runtime::preregister_task_variant<daxpy_task>(registrar, "daxpy");
   }
-
+#endif
+#if 1
   {
     TaskVariantRegistrar registrar(CHECK_TASK_ID, "check");
     registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
     Runtime::preregister_task_variant<check_task>(registrar, "check");
   }
+#endif
 
   return Runtime::start(argc, argv);
 }
