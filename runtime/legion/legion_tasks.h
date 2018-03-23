@@ -208,9 +208,6 @@ namespace Legion {
     public:
       virtual void trigger_dependence_analysis(void) = 0;
       virtual void trigger_complete(void);
-      //ksmurthy
-      virtual void trigger_complete_callable_from_profiling_response(void); 
-
       virtual void trigger_commit(void);
     public:
       virtual bool query_speculate(bool &value, bool &mapping_only);

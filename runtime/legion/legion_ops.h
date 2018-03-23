@@ -476,11 +476,13 @@ namespace Legion {
     public:
       Runtime *const runtime;
       //ksmurthy 
-//        void complete_execution_callable_from_profiling_response(RtEvent wait_on = RtEvent::NO_RT_EVENT);
-        bool some_task_failed(GenerationID gen, bool restart);
-        void mark_instance_hardened(const MappingInstance &instance);
-        //void mark_dependence_edge_hardened(unsigned int);
-        //std::map<Operation *, std::set<unsigned>> hardened_edges;
+      bool profiling_response_analyzed_for_resilience;
+      void complete_operation_callable_profiling_response
+                     (RtEvent wait_on = RtEvent::NO_RT_EVENT);
+      bool some_task_failed(GenerationID gen, bool restart);
+      void mark_instance_hardened(const MappingInstance &instance);
+      //void mark_dependence_edge_hardened(unsigned int);
+      //std::map<Operation *, std::set<unsigned>> hardened_edges;
       //ksmurthy
     protected:
       Reservation op_lock;

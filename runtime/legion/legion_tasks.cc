@@ -1035,20 +1035,7 @@ namespace Legion {
     void TaskOp::trigger_complete(void) 
     //--------------------------------------------------------------------------
     {
-      bool check_for_resilience_capture = false;
-      check_for_resilience_capture = 
-        (this->get_task_kind() == Legion::Internal::TaskOp::INDIVIDUAL_TASK_KIND) &&
-        (dynamic_cast<SingleTask *>(this) != NULL) &&
-            (strcmp(this->get_task_name(),"top_level") != 0); 
-      if(check_for_resilience_capture)
       {
-        //all singleTasks should have profilingrequest PMID_OP_STATUS
-        //ksmurthy      
-        //we are not going to do anything for now, all 
-        //the else-work will be done inside the profiling response 
-         
-        
-      } else {
         bool task_complete = false;
         {
           AutoLock o_lock(op_lock);
@@ -1064,27 +1051,6 @@ namespace Legion {
           trigger_task_complete();
       }
     }
-
-    //ksmurthy------------------------------------------------------------------
-    void TaskOp::trigger_complete_callable_from_profiling_response(void) 
-    //--------------------------------------------------------------------------
-    {
-        //this is the body of the TaskOp::trigger_complete()
-        bool task_complete = false;
-        {
-          AutoLock o_lock(op_lock);
-#ifdef DEBUG_LEGION
-          assert(!complete_received);
-          assert(!commit_received);
-#endif
-          complete_received = true;
-          // If all our children are also complete then we are done
-          task_complete = children_complete;
-        }
-        if (task_complete)
-          trigger_task_complete();
-    } 
-
 
     //--------------------------------------------------------------------------
     void TaskOp::trigger_commit(void)
@@ -4276,16 +4242,54 @@ namespace Legion {
       //launch_task(); relaunching task
       //not worrying about virtual mapping
       //not worrying about wait_on events 
-      //
 
-      VariantImpl *variant = runtime->find_variant_impl(task_id, selected_variant);
+      VariantImpl *variant =runtime->find_variant_impl(task_id, selected_variant);
 
       //STEP 2 equivalent setting up the task's context
       //TODO do we have to handle the above case
       {
         //TODO assert(variant->is_leaf() && !has_virtual_instances()); 
-        std::set<ApEvent> wait_on_events; //TODO: confirm that restart has not wait
-        execution_context = new LeafContext(runtime, this);
+        std::set<ApEvent> wait_on_events; 
+        //TODO: confirm that restart does not have to wait
+        if(!variant->is_leaf()) {
+          //TODO: MIKE should I get a new unique Id, 
+          //is there an actual race here between completion, restart,
+          //and profiling_response
+
+          //should I close the previous context and open a new one
+          {
+            if ((execution_context != NULL) && execution_context->has_restrictions())
+              execution_context->release_restrictions();
+            if (!is_remote())
+            {
+              //if (!top_level_task && (execution_context != NULL))
+              //  execution_context->return_privilege_state(parent_ctx);
+              //EXPLICITLY NOT DOING THIS
+              //result.impl->complete_future();
+            }
+            else
+            {
+              //Serializer rez;
+              //pack_remote_complete(rez);
+              //runtime->send_individual_remote_complete(orig_proc,rez);
+            }
+            // Invalidate any state that we had if we didn't already
+            //if (execution_context != NULL)
+            //  execution_context->invalidate_region_tree_contexts();
+            assert(must_epoch == NULL); //NOT HANDLING NOW
+          }
+
+          this->unique_op_id = runtime->get_unique_operation_id();
+          InnerContext *inner_ctx = new InnerContext(runtime, this, 
+              variant->is_inner(), regions, parent_req_indexes, 
+              virtual_mapped, unique_op_id); 
+          if (mapper == NULL)
+            mapper = runtime->find_mapper(current_proc, map_id);
+          inner_ctx->configure_context(mapper);
+          execution_context = inner_ctx;
+        } else {
+          execution_context = new LeafContext(runtime, this);
+        }
         execution_context->add_reference();
         std::vector<ApUserEvent> unmap_events(regions.size());
         std::vector<RegionRequirement> clone_requirements(regions.size());
@@ -4345,9 +4349,10 @@ namespace Legion {
       assert(regions.size() == get_context()->get_physical_regions().size());
 
       if (!atomic_locks.empty()) {
-        for (std::map<Reservation,bool>::const_iterator it = atomic_locks.begin(); 
+        for (std::map<Reservation,bool>::const_iterator it =atomic_locks.begin(); 
 		        it != atomic_locks.end(); it++) {
-          start_condition = Runtime::acquire_ap_reservation(it->first, it->second, start_condition);
+          start_condition = Runtime::acquire_ap_reservation(
+                                it->first, it->second, start_condition);
         }
       }
       parent_ctx->increment_pending();
@@ -4356,7 +4361,7 @@ namespace Legion {
                            task_priority, profiling_requests);
       assert(task_launch_event != ApEvent::NO_AP_EVENT);
       if (!atomic_locks.empty()) {
-        for (std::map<Reservation,bool>::const_iterator it = atomic_locks.begin(); 
+        for (std::map<Reservation,bool>::const_iterator it =atomic_locks.begin(); 
 		          it != atomic_locks.end(); it++) {
           Runtime::release_reservation(it->first);
         }
@@ -4371,15 +4376,14 @@ namespace Legion {
           printf("\n%s about to restart\n",this->get_task_name());
           if(true) { 
             //the below call is a skeleton of launch_call, doing the bare min
-            //to launch a task
             restart_task_resilience();
          }
       } else {
 #define check_restart_parent
 #ifdef check_restart_parent
         //check whether we need to trigger recover on the parent
-        for(std::map<Operation*, GenerationID>::const_iterator it = incoming.begin();
-            it != incoming.end(); it++) {
+        for(std::map<Operation*, GenerationID>::const_iterator it = 
+            incoming.begin(); it != incoming.end(); it++) {
           Operation *pnt = it->first;
           if(pnt != NULL)
             it->first->some_task_failed(gen, true); 
@@ -4411,25 +4415,33 @@ namespace Legion {
            PhysicalManager *mgr = all_physical_instances[idx][0].get_manager();
            FieldMask msk = all_physical_instances[idx][0].get_valid_fields();
            //AutoLock v_lock(view_lock);
-           std::map<PhysicalManager*, InstanceView*>::const_iterator finder =  get_context()->instance_top_views.find(mgr);
+           std::map<PhysicalManager*, InstanceView*>::const_iterator finder =  
+                                   get_context()->instance_top_views.find(mgr);
            InstanceView * iview = finder->second;
            //at this point iview if not null should be the materializedview
            if(iview != NULL) {
             if(iview->is_materialized_view()) { 
               MaterializedView *mview = static_cast<MaterializedView *>(iview);
               //ideally this should be in try catch TODO
-              LegionMap<VersionID,FieldMask,PHYSICAL_VERSION_ALLOC>::track_aligned &fields_curr = mview->current_versions;
+              LegionMap<VersionID,FieldMask,PHYSICAL_VERSION_ALLOC>::track_aligned                                         &fields_curr = mview->current_versions;
               //FieldVersions &fields_curr = mview->current_versions;
-              //mview->get_field_versions(mview->logical_node, false, msk, fields_curr);
+              //mview->get_field_versions(mview->logical_node, 
+              //                              false, msk, fields_curr);
               /*for(unsigned idx=0; idx<regions.size();idx++)*/ {
                 FieldVersions fields_cached;
-                VersionInfo &preInfo = const_cast<VersionInfo &>((*prefail_version_info)[idx]);
-                preInfo.get_field_versions(preInfo.get_upper_bound_node(), false, msk, fields_cached);
+                VersionInfo &preInfo = 
+                    const_cast<VersionInfo &>((*prefail_version_info)[idx]);
+                preInfo.get_field_versions(preInfo.get_upper_bound_node(), 
+                                                      false, msk, fields_cached);
                 for(unsigned idy=0; idy<fields_cached.size(); idy++) {
-                  LegionMap<VersionID, FieldMask>::aligned::const_iterator it_bck= fields_cached.begin();
-                  LegionMap<VersionID, FieldMask>::aligned::const_iterator it_cur= fields_curr.begin();
-                  for(;it_bck!=fields_cached.end() && it_cur!=fields_curr.end(); ++it_bck,++it_cur) {
-                    if(it_bck->second != it_cur->second && it_bck->first != it_cur->first) { 
+                  LegionMap<VersionID, FieldMask>::aligned::const_iterator 
+                                              it_bck= fields_cached.begin();
+                  LegionMap<VersionID, FieldMask>::aligned::const_iterator 
+                                              it_cur= fields_curr.begin();
+                  for(;it_bck!=fields_cached.end() && it_cur!=fields_curr.end(); 
+                                                              ++it_bck,++it_cur) {
+                    if(it_bck->second != it_cur->second && 
+                                                it_bck->first != it_cur->first) { 
                       recover_here = false; 
                     } else {
                       recover_here = true;
@@ -4441,16 +4453,18 @@ namespace Legion {
            }
         } else {
           #if 0
-            for(unsigned idy = 0; idy < all_physical_instances[idx].refs.multi->vector.size(); ++idy) {
-              InstanceRef *iref = all_physical_instances[idx].refs.multi->vector[idy];
-              version_info->get_field_versions(iview->logical_node, false, msk, needed_fields);
+            for(unsigned idy = 0; 
+            idy < all_physical_instances[idx].refs.multi->vector.size(); ++idy) {
+              InstanceRef *iref = 
+                  all_physical_instances[idx].refs.multi->vector[idy];
+              version_info->get_field_versions(iview->logical_node, 
+                                                      false, msk, needed_fields);
             }
           #endif
         } 
       }
       return recover_here;
     }
-
 //if one wants to get to permissions
 //regions[idx].privilege, regions[idx].prop (e.g., simultaneous)
 //runtime->forest->create_coherence_restriction(regions[idx], phsycail_instances[idx])
@@ -4465,28 +4479,43 @@ namespace Legion {
       //ksmurthy: let us examine the response to check for TerminatedEarly via
       //OperationStatus
       bool check_for_response = 
-         response.has_measurement<Realm::ProfilingMeasurements::OperationStatus>();
+        response.has_measurement<Realm::ProfilingMeasurements::OperationStatus>();
       if(check_for_response) {
-        Realm::ProfilingMeasurements::OperationStatus *opstatus = 
-                  response.get_measurement<Realm::ProfilingMeasurements::OperationStatus>();  
-        check_for_response = (opstatus!=NULL) && 
-                (opstatus->result == Realm::ProfilingMeasurements::OperationStatus::TERMINATED_EARLY);
+       Realm::ProfilingMeasurements::OperationStatus *opstatus = 
+       response.get_measurement<Realm::ProfilingMeasurements::OperationStatus>(); 
+       check_for_response = (opstatus!=NULL) && (opstatus->result == 
+                Realm::ProfilingMeasurements::OperationStatus::TERMINATED_EARLY);
       }
 
+      profiling_response_analyzed_for_resilience = true;
+
       if(check_for_response) {
-        some_task_failed(gen, false);
         quash_operation(gen, false);
+        some_task_failed(gen, false);
         int remaining = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
         if (remaining == 0)
           Runtime::trigger_event(profiling_reported);
         return; //EARLY BACKOUT FOR FAILED TASKS
       } else { 
-//        if(is_leaf()) {
-//          (static_cast<Legion::Internal::TaskOp *>(this))->trigger_complete_callable_from_profiling_response(); 
-//        } else if(strcmp(get_task_name(), "top_level")){
-//          (static_cast<Legion::Internal::Operation *>(this))->complete_execution_callable_from_profiling_response();
-//          //(static_cast<Legion::Internal::Operation *>(this))->trigger_complete();
-//        }
+#if 0
+        if(is_leaf()) {
+          (static_cast<Legion::Internal::TaskOp *>(this))->
+                        trigger_complete_callable_from_profiling_response(); 
+        } else if(strcmp(get_task_name(), "top_level")){
+          (static_cast<Legion::Internal::Operation *>(this))->
+                      complete_execution_callable_from_profiling_response();
+          //(static_cast<Legion::Internal::Operation *>(this))
+          //                              ->trigger_complete();
+        }
+#endif
+
+#if 0
+        if(mapped && executed && resolved && !completed) {
+        (static_cast<Legion::Internal::Operation *>(this))->
+            complete_operation_callable_profiling_response();
+        }
+#endif
+
       }
         
       if (mapper == NULL)
@@ -5690,8 +5719,11 @@ namespace Legion {
         need_commit = execution_context->attempt_children_commit();
       if (must_epoch != NULL)
         must_epoch->notify_subop_complete(this);
+
       // Mark that this operation is complete
+      //ksmurthy this is where I come to eventually whether taskop or not
       complete_operation();
+
       if (need_commit)
         trigger_children_committed();
     }
