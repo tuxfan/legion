@@ -18,8 +18,10 @@
 #include <cassert>
 #include <cstdlib>
 #include "legion.h"
+#include "default_mapper.h"
 #include <unistd.h>  // for sleep and usleep
 using namespace Legion;
+using namespace Legion::Mapping;
 using namespace LegionRuntime::Accessor;
 
 /*
@@ -64,6 +66,144 @@ struct ComputeArgs {
   int num_subregions_y;
   int diag_num;
 };
+
+class SliceMapper : public DefaultMapper {
+public:
+  SliceMapper(Machine machine, Runtime *rt, Processor local, int sl);
+public:
+  virtual void slice_task(const MapperContext ctx,
+                          const Task& task,
+                          const SliceTaskInput& input,
+                                SliceTaskOutput& output);
+private:
+  void compute_cached_procs(std::vector<Processor> all_procs);
+public:
+  unsigned slice_side_length;
+  bool cached;
+  std::vector<Processor> cached_procs;
+};
+
+// pass arguments through to Default
+SliceMapper::SliceMapper(Machine m, Runtime *rt, Processor p, int sl)
+  : DefaultMapper(rt->get_mapper_runtime(), m, p), slice_side_length(sl),
+  cached(false)
+{
+}
+
+void SliceMapper::slice_task(const MapperContext      ctx,
+                             const Task&              task,
+                             const SliceTaskInput&    input,
+                                   SliceTaskOutput&   output)
+{
+  if (slice_side_length == 0)
+  {
+    DefaultMapper::slice_task(ctx, task, input, output);
+    return;
+  }
+  // Iterate over all the points and send them all over the world
+  //output.slices.resize(input.domain.get_volume());
+  unsigned idx = 0;
+
+  Machine::ProcessorQuery all_procs(machine);
+  all_procs.only_kind(local_cpus[0].kind());
+  std::vector<Processor> procs(all_procs.begin(), all_procs.end());
+  //printf("there are %lu all procs size\n", procs.size());
+  if (!cached)
+  {
+    Machine::ProcessorQuery all_procs(machine);
+    all_procs.only_kind(local_cpus[0].kind());
+    std::vector<Processor> procs(all_procs.begin(), all_procs.end());
+    compute_cached_procs(procs);
+  }
+
+  switch (input.domain.get_dim())
+  {
+    case 1:
+      {
+        // This should only be called for the compute task.
+        Rect<1> rect = input.domain;
+        Point<1> lo = rect.lo;
+        Point<1> hi = rect.hi;
+        ComputeArgs compute_args = *((ComputeArgs *)task.args);
+        const int diag_num = compute_args.diag_num;
+        const int num_subregions_x = compute_args.num_subregions_x;
+
+        int starting_x;
+        if (diag_num < num_subregions_x)
+        {
+          starting_x = num_subregions_x - diag_num - 1 + lo[0];
+        }
+        else
+        {
+          starting_x = lo[0];
+        }
+
+        int cur_lo = 0;
+        int cur_hi =
+          ((starting_x/slice_side_length) + 1) * slice_side_length - 1 - starting_x;
+        cur_hi = std::min<int>(cur_hi, hi[0]);
+        int cur_proc_idx = starting_x / slice_side_length;
+        int num_slices = ((hi[0] - lo[0]) / slice_side_length) + 1;
+        for (int i = 0; i < num_slices; i++)
+        {
+          Point<1> slice_lo(cur_lo);
+          Point<1> slice_hi(cur_hi);
+          Rect<1> slice(slice_lo, slice_hi);
+          output.slices.push_back(TaskSlice(slice,
+              cached_procs[cur_proc_idx % cached_procs.size()],
+              false/*recurse*/, true/*stealable*/));
+          cur_lo = cur_hi + 1;
+          cur_hi = std::min<int>(cur_hi + slice_side_length, hi[0]);
+          cur_proc_idx++;
+        }
+        break;
+      }
+    case 2: // this should keep regions in sync between init and compute tasks
+      {
+        Rect<2> rect = input.domain;
+        Point<2> lo = rect.lo;
+        Point<2> hi = rect.hi;
+        assert((hi[0] - lo[0] + 1) % slice_side_length == 0);
+        assert((hi[1] - lo[1] + 1) % slice_side_length == 0);
+        unsigned x_iter = (hi[0] - lo[0]) / slice_side_length + 1;
+        unsigned y_iter = (hi[1] - lo[1]) / slice_side_length + 1;
+        output.slices.resize(x_iter * y_iter);
+        //printf("using the slice mapper, side length %u\n", slice_side_length);
+        for (unsigned x = 0; x < x_iter; ++x)
+        {
+          for (unsigned y = 0; y < y_iter; ++y)
+          {
+            Point<2> slice_lo(x * slice_side_length, y * slice_side_length);
+            Point<2> slice_hi((x+1) * slice_side_length - 1, (y+1) * slice_side_length - 1);
+            //printf("x = %u, y = %u, slice goes from (%lld, %lld) to (%lld, %lld), mapped to %lu\n",
+              //x, y, slice_lo[0], slice_lo[1], slice_hi[0], slice_hi[1], x % cached_procs.size());
+            Rect<2> slice(slice_lo, slice_hi);
+            output.slices[idx] = TaskSlice(slice, cached_procs[x % cached_procs.size()],
+              false/*recurse*/, true/*stealable*/);
+            idx++;
+          }
+        }
+        break;
+      }
+    default:
+      assert(false);
+  }
+}
+
+void SliceMapper::compute_cached_procs(std::vector<Processor> all_procs)
+{
+  std::vector<AddressSpace> address_spaces;
+  for (unsigned i = 0; i < all_procs.size(); ++i)
+  {
+    Processor p = all_procs[i];
+    if (std::find(address_spaces.begin(), address_spaces.end(), p.address_space()) == address_spaces.end())
+    {
+      address_spaces.push_back(p.address_space());
+      cached_procs.push_back(p);
+    }
+  }
+  cached = true;
+}
 
 class IDProjectionFunctor : public ProjectionFunctor
 {
@@ -678,11 +818,33 @@ void check_task(const Task *task,
     printf("FAILURE!\n");
 }
 
+void mapper_registration(Machine machine, Runtime *rt,
+                          const std::set<Processor> &local_procs)
+{
+  int slice_side_length = 1;
+  const InputArgs &command_args = Runtime::get_input_args();
+  for (int i = 1; i < command_args.argc; i++)
+  {
+      if (!strcmp(command_args.argv[i],"-ssl"))
+      {
+        slice_side_length = atoi(command_args.argv[++i]);
+      }
+  }
+  for (std::set<Processor>::const_iterator it = local_procs.begin();
+        it != local_procs.end(); it++)
+  {
+    rt->replace_default_mapper(
+        new SliceMapper(machine, rt, *it, slice_side_length), *it);
+  }
+}
+
 int main(int argc, char **argv)
 {
   Processor::Kind top_level_proc = Processor::LOC_PROC;
   for (int i = 1; i < argc; i++)
   {
+    if (!strcmp(argv[i],"-sm"))
+      Runtime::add_registration_callback(mapper_registration);
     if (!strcmp(argv[i],"-ll:io"))
     {
       int io_procs = atoi(argv[++i]);

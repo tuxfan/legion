@@ -977,7 +977,7 @@ void mapper_registration(Machine machine, Runtime *rt,
                           const std::set<Processor> &local_procs)
 {
   int slice_side_length = 1;
-  bool x_only = false;
+  bool y_only = false;
   const InputArgs &command_args = Runtime::get_input_args();
   for (int i = 1; i < command_args.argc; i++)
   {
@@ -990,7 +990,7 @@ void mapper_registration(Machine machine, Runtime *rt,
         int angle = atoi(command_args.argv[++i]);
         if (angle == 180)
         {
-          x_only = true;
+          y_only = true;
         }
       }
   }
@@ -998,7 +998,7 @@ void mapper_registration(Machine machine, Runtime *rt,
         it != local_procs.end(); it++)
   {
     rt->replace_default_mapper(
-        new SliceMapper(machine, rt, *it, slice_side_length, x_only), *it);
+        new SliceMapper(machine, rt, *it, slice_side_length, y_only), *it);
   }
 }
 
