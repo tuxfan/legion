@@ -4463,6 +4463,13 @@ namespace Legion {
       for (unsigned dnf_idx = 0; dnf_idx < dnf_constraints.size(); dnf_idx++)
       {
         std::vector<AffineConstraint> constraints = dnf_constraints[dnf_idx];
+        //for (unsigned test = 0; test < constraints.size(); test++)
+        //{
+          //printf("%s = %s\n",
+            //constraints[test].lhs->stringify().c_str(),
+            //constraints[test].rhs->stringify().c_str());
+        //}
+
         std::vector<RangeTree::Point<int, int> > left_points;
         std::vector<RangeTree::Point<int, int> > right_points;
 
@@ -4670,6 +4677,11 @@ namespace Legion {
                 }
                 else
                 {
+                //printf("Domain from %s to %s conflicts with domain from %s to %s\n",
+                    //stringify_domain_point(my_lo).c_str(),
+                    //stringify_domain_point(my_hi).c_str(),
+                    //stringify_domain_point(other_lo).c_str(),
+                    //stringify_domain_point(other_hi).c_str());
                   // conflict between two slices with the same order value
                   assert(0);
                 }
@@ -4725,6 +4737,11 @@ namespace Legion {
                 }
                 else
                 {
+                //printf("Domain from %s to %s conflicts with domain from %s to %s\n",
+                    //stringify_domain_point(my_lo).c_str(),
+                    //stringify_domain_point(my_hi).c_str(),
+                    //stringify_domain_point(other_lo).c_str(),
+                    //stringify_domain_point(other_hi).c_str());
                   // conflict between two slices with the same order value
                   assert(0);
                 }
