@@ -4667,13 +4667,11 @@ namespace Legion {
                   second_lo = other_lo;
                   second_hi = other_hi;
                 }
-#ifdef DEBUG_LEGION
                 else
                 {
                   // conflict between two slices with the same order value
                   assert(0);
                 }
-#endif
                 //printf("Domain from %s to %s depends on domain from %s to %s\n",
                     //stringify_domain_point(second_lo).c_str(),
                     //stringify_domain_point(second_hi).c_str(),
@@ -4724,13 +4722,11 @@ namespace Legion {
                   second_lo = other_lo;
                   second_hi = other_hi;
                 }
-#ifdef DEBUG_LEGION
                 else
                 {
                   // conflict between two slices with the same order value
                   assert(0);
                 }
-#endif
                 //printf("Domain from %s to %s depends on domain from %s to %s\n",
                     //stringify_domain_point(second_lo).c_str(),
                     //stringify_domain_point(second_hi).c_str(),
