@@ -1480,6 +1480,7 @@ namespace Legion {
       inline void set_independent_requirements(bool independent);
     public:
       inline void set_ordering_id(OrderingID oid);
+      inline void set_independent(bool independent);
     public:
       Processor::TaskFuncID              task_id;
       Domain                             launch_domain;
@@ -1497,6 +1498,7 @@ namespace Legion {
       MapperID                           map_id;
       MappingTagID                       tag;
       OrderingID                         oid;
+      bool                               is_indep;
     public:
       // If the predicate is set to anything other than
       // Predicate::TRUE_PRED, then the application must 

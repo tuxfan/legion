@@ -1698,6 +1698,7 @@ namespace Legion {
         launch_space(IndexSpace::NO_SPACE), global_arg(TaskArgument()), 
         argument_map(ArgumentMap()), predicate(Predicate::TRUE_PRED), 
         must_parallelism(false), map_id(0), tag(0), oid(0),
+        is_indep(false),
         static_dependences(NULL), enable_inlining(false),
         independent_requirements(false), silence_warnings(false)
     //--------------------------------------------------------------------------
@@ -1714,6 +1715,7 @@ namespace Legion {
       : task_id(tid), launch_domain(dom), launch_space(IndexSpace::NO_SPACE),
         global_arg(global), argument_map(map), predicate(pred), 
         must_parallelism(must), map_id(mid), tag(t), oid(0),
+        is_indep(false),
         static_dependences(NULL), enable_inlining(false),
         independent_requirements(false), silence_warnings(false)
     //--------------------------------------------------------------------------
@@ -1730,7 +1732,7 @@ namespace Legion {
                                      MappingTagID t /*=0*/)
       : task_id(tid), launch_domain(Domain::NO_DOMAIN), launch_space(space),
         global_arg(global), argument_map(map), predicate(pred), 
-        must_parallelism(must), map_id(mid), tag(t), oid(0),
+        must_parallelism(must), map_id(mid), tag(t), oid(0), is_indep(false),
         static_dependences(NULL), enable_inlining(false),
         independent_requirements(false), silence_warnings(false)
     //--------------------------------------------------------------------------

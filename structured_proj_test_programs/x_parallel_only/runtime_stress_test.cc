@@ -633,6 +633,11 @@ void top_level_task(const Task *task,
       compute_launcher.add_field(0, FID_VAL);
       compute_launcher.add_field(1, FID_VAL);
 
+      if (num_subregions_x == 1)
+      {
+        compute_launcher.set_independent(true);
+      }
+
       fm = runtime->execute_index_space(ctx, compute_launcher);
     }
     fm.wait_all_results();

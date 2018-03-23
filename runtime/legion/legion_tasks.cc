@@ -4369,6 +4369,7 @@ namespace Legion {
       }
       this->constraint_equations = rhs->constraint_equations;
       this->oid = rhs->oid;
+      this->is_indep = rhs->is_indep;
       this->restrict_infos = rhs->restrict_infos;
       this->projection_infos = rhs->projection_infos;
       this->predicate_false_future = rhs->predicate_false_future;
@@ -4419,7 +4420,7 @@ namespace Legion {
     void MultiTask::analyze_structured_slices(void)
     //--------------------------------------------------------------------------
     {
-      if (constraint_equations.size() == 0)
+      if (constraint_equations.size() == 0 || is_indep)
       {
         for(std::list<SliceTask*>::const_iterator it = slices.begin();
             it != slices.end(); ++it)
@@ -5067,6 +5068,7 @@ namespace Legion {
       rez.serialize(sliced);
       rez.serialize(redop);
       rez.serialize(oid);
+      rez.serialize(is_indep);
     }
 
     //--------------------------------------------------------------------------
@@ -5087,6 +5089,7 @@ namespace Legion {
         initialize_reduction_state();
       }
       derez.deserialize(oid);
+      derez.deserialize(is_indep);
     }
 
     //--------------------------------------------------------------------------
@@ -7504,6 +7507,7 @@ namespace Legion {
         index_domain = launcher.launch_domain;
       internal_space = launch_space;
       oid = launcher.oid;
+      is_indep = launcher.is_indep;
       need_intra_task_alias_analysis = !launcher.independent_requirements;
       initialize_base_task(ctx, track, launcher.static_dependences,
                            launcher.predicate, task_id);
@@ -7579,6 +7583,7 @@ namespace Legion {
         index_domain = launcher.launch_domain;
       internal_space = launch_space;
       oid = launcher.oid;
+      is_indep = launcher.is_indep;
       need_intra_task_alias_analysis = !launcher.independent_requirements;
       redop = redop_id;
       reduction_op = Runtime::get_reduction_op(redop);
@@ -8954,7 +8959,7 @@ namespace Legion {
                                                      partial_traversal);
       }
       // Now do the analysis for each of our points if no constraints
-      if (constraint_equations.size() == 0)
+      if (constraint_equations.size() == 0 || is_indep)
       {
         for (unsigned idx = 0; idx < points.size(); idx++)
           points[idx]->perform_versioning_analysis(ready_events);
@@ -9122,11 +9127,11 @@ namespace Legion {
       // Copy the points onto the stack to avoid them being
       // cleaned up while we are still iterating through the loop
       std::vector<PointTask*> local_points(points);
-      bool needs_versioning = constraint_equations.size() > 0;
+      bool needs_versioning = constraint_equations.size() > 0 && !is_indep;
 
       // put the equations in dnf form
       // find the intralaunch dependencies
-      if (constraint_equations.size() > 0)
+      if (constraint_equations.size() > 0 && !is_indep)
       {
         std::vector<std::vector<AffineConstraint> > dnf_constraints =
             process_constraint_equations();
@@ -9140,7 +9145,7 @@ namespace Legion {
             it != local_points.end(); it++)
       {
         PointTask *next_point = *it;
-        if (constraint_equations.size() > 0)
+        if (constraint_equations.size() > 0 && !is_indep)
         {
           next_point->map_preconditions.insert(slice_deps_mapped_event);
         }
@@ -9476,7 +9481,7 @@ namespace Legion {
       {
         points[point_idx] = clone_as_point_task(itr.p);
         // if is structured, add the point task map_applied event
-        if (constraint_equations.size() > 0)
+        if (constraint_equations.size() > 0 && !is_indep)
         {
           point_task_events[itr.p] =
             points[point_idx]->mapped_event;

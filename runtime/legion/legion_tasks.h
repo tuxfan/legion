@@ -668,6 +668,7 @@ namespace Legion {
     public: // Should also be protected
       std::vector<ProjectionAnalysisConstraint> constraint_equations;
       OrderingID oid;
+      bool is_indep;
     public: //twarsz Change this back to protected.
       // Map from point tasks to their runtime events used in structured launches
       std::map<DomainPoint, RtEvent> point_task_events;
