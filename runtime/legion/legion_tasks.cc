@@ -4346,7 +4346,7 @@ namespace Legion {
       setup_profiling_opstatus_monitoring_for_resilient(profiling_requests);
       ApEvent start_condition = ApEvent::NO_AP_EVENT;
 
-      assert(regions.size() == get_context()->get_physical_regions().size());
+      assert(regions.size() == execution_context->get_physical_regions().size());
 
       if (!atomic_locks.empty()) {
         for (std::map<Reservation,bool>::const_iterator it =atomic_locks.begin(); 
@@ -4372,7 +4372,7 @@ namespace Legion {
     bool SingleTask::some_task_failed(GenerationID gen, bool restart)
     //--------------------------------------------------------------------------
     {
-      if(trigger_recover()) {
+      if(trigger_recover() && strcmp(this->get_task_name(), "daxpy")) {
           printf("\n%s about to restart\n",this->get_task_name());
           if(true) { 
             //the below call is a skeleton of launch_call, doing the bare min
@@ -4384,9 +4384,12 @@ namespace Legion {
         //check whether we need to trigger recover on the parent
         for(std::map<Operation*, GenerationID>::const_iterator it = 
             incoming.begin(); it != incoming.end(); it++) {
-          Operation *pnt = it->first;
-          if(pnt != NULL)
-            it->first->some_task_failed(gen, true); 
+          if(it->first != NULL) {
+            SingleTask *parent = dynamic_cast<SingleTask *>(it->first);
+            assert(parent != NULL);//TODO handle other types
+            parent->some_task_failed(gen, true);
+
+          } 
         }
 #endif
       }          
@@ -4403,55 +4406,54 @@ namespace Legion {
       //lets diginto each of these physical instances
 
       for(unsigned idx = 0; idx < all_physical_instances.size(); ++idx)
-      if(all_physical_instances[idx].is_virtual_mapping())
-        assert(0); //ideally trigger_recover on each of the incoming edges
+        if(all_physical_instances[idx].is_virtual_mapping())
+          assert(0); //ideally trigger_recover on each of the incoming edges
 
       bool recover_here = true;
       const std::vector<VersionInfo>* prefail_version_info=get_version_infos();
       for(unsigned idx = 0; idx < all_physical_instances.size(); ++idx) {
-      
         if(all_physical_instances[idx].size() == 1) {
-           InstanceRef iref = all_physical_instances[idx][0];
-           PhysicalManager *mgr = all_physical_instances[idx][0].get_manager();
-           FieldMask msk = all_physical_instances[idx][0].get_valid_fields();
-           //AutoLock v_lock(view_lock);
-           std::map<PhysicalManager*, InstanceView*>::const_iterator finder =  
-                                   get_context()->instance_top_views.find(mgr);
-           InstanceView * iview = finder->second;
-           //at this point iview if not null should be the materializedview
-           if(iview != NULL) {
-            if(iview->is_materialized_view()) { 
+          InstanceRef iref = all_physical_instances[idx][0];
+          PhysicalManager *mgr = all_physical_instances[idx][0].get_manager();
+          FieldMask msk = all_physical_instances[idx][0].get_valid_fields();
+          //AutoLock v_lock(view_lock);
+          std::map<PhysicalManager*, InstanceView*>::const_iterator finder =  
+                                  get_context()->instance_top_views.find(mgr);
+          InstanceView * iview = finder->second;
+          if(iview == NULL) {
+            recover_here = false;
+          } else {
+            if(iview->is_materialized_view() != true) {
+              recover_here = false;
+            } else {
               MaterializedView *mview = static_cast<MaterializedView *>(iview);
               //ideally this should be in try catch TODO
               LegionMap<VersionID,FieldMask,PHYSICAL_VERSION_ALLOC>::track_aligned                                         &fields_curr = mview->current_versions;
               //FieldVersions &fields_curr = mview->current_versions;
               //mview->get_field_versions(mview->logical_node, 
               //                              false, msk, fields_curr);
-              /*for(unsigned idx=0; idx<regions.size();idx++)*/ {
-                FieldVersions fields_cached;
-                VersionInfo &preInfo = 
-                    const_cast<VersionInfo &>((*prefail_version_info)[idx]);
-                preInfo.get_field_versions(preInfo.get_upper_bound_node(), 
-                                                      false, msk, fields_cached);
-                for(unsigned idy=0; idy<fields_cached.size(); idy++) {
-                  LegionMap<VersionID, FieldMask>::aligned::const_iterator 
-                                              it_bck= fields_cached.begin();
-                  LegionMap<VersionID, FieldMask>::aligned::const_iterator 
-                                              it_cur= fields_curr.begin();
-                  for(;it_bck!=fields_cached.end() && it_cur!=fields_curr.end(); 
-                                                              ++it_bck,++it_cur) {
-                    if(it_bck->second != it_cur->second && 
-                                                it_bck->first != it_cur->first) { 
-                      recover_here = false; 
-                    } else {
-                      recover_here = true;
-                    } 
-                  }
+              FieldVersions fields_cached;
+              VersionInfo &preInfo = 
+                  const_cast<VersionInfo &>((*prefail_version_info)[idx]);
+              preInfo.get_field_versions(preInfo.get_upper_bound_node(), 
+                                                    false, msk, fields_cached);
+              for(unsigned idy=0; idy<fields_cached.size(); idy++) {
+                LegionMap<VersionID, FieldMask>::aligned::const_iterator 
+                                            it_bck= fields_cached.begin();
+                LegionMap<VersionID, FieldMask>::aligned::const_iterator 
+                                            it_cur= fields_curr.begin();
+                for(;it_bck!=fields_cached.end() && it_cur!=fields_curr.end(); 
+                                                            ++it_bck,++it_cur) {
+                  if(it_bck->second != it_cur->second && 
+                                              it_bck->first != it_cur->first) { 
+                    recover_here = false; 
+                  } 
                 }
               }
-             }
-           }
+            }
+          }
         } else {
+          recover_here = false;
           #if 0
             for(unsigned idy = 0; 
             idy < all_physical_instances[idx].refs.multi->vector.size(); ++idy) {

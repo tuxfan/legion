@@ -1368,10 +1368,12 @@ namespace Legion {
     {
 
       //at this time, TODO we are doing it for individual task, single types
-      Legion::Internal::TaskOp *tsk = dynamic_cast<Legion::Internal::TaskOp *>(this);
+      Legion::Internal::TaskOp *tsk = 
+            dynamic_cast<Legion::Internal::TaskOp *>(this);
       if(tsk == NULL) return;
       if(dynamic_cast<Legion::Internal::SingleTask *>(tsk) == NULL) return; 
-      Legion::Internal::SingleTask *stsk = dynamic_cast<Legion::Internal::SingleTask *>(tsk);
+      Legion::Internal::SingleTask *stsk = 
+            dynamic_cast<Legion::Internal::SingleTask *>(tsk);
 
       bool need_trigger = false;
       {
@@ -1381,9 +1383,10 @@ namespace Legion {
 #endif
         if ((our_gen == gen) && !trigger_commit_invoked)
         {
-          for(unsigned idx = 0; idx < stsk->get_physical_instances().size(); ++idx) {
-            for (std::set<Legion::Internal::PhysicalManager *>::const_iterator it = regions.begin();
-                it != regions.end(); it++) {
+          for(unsigned idx = 0; idx < stsk->get_physical_instances().size(); 
+                                                                    ++idx) {
+            for (std::set<Legion::Internal::PhysicalManager *>::const_iterator 
+                it = regions.begin(); it != regions.end(); it++) {
             if(stsk->get_physical_instances()[idx][0].get_manager() == *it)
               unverified_regions.erase(idx);
             }
