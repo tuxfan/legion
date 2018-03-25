@@ -1586,8 +1586,8 @@ namespace Legion {
           default_report_failed_instance_creation(task, idx,
                                       task.target_proc, target_memory);
         } else { // ksmurthy
-#if 0
-            if(!strcmp(task.get_task_name(),"init_field2")) {
+#if 1
+            if(!strcmp(task.get_task_name(),"init_field")) {
               //ok instances is a vector as needed for different fields
               //we want all these instances to survive
               //deep down in the below call, we set the physicalmanager->harden
@@ -1596,7 +1596,7 @@ namespace Legion {
                   ie = output.chosen_instances[idx].end(); it != ie; ++it)
                 runtime->harden_physical_instances(ctx, idx, *it);
             }
-            if(!strcmp(task.get_task_name(),"daxpy")) {
+            if(!strcmp(task.get_task_name(),"daxpy_no")) {
               //ok instances is a vector as needed for different fields
               //we want all these instances to survive
               //deep down in the below call, we set the physicalmanager->harden

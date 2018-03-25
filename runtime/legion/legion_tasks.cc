@@ -4410,6 +4410,9 @@ namespace Legion {
           assert(0); //ideally trigger_recover on each of the incoming edges
 
       bool recover_here = true;
+      if(all_physical_instances.size() == 0) {
+        recover_here = false;
+      }
       const std::vector<VersionInfo>* prefail_version_info=get_version_infos();
       for(unsigned idx = 0; idx < all_physical_instances.size(); ++idx) {
         if(all_physical_instances[idx].size() == 1) {
