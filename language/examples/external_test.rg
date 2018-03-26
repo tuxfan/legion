@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -19,9 +19,6 @@ do
   assert(os.getenv('LG_RT_DIR') ~= nil, "$LG_RT_DIR should be set!")
   local root_dir = arg[0]:match(".*/") or "./"
   local runtime_dir = os.getenv("LG_RT_DIR") .. "/"
-  local legion_dir = runtime_dir .. "legion/"
-  local mapper_dir = runtime_dir .. "mappers/"
-  local realm_dir = runtime_dir .. "realm/"
   local external_test_cc = root_dir .. "external_test.cc"
   local external_test_so
   if os.getenv('SAVEOBJ') == '1' then
@@ -42,17 +39,14 @@ do
   end
 
   local cmd = (cxx .. " " .. cxx_flags .. " -I " .. runtime_dir .. " " ..
-                 " -I " .. mapper_dir .. " " .. " -I " .. legion_dir .. " " ..
-                 " -I " .. realm_dir .. " " .. external_test_cc .. " -o " .. external_test_so)
+                 external_test_cc .. " -o " .. external_test_so)
   if os.execute(cmd) ~= 0 then
     print("Error: failed to compile " .. external_test_cc)
     assert(false)
   end
   terralib.linklibrary(external_test_so)
   cexternal_test =
-    terralib.includec("external_test.h", {"-I", root_dir, "-I", runtime_dir,
-                                          "-I", mapper_dir, "-I", legion_dir,
-                                          "-I", realm_dir})
+    terralib.includec("external_test.h", {"-I", root_dir, "-I", runtime_dir})
 end
 
 local c = regentlib.c
@@ -76,7 +70,7 @@ end
 
 terra get_raw_ptr(pr : c.legion_physical_region_t[1],
                   fld : c.legion_field_id_t[1])
-  var fa = c.legion_physical_region_get_field_accessor_generic(pr[0], fld[0])
+  var fa = c.legion_physical_region_get_field_accessor_array_2d(pr[0], fld[0])
   var rect : c.legion_rect_2d_t
   var subrect : c.legion_rect_2d_t
   var offsets : c.legion_byte_offset_t[2]
@@ -84,7 +78,7 @@ terra get_raw_ptr(pr : c.legion_physical_region_t[1],
   rect.lo.x[1] = 0
   rect.hi.x[0] = 2
   rect.hi.x[1] = 2
-  var p = c.legion_accessor_generic_raw_rect_ptr_2d(fa, rect, &subrect, offsets)
+  var p = c.legion_accessor_array_2d_raw_rect_ptr(fa, rect, &subrect, offsets)
   return [&float](p)
 end
 

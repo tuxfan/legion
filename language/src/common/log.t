@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -119,9 +119,8 @@ end
 function logger:log(level, format_string, ...)
   assert(type(level) == "number")
   assert(type(format_string) == "string")
-  io.stderr:write(string.format("{%d}{%s}: ", level, self.category))
-  io.stderr:write(string.format(format_string, ...))
-  io.stderr:write("\n")
+  io.stderr:write(string.format("{%d}{%s}: ", level, self.category) ..
+                  string.format(format_string, ...) .. "\n")
 end
 
 for name, value in pairs(level) do

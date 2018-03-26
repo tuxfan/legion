@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University, NVIDIA Corporation
+-- Copyright 2018 Stanford University, NVIDIA Corporation
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -49,15 +49,22 @@ local language = {
     "task",
   },
   keywords = {
+    "__block",
     "__context",
     "__cuda",
     "__delete",
     "__demand",
+    "__execution",
     "__external",
+    "__fence",
     "__fields",
     "__forbid",
     "__inline",
+    "__inner",
+    "__leaf",
+    "__mapping",
     "__openmp",
+    "__optimize",
     "__parallel",
     "__parallelize_with",
     "__physical",

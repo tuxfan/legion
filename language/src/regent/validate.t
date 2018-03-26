@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University, NVIDIA Corporation
+-- Copyright 2018 Stanford University, NVIDIA Corporation
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -251,12 +251,9 @@ local function validate_vars_node(cx)
       cx:pop_local_scope()
 
     elseif node:is(ast.typed.stat.Var) then
-      continuation(node.values)
-      cx:intern_variables(node, node.symbols)
-      for i, symbol in ipairs(node.symbols) do
-        local var_type = node.types[i]
-        cx:check_variable(node, symbol, var_type)
-      end
+      continuation(node.value)
+      cx:intern_variable(node, node.symbol)
+      cx:check_variable(node, node.symbol, node.type)
 
     elseif node:is(ast.typed.stat.VarUnpack) then
       continuation(node.value)
@@ -268,6 +265,7 @@ local function validate_vars_node(cx)
       node:is(ast.typed.stat.Reduce) or
       node:is(ast.typed.stat.Expr) or
       node:is(ast.typed.stat.RawDelete) or
+      node:is(ast.typed.stat.Fence) or
       node:is(ast.typed.stat.BeginTrace) or
       node:is(ast.typed.stat.EndTrace) or
       node:is(ast.typed.stat.MapRegions) or
@@ -276,7 +274,8 @@ local function validate_vars_node(cx)
       node:is(ast.location) or
       node:is(ast.annotation) or
       node:is(ast.condition_kind) or
-      node:is(ast.disjointness_kind)
+      node:is(ast.disjointness_kind) or
+      node:is(ast.fence_kind)
     then
       continuation(node, true)
 

@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University
+/* Copyright 2018 Stanford University
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-#ifndef __PENNANT_H__
-#define __PENNANT_H__
+#ifndef __STENCIL_H__
+#define __STENCIL_H__
 
 #ifndef DTYPE
 #error DTYPE must be defined
@@ -36,7 +36,6 @@ typedef long long int coord_t;
 
 void stencil(DTYPE* RESTRICT inputPtr,
              DTYPE* RESTRICT outputPtr,
-             DTYPE* RESTRICT weightPtr,
              coord_t haloX, coord_t startX, coord_t endX,
              coord_t startY, coord_t endY);
 
@@ -48,4 +47,4 @@ void increment(DTYPE* RESTRICT inputPtr,
 }
 #endif
 
-#endif // __PENNANT_H__
+#endif // __STENCIL_H__

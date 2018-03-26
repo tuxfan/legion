@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University, NVIDIA Corporation
+-- Copyright 2018 Stanford University, NVIDIA Corporation
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -67,6 +67,43 @@ end
 
 local analyze_var_flow = {}
 
+function flow_future()
+  return {[true] = true} -- Represents an unconditional future r-value
+end
+
+function flow_var(v)
+  return {[v] = true} -- Represents a variable
+end
+
+function flow_future_into(cx, lhs) -- Unconditionally flow future into l-value
+  if lhs then
+    for v, _ in pairs(lhs) do
+      local var_flow = cx:get_flow(v)
+      var_flow[true] = true
+    end
+  end
+end
+
+function flow_value_into_var(cx, symbol, value) -- Flow r-value into variable
+  local var_flow = cx:get_flow(symbol)
+  if value then
+    for v, _ in pairs(value) do
+      var_flow[v] = true
+    end
+  end
+end
+
+function flow_value_into(cx, lhs, rhs) -- Flow r-value into l-value
+  if lhs and rhs then
+    for lhv, _ in pairs(lhs) do
+      local lhv_flow = cx:get_flow(lhv)
+      for rhv, _ in pairs(rhs) do
+        lhv_flow[rhv] = true
+      end
+    end
+  end
+end
+
 function meet_flow(...)
   local flow = {}
   for _, a in ipairs({...}) do
@@ -80,19 +117,19 @@ function meet_flow(...)
 end
 
 function analyze_var_flow.expr_id(cx, node)
-  return {[node.value] = true}
+  return flow_var(node.value)
 end
 
 function analyze_var_flow.expr_call(cx, node)
   if std.is_task(node.fn.value) and
     node.expr_type ~= terralib.types.unit
   then
-    return {[true] = true}
+    return flow_future()
   end
 end
 
 function analyze_var_flow.expr_dynamic_collective_get_result(cx, node)
-  return {[true] = true}
+  return flow_future()
 end
 
 function analyze_var_flow.expr_unary(cx, node)
@@ -109,160 +146,69 @@ function analyze_var_flow.expr(cx, node)
   if node:is(ast.typed.expr.ID) then
     return analyze_var_flow.expr_id(cx, node)
 
-  elseif node:is(ast.typed.expr.Constant) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Function) then
-    return nil
-
-  elseif node:is(ast.typed.expr.FieldAccess) then
-    return nil
-
-  elseif node:is(ast.typed.expr.IndexAccess) then
-    return nil
-
-  elseif node:is(ast.typed.expr.MethodCall) then
+  elseif node:is(ast.typed.expr.Constant) or
+    node:is(ast.typed.expr.Function) or
+    node:is(ast.typed.expr.FieldAccess) or
+    node:is(ast.typed.expr.IndexAccess) or
+    node:is(ast.typed.expr.MethodCall)
+  then
     return nil
 
   elseif node:is(ast.typed.expr.Call) then
     return analyze_var_flow.expr_call(cx, node)
 
-  elseif node:is(ast.typed.expr.Cast) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Ctor) then
-    return nil
-
-  elseif node:is(ast.typed.expr.RawContext) then
-    return nil
-
-  elseif node:is(ast.typed.expr.RawFields) then
-    return nil
-
-  elseif node:is(ast.typed.expr.RawPhysical) then
-    return nil
-
-  elseif node:is(ast.typed.expr.RawRuntime) then
-    return nil
-
-  elseif node:is(ast.typed.expr.RawValue) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Isnull) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Null) then
-    return nil
-
-  elseif node:is(ast.typed.expr.DynamicCast) then
-    return nil
-
-  elseif node:is(ast.typed.expr.StaticCast) then
-    return nil
-
-  elseif node:is(ast.typed.expr.UnsafeCast) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Ispace) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Region) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Partition) then
-    return nil
-
-  elseif node:is(ast.typed.expr.PartitionEqual) then
-    return nil
-
-  elseif node:is(ast.typed.expr.PartitionByField) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Image) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Preimage) then
-    return nil
-
-  elseif node:is(ast.typed.expr.CrossProduct) then
-    return nil
-
-  elseif node:is(ast.typed.expr.CrossProductArray) then
-    return nil
-
-  elseif node:is(ast.typed.expr.ListSlicePartition) then
-    return nil
-
-  elseif node:is(ast.typed.expr.ListDuplicatePartition) then
-    return nil
-
-  elseif node:is(ast.typed.expr.ListSliceCrossProduct) then
-    return nil
-
-  elseif node:is(ast.typed.expr.ListCrossProduct) then
-    return nil
-
-  elseif node:is(ast.typed.expr.ListCrossProductComplete) then
-    return nil
-
-  elseif node:is(ast.typed.expr.ListPhaseBarriers) then
-    return nil
-
-  elseif node:is(ast.typed.expr.ListInvert) then
-    return nil
-
-  elseif node:is(ast.typed.expr.ListRange) then
-    return nil
-
-  elseif node:is(ast.typed.expr.ListIspace) then
-    return nil
-
-  elseif node:is(ast.typed.expr.ListFromElement) then
-    return nil
-
-  elseif node:is(ast.typed.expr.PhaseBarrier) then
-    return nil
-
-  elseif node:is(ast.typed.expr.DynamicCollective) then
+  elseif node:is(ast.typed.expr.Cast) or
+    node:is(ast.typed.expr.Ctor) or
+    node:is(ast.typed.expr.RawContext) or
+    node:is(ast.typed.expr.RawFields) or
+    node:is(ast.typed.expr.RawPhysical) or
+    node:is(ast.typed.expr.RawRuntime) or
+    node:is(ast.typed.expr.RawValue) or
+    node:is(ast.typed.expr.Isnull) or
+    node:is(ast.typed.expr.Null) or
+    node:is(ast.typed.expr.DynamicCast) or
+    node:is(ast.typed.expr.StaticCast) or
+    node:is(ast.typed.expr.UnsafeCast) or
+    node:is(ast.typed.expr.Ispace) or
+    node:is(ast.typed.expr.Region) or
+    node:is(ast.typed.expr.Partition) or
+    node:is(ast.typed.expr.PartitionEqual) or
+    node:is(ast.typed.expr.PartitionByField) or
+    node:is(ast.typed.expr.Image) or
+    node:is(ast.typed.expr.Preimage) or
+    node:is(ast.typed.expr.CrossProduct) or
+    node:is(ast.typed.expr.CrossProductArray) or
+    node:is(ast.typed.expr.ListSlicePartition) or
+    node:is(ast.typed.expr.ListDuplicatePartition) or
+    node:is(ast.typed.expr.ListSliceCrossProduct) or
+    node:is(ast.typed.expr.ListCrossProduct) or
+    node:is(ast.typed.expr.ListCrossProductComplete) or
+    node:is(ast.typed.expr.ListPhaseBarriers) or
+    node:is(ast.typed.expr.ListInvert) or
+    node:is(ast.typed.expr.ListRange) or
+    node:is(ast.typed.expr.ListIspace) or
+    node:is(ast.typed.expr.ListFromElement) or
+    node:is(ast.typed.expr.PhaseBarrier) or
+    node:is(ast.typed.expr.DynamicCollective)
+  then
     return nil
 
   elseif node:is(ast.typed.expr.DynamicCollectiveGetResult) then
     return analyze_var_flow.expr_dynamic_collective_get_result(cx, node)
 
-  elseif node:is(ast.typed.expr.Advance) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Adjust) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Arrive) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Await) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Copy) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Fill) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Acquire) then
-    return nil
-
-  elseif node:is(ast.typed.expr.Release) then
-    return nil
-
-  elseif node:is(ast.typed.expr.AttachHDF5) then
-    return nil
-
-  elseif node:is(ast.typed.expr.DetachHDF5) then
-    return nil
-
-  elseif node:is(ast.typed.expr.AllocateScratchFields) then
-    return nil
-
-  elseif node:is(ast.typed.expr.WithScratchFields) then
+  elseif node:is(ast.typed.expr.Advance) or
+    node:is(ast.typed.expr.Adjust) or
+    node:is(ast.typed.expr.Arrive) or
+    node:is(ast.typed.expr.Await) or
+    node:is(ast.typed.expr.Copy) or
+    node:is(ast.typed.expr.Fill) or
+    node:is(ast.typed.expr.Acquire) or
+    node:is(ast.typed.expr.Release) or
+    node:is(ast.typed.expr.AttachHDF5) or
+    node:is(ast.typed.expr.DetachHDF5) or
+    node:is(ast.typed.expr.AllocateScratchFields) or
+    node:is(ast.typed.expr.WithScratchFields)
+  then
     return nil
 
   elseif node:is(ast.typed.expr.Unary) then
@@ -322,78 +268,33 @@ end
 function analyze_var_flow.stat_index_launch_num(cx, node)
   local reduce_lhs = node.reduce_lhs and
     analyze_var_flow.expr(cx, node.reduce_lhs)
-
-  if reduce_lhs then
-    for v, _ in pairs(reduce_lhs) do
-      local var_flow = cx:get_flow(v)
-      var_flow[true] = true
-    end
-  end
+  flow_future_into(cx, reduce_lhs)
 end
 
 function analyze_var_flow.stat_index_launch_list(cx, node)
   local reduce_lhs = node.reduce_lhs and
     analyze_var_flow.expr(cx, node.reduce_lhs)
-
-  if reduce_lhs then
-    for v, _ in pairs(reduce_lhs) do
-      local var_flow = cx:get_flow(v)
-      var_flow[true] = true
-    end
-  end
+  flow_future_into(cx, reduce_lhs)
 end
 
 function analyze_var_flow.stat_var(cx, node)
-  local values = node.values:map(
-    function(value) return analyze_var_flow.expr(cx, value) end)
-
-  for i, symbol in ipairs(node.symbols) do
-    local var_flow = cx:get_flow(symbol)
-    local value = values[i]
-    if value then
-      for v, _ in pairs(value) do
-        var_flow[v] = true
-      end
-    end
+  local value = node.value
+  if value then
+    value = analyze_var_flow.expr(cx, value)
   end
+  flow_value_into_var(cx, node.symbol, value)
 end
 
 function analyze_var_flow.stat_assignment(cx, node)
-  local lhs = node.lhs:map(
-    function(lh) return analyze_var_flow.expr(cx, lh) end)
-  local rhs = node.rhs:map(
-    function(rh) return analyze_var_flow.expr(cx, rh) end)
-
-  for i, lh in ipairs(lhs) do
-    local rh = rhs[i]
-    if lh and rh then
-      for lhv, _ in pairs(lh) do
-        local lhv_flow = cx:get_flow(lhv)
-        for rhv, _ in pairs(rh) do
-          lhv_flow[rhv] = true
-        end
-      end
-    end
-  end
+  local lhs = analyze_var_flow.expr(cx, node.lhs)
+  local rhs = analyze_var_flow.expr(cx, node.rhs)
+  flow_value_into(cx, lhs, rhs)
 end
 
 function analyze_var_flow.stat_reduce(cx, node)
-  local lhs = node.lhs:map(
-    function(lh) return analyze_var_flow.expr(cx, lh) end)
-  local rhs = node.rhs:map(
-    function(rh) return analyze_var_flow.expr(cx, rh) end)
-
-  for i, lh in ipairs(lhs) do
-    local rh = rhs[i]
-    if lh and rh then
-      for lhv, _ in pairs(lh) do
-        local lhv_flow = cx:get_flow(lhv)
-        for rhv, _ in pairs(rh) do
-          lhv_flow[rhv] = true
-        end
-      end
-    end
-  end
+  local lhs = analyze_var_flow.expr(cx, node.lhs)
+  local rhs = analyze_var_flow.expr(cx, node.rhs)
+  flow_value_into(cx, lhs, rhs)
 end
 
 function analyze_var_flow.stat(cx, node)
@@ -446,6 +347,9 @@ function analyze_var_flow.stat(cx, node)
     return
 
   elseif node:is(ast.typed.stat.RawDelete) then
+    return
+
+  elseif node:is(ast.typed.stat.Fence) then
     return
 
   else
@@ -1344,61 +1248,53 @@ end
 function optimize_futures.stat_var(cx, node)
   local stats = terralib.newlist()
 
-  local symbols = terralib.newlist()
-  local types = terralib.newlist()
-  local values = terralib.newlist()
-  for i, symbol in ipairs(node.symbols) do
-    local value = node.values[i]
-    local value_type = node.types[i]
+  local value = node.value
+  local value_type = node.type
 
-    local new_symbol = symbol
-    if cx:is_var_future(symbol) then
-      new_symbol = cx:symbol(symbol)
-    end
-    symbols[i] = new_symbol
+  local new_symbol = node.symbol
+  if cx:is_var_future(node.symbol) then
+    new_symbol = cx:symbol(node.symbol)
+  end
 
-    local new_type = value_type
-    if cx:is_var_future(symbol) then
-      new_type = std.future(value_type)
-    end
-    types[i] = new_type
+  local new_type = value_type
+  if cx:is_var_future(node.symbol) then
+    new_type = std.future(value_type)
+  end
 
-    local new_value = value
-    if value then
-      if cx:is_var_future(symbol) then
-        new_value = promote(optimize_futures.expr(cx, value), new_type)
-      else
-        new_value = concretize(optimize_futures.expr(cx, value))
-      end
+  local new_value = value
+  if value then
+    if cx:is_var_future(node.symbol) then
+      new_value = promote(optimize_futures.expr(cx, value), new_type)
     else
-      if cx:is_var_future(symbol) then
-        -- This is an uninitialized future. Create an empty value and
-        -- use it to initialize the future, otherwise future will hold
-        -- an uninitialized pointer.
-        local empty_symbol = std.newsymbol(value_type)
-        local empty_var = node {
-          symbols = terralib.newlist({empty_symbol}),
-          types = terralib.newlist({value_type}),
-          values = terralib.newlist(),
-        }
-        local empty_ref = ast.typed.expr.ID {
-          value = empty_symbol,
-          expr_type = std.rawref(&value_type),
-          annotations = ast.default_annotations(),
-          span = node.span,
-        }
-
-        new_value = promote(empty_ref, new_type)
-        stats:insert(empty_var)
-      end
+      new_value = concretize(optimize_futures.expr(cx, value))
     end
-    values[i] = new_value
+  else
+    if cx:is_var_future(node.symbol) then
+      -- This is an uninitialized future. Create an empty value and
+      -- use it to initialize the future, otherwise future will hold
+      -- an uninitialized pointer.
+      local empty_symbol = std.newsymbol(value_type)
+      local empty_var = node {
+        symbol = empty_symbol,
+        type = value_type,
+        value = false,
+      }
+      local empty_ref = ast.typed.expr.ID {
+        value = empty_symbol,
+        expr_type = std.rawref(&value_type),
+        annotations = ast.default_annotations(),
+        span = node.span,
+      }
+
+      new_value = promote(empty_ref, new_type)
+      stats:insert(empty_var)
+    end
   end
 
   stats:insert(node {
-    symbols = symbols,
-    types = types,
-    values = values,
+    symbol = new_symbol,
+    type = new_type,
+    value = new_value,
   })
   return stats
 end
@@ -1420,20 +1316,81 @@ function optimize_futures.stat_break(cx, node)
   return terralib.newlist({node})
 end
 
+local function unwrap_field_access(node)
+  if node:is(ast.typed.expr.FieldAccess) then
+    return unwrap_field_access(node.value)
+  end
+  return node
+end
+
+local function rewrap_field_access(node, replacement)
+  if node:is(ast.typed.expr.FieldAccess) then
+    return node { value = rewrap_field_access(node.value, replacement) }
+  end
+  return replacement
+end
+
+local function is_future_field_assignment(node)
+  return node:is(ast.typed.expr.FieldAccess) and
+    unwrap_field_access(node):is(ast.typed.expr.FutureGetResult)
+end
+
+local function handle_future_field_assignment(cx, lhs, rhs)
+  local lhs_value = unwrap_field_access(lhs)
+  local lhs_type = std.as_read(lhs_value.expr_type)
+  local symbol = std.newsymbol(lhs_type)
+
+  local symbol_value = ast.typed.expr.ID {
+    value = symbol,
+    expr_type = std.rawref(&lhs_type),
+    annotations = ast.default_annotations(),
+    span = lhs.span,
+  }
+
+  return terralib.newlist({
+    ast.typed.stat.Var {
+      symbol = symbol,
+      type = lhs_type,
+      value = lhs_value,
+      annotations = ast.default_annotations(),
+      span = lhs.span,
+    },
+    ast.typed.stat.Assignment {
+      lhs = rewrap_field_access(lhs, symbol_value),
+      rhs = rhs,
+      annotations = ast.default_annotations(),
+      span = lhs.span,
+    },
+    ast.typed.stat.Assignment {
+      lhs = lhs_value.value,
+      rhs = ast.typed.expr.Future {
+        value = symbol_value,
+        expr_type = std.future(lhs_type),
+        annotations = ast.default_annotations(),
+        span = lhs.span,
+      },
+      annotations = ast.default_annotations(),
+      span = lhs.span,
+    },
+  })
+end
+
 function optimize_futures.stat_assignment(cx, node)
-  local lhs = node.lhs:map(function(lh) return optimize_futures.expr(cx, lh) end)
-  local rhs = node.rhs:map(function(rh) return optimize_futures.expr(cx, rh) end)
+  local lhs = optimize_futures.expr(cx, node.lhs)
+  local rhs = optimize_futures.expr(cx, node.rhs)
 
-  local normalized_rhs = terralib.newlist()
-  for i, lh in ipairs(lhs) do
-    local rh = rhs[i]
+  local normalized_rhs
+  local lhs_type = std.as_read(lhs.expr_type)
+  if std.is_future(lhs_type) then
+    normalized_rhs = promote(rhs, lhs_type)
+  else
+    normalized_rhs = concretize(rhs)
+  end
 
-    local lh_type = std.as_read(lh.expr_type)
-    if std.is_future(lh_type) then
-      normalized_rhs:insert(promote(rh, lh_type))
-    else
-      normalized_rhs:insert(concretize(rh))
-    end
+  -- Hack: Can't write directly to the field of a future; must write
+  -- an entire struct. Generate an updated struct and assign it.
+  if is_future_field_assignment(lhs) then
+    return handle_future_field_assignment(cx, lhs, normalized_rhs)
   end
 
   return terralib.newlist({
@@ -1445,18 +1402,15 @@ function optimize_futures.stat_assignment(cx, node)
 end
 
 function optimize_futures.stat_reduce(cx, node)
-  local lhs = node.lhs:map(function(lh) return optimize_futures.expr(cx, lh) end)
-  local rhs = node.rhs:map(function(rh) return optimize_futures.expr(cx, rh) end)
+  local lhs = optimize_futures.expr(cx, node.lhs)
+  local rhs = optimize_futures.expr(cx, node.rhs)
 
-  local normalized_rhs = terralib.newlist()
-  for i, lh in ipairs(lhs) do
-    local rh = rhs[i]
-
-    if std.is_future(std.as_read(lh.expr_type)) then
-      normalized_rhs:insert(rh)
-    else
-      normalized_rhs:insert(concretize(rh))
-    end
+  local normalized_rhs
+  local lhs_type = std.as_read(lhs.expr_type)
+  if std.is_future(lhs_type) then
+    normalized_rhs = promote(rhs, lhs_type)
+  else
+    normalized_rhs = concretize(rhs)
   end
 
   return terralib.newlist({
@@ -1481,6 +1435,10 @@ function optimize_futures.stat_raw_delete(cx, node)
       value = optimize_futures.expr(cx, node.value),
     }
   })
+end
+
+function optimize_futures.stat_fence(cx, node)
+  return terralib.newlist({node})
 end
 
 function optimize_futures.stat(cx, node)
@@ -1535,6 +1493,9 @@ function optimize_futures.stat(cx, node)
   elseif node:is(ast.typed.stat.RawDelete) then
     return optimize_futures.stat_raw_delete(cx, node)
 
+  elseif node:is(ast.typed.stat.Fence) then
+    return optimize_futures.stat_fence(cx, node)
+
   else
     assert(false, "unexpected node type " .. tostring(node:type()))
   end
@@ -1547,18 +1508,16 @@ function optimize_futures.top_task_param(cx, param)
     local new_symbol = cx:symbol(param.symbol)
 
     local new_var = ast.typed.stat.Var {
-      symbols = terralib.newlist({new_symbol}),
-      types = terralib.newlist({new_type}),
-      values = terralib.newlist({
-          promote(
-            ast.typed.expr.ID {
-              value = param.symbol,
-              expr_type = std.rawref(&param.param_type),
-              annotations = param.annotations,
-              span = param.span,
-            },
-            new_type),
-      }),
+      symbol = new_symbol,
+      type = new_type,
+      value = promote(
+        ast.typed.expr.ID {
+          value = param.symbol,
+          expr_type = std.rawref(&param.param_type),
+          annotations = param.annotations,
+          span = param.span,
+        },
+        new_type),
       annotations = param.annotations,
       span = param.span,
     }

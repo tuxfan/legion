@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -371,7 +371,7 @@ where
 do
   var dt : float = DELTAT
   var recip_dt : float = 1.0 / dt
-  __demand(__vectorize)
+  --__demand(__vectorize)
   for w in rw do
     var temp_v : float[WIRE_SEGMENTS + 1]
     var temp_i : float[WIRE_SEGMENTS]
@@ -681,19 +681,6 @@ end
 if os.getenv('SAVEOBJ') == '1' then
   local root_dir = arg[0]:match(".*/") or "./"
   local link_flags = terralib.newlist({"-lm"})
-  if os.getenv('CRAYPE_VERSION') then
-    local new_flags = terralib.newlist({"-Wl,-Bdynamic"})
-    new_flags:insertall(link_flags)
-    for flag in os.getenv('CRAY_UGNI_POST_LINK_OPTS'):gmatch("%S+") do
-      new_flags:insert(flag)
-    end
-    new_flags:insert("-lugni")
-    for flag in os.getenv('CRAY_UDREG_POST_LINK_OPTS'):gmatch("%S+") do
-      new_flags:insert(flag)
-    end
-    new_flags:insert("-ludreg")
-    link_flags = new_flags
-  end
   regentlib.saveobj(toplevel, "circuit", "executable", bishoplib.make_entry(), link_flags)
 else
   regentlib.start(toplevel, bishoplib.make_entry())

@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University, NVIDIA Corporation
+-- Copyright 2018 Stanford University, NVIDIA Corporation
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -180,6 +180,7 @@ local function check_annotations_node(cx)
       node:is(ast.typed.stat.Reduce) or
       node:is(ast.typed.stat.Expr) or
       node:is(ast.typed.stat.RawDelete) or
+      node:is(ast.typed.stat.Fence) or
       node:is(ast.typed.stat.ParallelizeWith)
     then
       check(cx, node, data.set({}))
@@ -189,7 +190,16 @@ local function check_annotations_node(cx)
       check(cx, node, data.set({}))
 
     elseif node:is(ast.typed.top.Task) then
-      check(cx, node, data.set({"cuda", "external", "inline", "parallel"}))
+      check(cx, node,
+            data.set({
+              "cuda",
+              "external",
+              "inline",
+              "inner",
+              "leaf",
+              "optimize",
+              "parallel",
+            }))
 
     -- Miscellaneous:
     elseif node:is(ast.typed.Block) or
@@ -199,6 +209,7 @@ local function check_annotations_node(cx)
       node:is(ast.privilege_kind) or
       node:is(ast.condition_kind) or
       node:is(ast.disjointness_kind) or
+      node:is(ast.fence_kind) or
       node:is(ast.constraint) or
       node:is(ast.privilege) or
       node:is(ast.TaskConfigOptions)

@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -12,13 +12,13 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
-local config = require("regent/config")
+local config = require("regent/config").args()
 local report = require("common/report")
 
 local cudahelper = {}
 cudahelper.check_cuda_available = function() return false end
 
-if not config.args()["cuda"] or not terralib.cudacompile then
+if not config["cuda"] or not terralib.cudacompile then
   return cudahelper
 end
 
@@ -52,16 +52,6 @@ local C = terralib.includecstring [[
 #include <string.h>
 ]]
 
-local terra assert(x : bool, message : rawstring)
-  if not x then
-    var stderr = C.fdopen(2, "w")
-    C.fprintf(stderr, "assertion failed: %s\n", message)
-    -- Just because it's stderr doesn't mean it's unbuffered...
-    C.fflush(stderr)
-    C.abort()
-  end
-end
-
 local struct CUctx_st
 local struct CUmod_st
 local struct CUlinkState_st
@@ -78,15 +68,9 @@ local DriverAPI = {
   cuCtxGetDevice = ef("cuCtxGetDevice",{&int32} -> uint32);
   cuDeviceGet = ef("cuDeviceGet",{&int32,int32} -> uint32);
   cuCtxCreate_v2 = ef("cuCtxCreate_v2",{&&CUctx_st,uint32,int32} -> uint32);
+  cuCtxDestroy = ef("cuCtxDestroy",{&CUctx_st} -> uint32);
   cuDeviceComputeCapability = ef("cuDeviceComputeCapability",
     {&int32,&int32,int32} -> uint32);
-  cuLinkCreate_v2 = ef("cuLinkCreate_v2",
-    {uint32,&uint32,&&opaque,&&CUlinkState_st} -> uint32);
-  cuLinkAddData_v2 = ef("cuLinkAddData_v2",
-    {&CUlinkState_st,uint32,&opaque,uint64,&int8,uint32,&uint32,&&opaque} -> uint32);
-  cuLinkComplete = ef("cuLinkComplete",
-    {&CUlinkState_st,&&opaque,&uint64} -> uint32);
-  cuLinkDestroy = ef("cuLinkDestroy", {&CUlinkState_st} -> uint32);
 }
 
 local dlfcn = terralib.includec("dlfcn.h")
@@ -98,45 +82,64 @@ local terra has_symbol(symbol : rawstring)
 end
 
 do
-  if has_symbol("cuInit") then
-    terra cudahelper.check_cuda_available()
-      var r = DriverAPI.cuInit(0)
-      return r == 0
+  if not config["cuda-offline"] then
+    if has_symbol("cuInit") then
+      local r = DriverAPI.cuInit(0)
+      assert(r == 0)
+      terra cudahelper.check_cuda_available()
+        return [r] == 0;
+      end
+    else
+      terra cudahelper.check_cuda_available()
+        return false
+      end
     end
   else
     terra cudahelper.check_cuda_available()
-      return false
+      return true
     end
   end
 end
 
 -- copied and modified from cudalib.lua in Terra interpreter
 
-local terra init_cuda() : int32
-  var r = DriverAPI.cuInit(0)
-  assert(r == 0, "CUDA error in cuInit")
-  var cx : &CUctx_st
-  r = DriverAPI.cuCtxGetCurrent(&cx)
-  assert(r == 0, "CUDA error in cuCtxGetCurrent")
-  var d : int32
-  if cx ~= nil then
-    r = DriverAPI.cuCtxGetDevice(&d)
-    assert(r == 0, "CUDA error in cuCtxGetDevice")
-  else
-    r = DriverAPI.cuDeviceGet(&d, 0)
-    assert(r == 0, "CUDA error in cuDeviceGet")
-    r = DriverAPI.cuCtxCreate_v2(&cx, 0, d)
-    assert(r == 0, "CUDA error in cuCtxCreate_v2")
-  end
+local c = terralib.includec("unistd.h")
 
-  return d
+local terra assert(x : bool, message : rawstring)
+  if not x then
+    var stderr = C.fdopen(2, "w")
+    C.fprintf(stderr, "assertion failed: %s\n", message)
+    -- Just because it's stderr doesn't mean it's unbuffered...
+    C.fflush(stderr)
+    C.abort()
+  end
 end
 
-local terra get_cuda_version(device : int) : uint64
+local terra get_cuda_version() : uint64
+  var cx : &CUctx_st
+  var cx_created = false
+  var r = DriverAPI.cuCtxGetCurrent(&cx)
+  assert(r == 0, "CUDA error in cuCtxGetCurrent")
+  var device : int32
+  if cx ~= nil then
+    r = DriverAPI.cuCtxGetDevice(&device)
+    assert(r == 0, "CUDA error in cuCtxGetDevice")
+  else
+    r = DriverAPI.cuDeviceGet(&device, 0)
+    assert(r == 0, "CUDA error in cuDeviceGet")
+    r = DriverAPI.cuCtxCreate_v2(&cx, 0, device)
+    assert(r == 0, "CUDA error in cuCtxCreate_v2")
+    cx_created = true
+  end
+
   var major : int, minor : int
-  var r = DriverAPI.cuDeviceComputeCapability(&major, &minor, device)
+  r = DriverAPI.cuDeviceComputeCapability(&major, &minor, device)
   assert(r == 0, "CUDA error in cuDeviceComputeCapability")
-  return [uint64](major * 10 + minor)
+  var version = [uint64](major * 10 + minor)
+  if cx_created then
+    DriverAPI.cuCtxDestroy(cx)
+  end
+  return version
 end
 
 --
@@ -177,13 +180,41 @@ local function find_device_library(target)
   return libdevice
 end
 
+local supported_archs = {
+  ["fermi"]   = 20,
+  ["kepler"]  = 30,
+  ["k20"]     = 35,
+  ["maxwell"] = 52,
+  ["pascal"]  = 60,
+  ["volta"]   = 70,
+}
+
+local function parse_cuda_arch(arch)
+  arch = string.lower(arch)
+  local sm = supported_archs[arch]
+  if sm == nil then
+    local archs
+    for k, v in pairs(supported_archs) do
+      archs = (not archs and k) or (archs and archs .. ", " .. k)
+    end
+    print("Error: Unsupported GPU architecture " .. arch ..
+          ". Supported architectures: " .. archs)
+    os.exit(1)
+  end
+  return sm
+end
+
 function cudahelper.jit_compile_kernels_and_register(kernels)
   local module = {}
   for k, v in pairs(kernels) do
     module[v.name] = v.kernel
   end
-  local device = init_cuda()
-  local version = get_cuda_version(device)
+  local version
+  if not config["cuda-offline"] then
+    version = get_cuda_version()
+  else
+    version = parse_cuda_arch(config["cuda-arch"])
+  end
   local libdevice = find_device_library(tonumber(version))
   local llvmbc = terralib.linkllvm(libdevice)
   externcall_builtin = function(name, ftype)
@@ -207,7 +238,7 @@ function cudahelper.jit_compile_kernels_and_register(kernels)
   return register
 end
 
-function cudahelper.codegen_kernel_call(kernel_id, counts, args)
+function cudahelper.codegen_kernel_call(kernel_id, count, args)
   local setupArguments = terralib.newlist()
 
   local offset = 0
@@ -222,45 +253,25 @@ function cudahelper.codegen_kernel_call(kernel_id, counts, args)
 
   local grid = terralib.newsymbol(RuntimeAPI.dim3, "grid")
   local block = terralib.newsymbol(RuntimeAPI.dim3, "block")
-  local launch_domain_init
 
   local function round_exp(v, n)
     return `((v + (n - 1)) / n)
   end
 
-  -- TODO: Make this handle different thread block sizes and access strides
-  if #counts == 1 then
-    local threadSizeX = 128
-    launch_domain_init = quote
+  local THREAD_BLOCK_SIZE = 128
+  local MAX_NUM_BLOCK = 32768
+  local launch_domain_init = quote
+    [block].x, [block].y, [block].z = THREAD_BLOCK_SIZE, 1, 1
+    var num_blocks = [round_exp(count, THREAD_BLOCK_SIZE)]
+    if num_blocks <= MAX_NUM_BLOCK then
+      [grid].x, [grid].y, [grid].z = num_blocks, 1, 1
+    elseif [count] / MAX_NUM_BLOCK <= MAX_NUM_BLOCK then
       [grid].x, [grid].y, [grid].z =
-        [round_exp(counts[1], threadSizeX)], 1, 1
-      [block].x, [block].y, [block].z =
-        threadSizeX, 1, 1
-    end
-  elseif #counts == 2 then
-    local threadSizeX = 16
-    local threadSizeY = 16
-    launch_domain_init = quote
+        MAX_NUM_BLOCK, [round_exp(num_blocks, MAX_NUM_BLOCK)], 1
+    else
       [grid].x, [grid].y, [grid].z =
-        [round_exp(counts[1], threadSizeX)],
-        [round_exp(counts[2], threadSizeY)], 1
-      [block].x, [block].y, [block].z =
-        [threadSizeX], [threadSizeY], 1
+        MAX_NUM_BLOCK, MAX_NUM_BLOCK, [round_exp(num_blocks, MAX_NUM_BLOCK, MAX_NUM_BLOCK)]
     end
-  elseif #counts == 3 then
-    local threadSizeX = 16
-    local threadSizeY = 8
-    local threadSizeZ = 2
-    launch_domain_init = quote
-      [grid].x, [grid].y, [grid].z =
-        [round_exp(counts[1], threadSizeX)],
-        [round_exp(counts[2], threadSizeY)],
-        [round_exp(counts[3], threadSizeZ)]
-      [block].x, [block].y, [block].z =
-        [threadSizeX], [threadSizeY], [threadSizeZ]
-    end
-  else
-    assert(false, "Indexspaces more than 3 dimensions are not supported")
   end
 
   return quote

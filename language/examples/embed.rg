@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -14,33 +14,14 @@
 
 import "regent"
 
-local root_dir = arg[0]:match(".*/") or "./"
-local c = terralib.includec("embed.h", {"-I", root_dir})
-
-local fs = c.fs -- Get the field space from C
-
-task my_regent_task(r : region(fs))
-where reads writes(r) do
-  regentlib.c.printf("Hello from Regent!\n")
-end
-
--- Save tasks to libembed_tasks.so
-local embed_tasks_lib = "embed_tasks"
-do
-  local embed_tasks_h = root_dir .. "embed_tasks.h"
-  local embed_tasks_so = root_dir .. "libembed_tasks.so"
-  regentlib.save_tasks(embed_tasks_h, embed_tasks_so)
-end
+local embed_tasks_lib = require("embed_tasks")
 
 -- Compile and execute embed.cc
 local exe
+local root_dir = arg[0]:match(".*/") or "./"
 do
-  local root_dir = arg[0]:match(".*/") or "./"
   local runtime_dir = os.getenv("LG_RT_DIR") .. "/"
-  local legion_dir = runtime_dir .. "legion/"
-  local mapper_dir = runtime_dir .. "mappers/"
-  local realm_dir = runtime_dir .. "realm/"
-  local binding_dir = root_dir .. "../../bindings/terra/"
+  local binding_dir = root_dir .. "../../bindings/regent/"
 
   local embed_cc = root_dir .. "embed.cc"
   if os.getenv('SAVEOBJ') == '1' then
@@ -53,11 +34,17 @@ do
 
   local cxx_flags = "-O2 -Wall -Werror"
 
+  local use_cmake = os.getenv("USE_CMAKE") == "1"
+  local lib_dir = binding_dir
+  local libs = "-lregent"
+  if use_cmake then
+    lib_dir = os.getenv("CMAKE_BUILD_DIR") .. "/lib"
+    libs = libs .. " -llegion -lrealm"
+  end
   local cmd = (cxx .. " " .. cxx_flags .. " -I " .. runtime_dir .. " " ..
-                " -I " .. mapper_dir .. " " .. " -I " .. legion_dir .. " " ..
-                " -I " .. realm_dir .. " " ..  embed_cc ..
+                 embed_cc ..
                  " -L " .. root_dir .. " " .. " -l" .. embed_tasks_lib .. " " ..
-                 " -L " .. binding_dir .. " -llegion_terra " ..
+                 " -L " .. lib_dir .. " " .. libs .. " " ..
                  " -o " .. exe)
   if os.execute(cmd) ~= 0 then
     print("Error: failed to compile " .. embed_cc)

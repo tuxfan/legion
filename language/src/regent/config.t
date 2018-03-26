@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@ local default_options = {
 
   -- Main user-facing optimization flags:
   ["cuda"] = true,
+  ["cuda-offline"] = false,
+  ["cuda-arch"] = os.getenv("GPU_ARCH") or "fermi",
   ["index-launch"] = true,
   ["inline"] = true,
   ["future"] = true,
@@ -61,6 +63,7 @@ local default_options = {
   ["trace"] = true,
   ["validate"] = true,
   ["emergency-gc"] = false,
+  ["jobs"] = "1",
 
   -- Need this here to make the logger happy.
   ["log"] = "",

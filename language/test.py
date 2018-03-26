@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2017 Stanford University
+# Copyright 2018 Stanford University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -110,7 +110,7 @@ def find_labeled_text(filename, label):
     match_text = '\n'.join([line.strip()[2:].strip() for line in match_lines])
     return match_text
 
-def find_labeled_flags(filename, prefix):
+def find_labeled_flags(filename, prefix, short):
     flags = [[]]
     flags_text = find_labeled_text(filename, prefix)
     if flags_text is not None:
@@ -118,14 +118,16 @@ def find_labeled_flags(filename, prefix):
         assert isinstance(flags, list), "%s declaration must be a json-formatted nested list" % prefix
         for flag in flags:
             assert isinstance(flag, list), "%s declaration must be a json-formatted nested list" % prefix
+    if short:
+        return flags[:1]
     return flags
 
-def test_compile_fail(filename, debug, verbose, flags, env):
+def test_compile_fail(filename, debug, verbose, short, flags, env):
     expected_failure = find_labeled_text(filename, 'fails-with')
     if expected_failure is None:
         raise Exception('No fails-with declaration in compile_fail test')
 
-    runs_with = find_labeled_flags(filename, 'runs-with')
+    runs_with = find_labeled_flags(filename, 'runs-with', short)
     try:
         for params in runs_with:
             run(filename, debug, False, params + flags, env)
@@ -140,20 +142,20 @@ def test_compile_fail(filename, debug, verbose, flags, env):
     else:
         raise Exception('Expected failure, but test passed')
 
-def test_run_pass(filename, debug, verbose, flags, env):
-    runs_with = find_labeled_flags(filename, 'runs-with')
+def test_run_pass(filename, debug, verbose, short, flags, env):
+    runs_with = find_labeled_flags(filename, 'runs-with', short)
     try:
         for params in runs_with:
             run(filename, debug, verbose, params + flags, env)
     except TestFailure as e:
         raise Exception('Command failed:\n%s\n\nOutput:\n%s' % (e.command, e.output))
 
-def test_spy(filename, debug, verbose, flags, env):
+def test_spy(filename, debug, verbose, short, flags, env):
     spy_dir = tempfile.mkdtemp(dir=os.path.dirname(os.path.abspath(filename)))
     spy_log = os.path.join(spy_dir, 'spy_%.log')
     spy_flags = ['-level', 'legion_spy=2', '-logfile', spy_log]
 
-    runs_with = find_labeled_flags(filename, 'runs-with')
+    runs_with = find_labeled_flags(filename, 'runs-with', short)
     try:
         for params in runs_with:
             try:
@@ -185,14 +187,14 @@ class TestTimeoutException(Exception):
 def sigalrm_handler(signum, frame):
     raise TestTimeoutException
 
-def test_runner(test_name, test_closure, debug, verbose, filename, timelimit):
+def test_runner(test_name, test_closure, debug, verbose, filename, timelimit, short):
     test_fn, test_args = test_closure
     saved_temps = []
     if timelimit:
         signal.signal(signal.SIGALRM, sigalrm_handler)
         signal.alarm(timelimit)
     try:
-        test_fn(filename, debug, verbose, *test_args)
+        test_fn(filename, debug, verbose, short, *test_args)
         signal.alarm(0)
     except KeyboardInterrupt:
         return test_name, filename, [], INTERRUPT, None
@@ -214,7 +216,7 @@ class Counter:
         self.passed = 0
         self.failed = 0
 
-def get_test_specs(use_run, use_spy, use_hdf5, use_openmp, extra_flags):
+def get_test_specs(use_run, use_spy, use_hdf5, use_openmp, short, extra_flags):
     base = [
         # FIXME: Move this flag into a per-test parameter so we don't use it everywhere.
         # Don't include backtraces on those expected to fail
@@ -222,6 +224,8 @@ def get_test_specs(use_run, use_spy, use_hdf5, use_openmp, extra_flags):
          (os.path.join('tests', 'regent', 'compile_fail'),
           os.path.join('tests', 'bishop', 'compile_fail'),
          )),
+    ]
+    pretty = [
         ('pretty', (test_run_pass, (['-fpretty', '1'] + extra_flags, {})),
          (os.path.join('tests', 'regent', 'run_pass'),
           os.path.join('tests', 'regent', 'perf'),
@@ -263,6 +267,8 @@ def get_test_specs(use_run, use_spy, use_hdf5, use_openmp, extra_flags):
     result = []
     if not use_run and not use_spy and not use_hdf5:
         result.extend(base)
+        if not short:
+            result.extend(pretty)
         result.extend(run)
     if use_run:
         result.extend(run)
@@ -275,12 +281,12 @@ def get_test_specs(use_run, use_spy, use_hdf5, use_openmp, extra_flags):
     return result
 
 def run_all_tests(thread_count, debug, run, spy, hdf5, openmp, extra_flags, verbose, quiet,
-                  only_patterns, skip_patterns, timelimit):
+                  only_patterns, skip_patterns, timelimit, short):
     thread_pool = multiprocessing.Pool(thread_count)
     results = []
 
     # Run tests asynchronously.
-    tests = get_test_specs(run, spy, hdf5, openmp, extra_flags)
+    tests = get_test_specs(run, spy, hdf5, openmp, short, extra_flags)
     for test_name, test_fn, test_dirs in tests:
         test_paths = []
         for test_dir in test_dirs:
@@ -289,14 +295,14 @@ def run_all_tests(thread_count, debug, run, spy, hdf5, openmp, extra_flags, verb
             else:
                 test_paths.extend(
                     path for path in sorted(_glob(test_dir))
-                    if os.path.isfile(path) and os.path.splitext(path)[1] in ('.rg', '.md'))
+                    if os.path.isfile(path) and os.path.splitext(path)[1] in ('.rg',))
 
         for test_path in test_paths:
             if only_patterns and not(any(re.search(p,test_path) for p in only_patterns)):
                 continue
             if skip_patterns and any(re.search(p,test_path) for p in skip_patterns):
                 continue
-            results.append((test_name, test_path, thread_pool.apply_async(test_runner, (test_name, test_fn, debug, verbose, test_path, timelimit))))
+            results.append((test_name, test_path, thread_pool.apply_async(test_runner, (test_name, test_fn, debug, verbose, test_path, timelimit, short))))
 
     thread_pool.close()
 
@@ -408,7 +414,6 @@ def test_driver(argv):
                         dest='openmp')
     parser.add_argument('--extra',
                         action='append',
-                        required=False,
                         default=[],
                         help='extra flags to use for each test',
                         dest='extra_flags')
@@ -435,6 +440,10 @@ def test_driver(argv):
                         type=int,
                         help='max run time for each test (in seconds)',
                         dest='timelimit')
+    parser.add_argument('--short',
+                        action='store_true',
+                        help='truncate runs-with list of each test to one item',
+                        dest='short')
     args = parser.parse_args(argv[1:])
 
     run_all_tests(
@@ -449,7 +458,8 @@ def test_driver(argv):
         args.quiet,
         args.only_patterns,
         args.skip_patterns,
-        args.timelimit)
+        args.timelimit,
+        args.short)
 
 if __name__ == '__main__':
     test_driver(sys.argv)

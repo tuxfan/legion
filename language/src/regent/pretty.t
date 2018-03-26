@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -16,37 +16,78 @@
 
 local ast = require("regent/ast")
 local std = require("regent/std_base")
+local symbol_table = require("regent/symbol_table")
 
-local context = {}
+local pretty_context = {}
 
-function context:__index (field)
-  local value = context [field]
+function pretty_context:__index (field)
+  local value = pretty_context [field]
   if value ~= nil then
     return value
   end
-  error ("context has no field '" .. field .. "' (in lookup)", 2)
+  error ("pretty_context has no field '" .. field .. "' (in lookup)", 2)
 end
 
-function context:__newindex (field, value)
-  error ("context has no field '" .. field .. "' (in assignment)", 2)
+function pretty_context:__newindex (field, value)
+  error ("pretty_context has no field '" .. field .. "' (in assignment)", 2)
 end
 
-function context.new_global_scope()
+function pretty_context.new_global_scope()
   return setmetatable({
-  }, context)
+    name_map = symbol_table.new_global_scope({}),
+    visible_names = symbol_table.new_global_scope({}),
+  }, pretty_context)
 end
 
-function context:new_render_scope()
+function pretty_context:new_local_scope()
+  return setmetatable({
+    name_map = self.name_map:new_local_scope(),
+    visible_names = self.visible_names:new_local_scope(),
+  }, pretty_context)
+end
+
+function pretty_context:print_var(v)
+  local name = self.name_map:safe_lookup(v)
+  return name or tostring(v)
+end
+
+function pretty_context:record_var(node, v)
+  if std.config['debug'] or not v:hasname() then
+    return
+  end
+  if self.visible_names:safe_lookup(v:getname()) then
+    local unique_name = '$' .. v:getname() .. '#' .. tostring(v.symbol_id)
+    self.name_map:insert(node, v, unique_name)
+  else
+    self.visible_names:insert(node, v:getname(), true)
+  end
+end
+
+local render_context = {}
+
+function render_context:__index (field)
+  local value = render_context [field]
+  if value ~= nil then
+    return value
+  end
+  error ("render_context has no field '" .. field .. "' (in lookup)", 2)
+end
+
+function render_context:__newindex (field, value)
+  error ("render_context has no field '" .. field .. "' (in assignment)", 2)
+end
+
+function render_context.new_render_scope()
   return setmetatable({
     indent = 0,
-  }, context)
+  }, render_context)
 end
 
-function context:new_indent_scope(increment)
+function render_context:new_indent_scope(increment)
   assert(increment >= 0)
   return setmetatable({
     indent = self.indent + increment,
-  }, context)
+  }, render_context)
 end
 
 local text = ast.make_factory("text")
@@ -89,7 +130,6 @@ function render.top(cx, node)
 end
 
 function render.entry(cx, node)
-  if not cx then cx = context.new_render_scope() end
   return render.top(cx, node):concat("\n")
 end
 
@@ -177,6 +217,29 @@ local function commas(elts)
   return text.Lines { lines = result }
 end
 
+function pretty.annotations(cx, node)
+  local fields = node:get_fields()
+  local demand = terralib.newlist()
+  local forbid = terralib.newlist()
+  for k, v in pairs(fields) do
+    if v:is(ast.annotation.Demand) then
+      demand:insert("__" .. k)
+    end
+    if v:is(ast.annotation.Forbid) then
+      forbid:insert("__" .. k)
+    end
+  end
+
+  local result = terralib.newlist()
+  if #demand > 0 then
+    result:insert(join({"__demand(", commas(demand), ")"}))
+  end
+  if #forbid > 0 then
+    result:insert(join({"__forbid(", commas(forbid), ")"}))
+  end
+  return text.Lines { lines = result }
+end
+
 function pretty.expr_condition(cx, node)
   return join({
       join(node.conditions:map(tostring), true), "(", pretty.expr(cx, node.value), ")"})
@@ -196,7 +259,7 @@ function pretty.expr_region_root(cx, node)
 end
 
 function pretty.expr_id(cx, node)
-  return text.Line { value = tostring(node.value) }
+  return text.Line { value = cx:print_var(node.value) }
 end
 
 function pretty.expr_constant(cx, node)
@@ -213,6 +276,15 @@ function pretty.expr_function(cx, node)
     name = node.value:get_name():mkstring(".")
   elseif terralib.isfunction(node.value) then
     name = node.value:getname()
+  elseif node.value == _G['array'] or node.value == _G['arrayof'] then
+    name = 'array'
+  elseif node.value == _G['vector'] or node.value == _G['vectorof'] then
+    name = 'vector'
+  elseif node.value == _G['tuple'] then
+    name = 'tuple'
+  elseif regentlib.is_math_op(node.value) then
+    -- HACK: This information should be exported from std.t
+    name = regentlib.get_math_op_name(node.value, node.expr_type.returntype)
   else
     name = tostring(node.value)
   end
@@ -327,11 +399,12 @@ function pretty.expr_region(cx, node)
 end
 
 function pretty.expr_partition(cx, node)
-  return join({
-      "partition(",
-      commas({tostring(node.disjointness),
-              pretty.expr(cx, node.region), pretty.expr(cx, node.coloring)}),
-      ")"})
+  local args = terralib.newlist()
+  args:insert(tostring(node.disjointness))
+  args:insert(pretty.expr(cx, node.region))
+  args:insert(pretty.expr(cx, node.coloring))
+  if node.colors then args:insert(pretty.expr(cx, node.colors)) end
+  return join({"partition(", commas(args), ")"})
 end
 
 function pretty.expr_partition_equal(cx, node)
@@ -601,7 +674,6 @@ function pretty.expr_future_get_result(cx, node)
 end
 
 function pretty.expr(cx, node)
-  if not cx then cx = context.new_render_scope() end
   if node:is(ast.typed.expr.ID) then
     return pretty.expr_id(cx, node)
 
@@ -798,31 +870,38 @@ end
 
 function pretty.stat_if(cx, node)
   local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
   result:insert(join({"if", pretty.expr(cx, node.cond), "then"}, true))
-  result:insert(pretty.block(cx, node.then_block))
+  result:insert(pretty.block(cx:new_local_scope(), node.then_block))
   for _, elseif_block in ipairs(node.elseif_blocks) do
     result:insert(join({"elseif", pretty.expr(cx, elseif_block.cond), "then"}, true))
-    result:insert(pretty.block(cx, elseif_block.block))
+    result:insert(pretty.block(cx:new_local_scope(), elseif_block.block))
   end
   result:insert(text.Line { value = "else" })
-  result:insert(pretty.block(cx, node.else_block))
+  result:insert(pretty.block(cx:new_local_scope(), node.else_block))
   result:insert(text.Line { value = "end" })
   return text.Lines { lines = result }
 end
 
 function pretty.stat_while(cx, node)
   local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
   result:insert(join({"while", pretty.expr(cx, node.cond), "do"}, true))
-  result:insert(pretty.block(cx, node.block))
+  result:insert(pretty.block(cx:new_local_scope(), node.block))
   result:insert(text.Line { value = "end" })
   return text.Lines { lines = result }
 end
 
 function pretty.stat_for_num(cx, node)
   local result = terralib.newlist()
-  result:insert(join({"for", tostring(node.symbol),
+  result:insert(pretty.annotations(cx, node.annotations))
+  local values = pretty.expr_list(cx, node.values)
+  local cx = cx:new_local_scope()
+  cx:record_var(node, node.symbol)
+  result:insert(join({"for", cx:print_var(node.symbol),
                       ":", tostring(node.symbol:gettype()),
-                      "=", pretty.expr_list(cx, node.values), "do"}, true))
+                      "=", values, "do"}, true))
+  local cx = cx:new_local_scope()
   result:insert(pretty.block(cx, node.block))
   result:insert(text.Line { value = "end" })
   return text.Lines { lines = result }
@@ -830,9 +909,14 @@ end
 
 function pretty.stat_for_num_vectorized(cx, node)
   local result = terralib.newlist()
-  result:insert(join({"for", tostring(node.symbol),
+  result:insert(pretty.annotations(cx, node.annotations))
+  local values = pretty.expr_list(cx, node.values)
+  local cx = cx:new_local_scope()
+  cx:record_var(node, node.symbol)
+  result:insert(join({"for", cx:print_var(node.symbol),
                       ":", tostring(node.symbol:gettype()),
-                      "=", pretty.expr_list(cx, node.values), "do -- vectorized"}, true))
+                      "=", values, "do -- vectorized"}, true))
+  local cx = cx:new_local_scope()
   result:insert(pretty.block(cx, node.block))
   result:insert(text.Line { value = "end" })
   return text.Lines { lines = result }
@@ -840,9 +924,14 @@ end
 
 function pretty.stat_for_list(cx, node)
   local result = terralib.newlist()
-  result:insert(join({"for", tostring(node.symbol),
+  result:insert(pretty.annotations(cx, node.annotations))
+  local value = pretty.expr(cx, node.value)
+  local cx = cx:new_local_scope()
+  cx:record_var(node, node.symbol)
+  result:insert(join({"for", cx:print_var(node.symbol),
                       ":", tostring(node.symbol:gettype()),
-                      "in", pretty.expr(cx, node.value), "do"}, true))
+                      "in", value, "do"}, true))
+  local cx = cx:new_local_scope()
   result:insert(pretty.block(cx, node.block))
   result:insert(text.Line { value = "end" })
   return text.Lines { lines = result }
@@ -850,9 +939,14 @@ end
 
 function pretty.stat_for_list_vectorized(cx, node)
   local result = terralib.newlist()
-  result:insert(join({"for", tostring(node.symbol),
+  result:insert(pretty.annotations(cx, node.annotations))
+  local value = pretty.expr(cx, node.value)
+  local cx = cx:new_local_scope()
+  cx:record_var(node, node.symbol)
+  result:insert(join({"for", cx:print_var(node.symbol),
                       ":", tostring(node.symbol:gettype()),
-                      "in", pretty.expr(cx, node.value), "do -- vectorized"}, true))
+                      "in", value, "do -- vectorized"}, true))
+  local cx = cx:new_local_scope()
   result:insert(pretty.block(cx, node.block))
   result:insert(text.Line { value = "end" })
   return text.Lines { lines = result }
@@ -860,8 +954,9 @@ end
 
 function pretty.stat_repeat(cx, node)
   local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
   result:insert(text.Line { value = "repeat" })
-  result:insert(pretty.block(cx, node.block))
+  result:insert(pretty.block(cx:new_local_scope(), node.block))
   result:insert(join({"until", pretty.expr(cx, node.until_cond)}, true))
   result:insert(text.Line { value = "end" })
   return text.Lines { lines = result }
@@ -869,23 +964,30 @@ end
 
 function pretty.stat_must_epoch(cx, node)
   local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
   result:insert(text.Line { value = "must_epoch" })
-  result:insert(pretty.block(cx, node.block))
+  result:insert(pretty.block(cx:new_local_scope(), node.block))
   result:insert(text.Line { value = "end" })
   return text.Lines { lines = result }
 end
 
 function pretty.stat_block(cx, node)
   local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
   result:insert(text.Line { value = "do" })
-  result:insert(pretty.block(cx, node.block))
+  result:insert(pretty.block(cx:new_local_scope(), node.block))
   result:insert(text.Line { value = "end" })
   return text.Lines { lines = result }
 end
 
 function pretty.stat_index_launch_num(cx, node)
   local result = terralib.newlist()
-  result:insert(join({"for", tostring(node.symbol), "=", pretty.expr_list(cx, node.values), "do -- index launch"}, true))
+  result:insert(pretty.annotations(cx, node.annotations))
+  local values = pretty.expr_list(cx, node.values)
+  local cx = cx:new_local_scope()
+  cx:record_var(node, node.symbol)
+  result:insert(join({"for", cx:print_var(node.symbol), "=", values,
+                      "do -- index launch"}, true))
   local call = pretty.expr(cx, node.call)
   if node.reduce_op then
     call = join({pretty.expr(cx, node.reduce_lhs), node.reduce_op .. "=", call}, true)
@@ -897,7 +999,12 @@ end
 
 function pretty.stat_index_launch_list(cx, node)
   local result = terralib.newlist()
-  result:insert(join({"for", tostring(node.symbol), "in", pretty.expr(cx, node.value), "do -- index launch"}, true))
+  result:insert(pretty.annotations(cx, node.annotations))
+  local value = pretty.expr(cx, node.value)
+  local cx = cx:new_local_scope()
+  cx:record_var(node, node.symbol)
+  result:insert(join({"for", cx:print_var(node.symbol), "in", value,
+                      "do -- index launch"}, true))
   local call = pretty.expr(cx, node.call)
   if node.reduce_op then
     call = join({pretty.expr(cx, node.reduce_lhs), node.reduce_op .. "=", call}, true)
@@ -908,79 +1015,136 @@ function pretty.stat_index_launch_list(cx, node)
 end
 
 function pretty.stat_var(cx, node)
-  local symbols = commas(node.symbols:map(function(symbol) return tostring(symbol) end))
-  local types = commas(node.types:map(function(type) return tostring(type) end))
-  local assign = #node.values > 0 and "="
-  return join({"var", symbols, ":", types, assign, pretty.expr_list(cx, node.values)}, true)
+  local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
+  local value = node.value and pretty.expr(cx, node.value)
+  cx:record_var(node, node.symbol)
+  local decl = join({cx:print_var(node.symbol), ":", tostring(node.type)}, true)
+  if value then
+    result:insert(join({"var", decl, "=", value}, true))
+  else
+    result:insert(join({"var", decl}, true))
+  end
+  return text.Lines { lines = result }
 end
 
 function pretty.stat_var_unpack(cx, node)
-  local symbols = commas(node.symbols:map(function(symbol) return tostring(symbol) end))
+  local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
+  local value = pretty.expr(cx, node.value)
+  for _, symbol in ipairs(node.symbols) do
+    cx:record_var(node, symbol)
+  end
+  local symbols = commas(node.symbols:map(function(symbol) return cx:print_var(symbol) end))
   local fields = commas(node.fields:map(function(field) return field end))
-  return join({"var", "{", symbols, "=", fields, "}", "=", pretty.expr(cx, node.value)}, true)
+  result:insert(join({"var", "{", symbols, "=", fields, "}", "=", value}, true))
+  return text.Lines { lines = result }
 end
 
 function pretty.stat_return(cx, node)
-  return join({"return", node.value and pretty.expr(cx, node.value)}, true)
+  local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
+  result:insert(join({"return", node.value and pretty.expr(cx, node.value)}, true))
+  return text.Lines { lines = result }
 end
 
 function pretty.stat_break(cx, node)
-  return text.Line { value = "break" }
+  local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
+  result:insert(text.Line { value = "break" })
+  return text.Lines { lines = result }
 end
 
 function pretty.stat_assignment(cx, node)
-  return join({pretty.expr_list(cx, node.lhs), "=", pretty.expr_list(cx, node.rhs)}, true)
+  local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
+  result:insert(join({pretty.expr(cx, node.lhs), "=", pretty.expr(cx, node.rhs)}, true))
+  return text.Lines { lines = result }
 end
 
 function pretty.stat_reduce(cx, node)
-  return join({pretty.expr_list(cx, node.lhs), node.op .. "=", pretty.expr_list(cx, node.rhs)}, true)
+  local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
+  result:insert(join({pretty.expr(cx, node.lhs), node.op .. "=", pretty.expr(cx, node.rhs)}, true))
+  return text.Lines { lines = result }
 end
 
 function pretty.stat_expr(cx, node)
-  return pretty.expr(cx, node.expr)
+  local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
+  result:insert(pretty.expr(cx, node.expr))
+  return text.Lines { lines = result }
 end
 
 function pretty.stat_begin_trace(cx, node)
-  return join({"__begin_trace(", pretty.expr(cx, node.trace_id), ")"})
+  local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
+  result:insert(join({"__begin_trace(", pretty.expr(cx, node.trace_id), ")"}))
+  return text.Lines { lines = result }
 end
 
 function pretty.stat_end_trace(cx, node)
-  return join({"__end_trace(", pretty.expr(cx, node.trace_id), ")"})
+  local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
+  result:insert(join({"__end_trace(", pretty.expr(cx, node.trace_id), ")"}))
+  return text.Lines { lines = result }
 end
 
 function pretty.stat_map_regions(cx, node)
-  return join({
+  local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
+  result:insert(join({
     "__map_regions(",
     commas(node.region_types:map(function(region) return tostring(region) end)),
-    ")"})
+    ")"}))
+  return text.Lines { lines = result }
 end
 
 function pretty.stat_unmap_regions(cx, node)
-  return join({
+  local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
+  result:insert(join({
     "__unmap_regions(",
     commas(node.region_types:map(function(region) return tostring(region) end)),
-    ")"})
+    ")"}))
+  return text.Lines { lines = result }
 end
 
 function pretty.stat_raw_delete(cx, node)
-  return join({
+  local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
+  result:insert(join({
     "__delete(",
     pretty.expr(cx, node.value),
-    ")"})
+    ")"}))
+  return text.Lines { lines = result }
+end
+
+function pretty.stat_fence(cx, node)
+  local args = terralib.newlist({tostring(node.kind)})
+  if node.blocking then args:insert("__block") end
+
+  local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
+  result:insert(join({
+    "__fence(",
+    commas(args),
+    ")"}))
+  return text.Lines { lines = result }
 end
 
 function pretty.stat_parallelize_with(cx, node)
   local result = terralib.newlist()
+  result:insert(pretty.annotations(cx, node.annotations))
   result:insert(join({"__parallelize_with ",
     commas(node.hints:map(function(hint) return pretty.expr(cx, hint) end)),
     " do"}))
-  result:insert(pretty.block(cx, node.block))
+  result:insert(pretty.block(cx:new_local_scope(), node.block))
   result:insert(text.Line { value = "end" })
   return text.Lines { lines = result }
 end
 
 function pretty.stat(cx, node)
-  if not cx then cx = context.new_global_scope() end
   if node:is(ast.typed.stat.If) then
     return pretty.stat_if(cx, node)
 
@@ -1050,6 +1214,9 @@ function pretty.stat(cx, node)
   elseif node:is(ast.typed.stat.RawDelete) then
     return pretty.stat_raw_delete(cx, node)
 
+  elseif node:is(ast.typed.stat.Fence) then
+    return pretty.stat_fence(cx, node)
+
   elseif node:is(ast.typed.stat.ParallelizeWith) then
     return pretty.stat_parallelize_with(cx, node)
 
@@ -1059,7 +1226,8 @@ function pretty.stat(cx, node)
 end
 
 function pretty.top_task_param(cx, node)
-  return tostring(node.symbol) .. " : " .. tostring(node.param_type)
+  cx:record_var(node, node.symbol)
+  return cx:print_var(node.symbol) .. " : " .. tostring(node.param_type)
 end
 
 function pretty.top_task_privileges(cx, node)
@@ -1161,8 +1329,9 @@ function pretty.top_task(cx, node)
   meta:insertall(pretty.top_task_conditions(cx, node.conditions))
   meta:insertall(pretty.top_task_constraints(cx, node.constraints))
   local config_options = pretty.task_config_options(cx, node.config_options)
+  local annotations = pretty.annotations(cx, node.annotations)
 
-  local lines = terralib.newlist()
+  local lines = terralib.newlist({annotations})
   lines:insert(join({((node.body and "") or "extern ") ..
                      "task " .. name, "(", params, ")", return_type }))
   if node.body then
@@ -1181,6 +1350,8 @@ function pretty.top_task(cx, node)
     lines:insert(pretty.block(cx, node.body))
     lines:insert(text.Line { value = "end" })
   end
+
+  lines:insert(text.Line { value = "" }) -- Blank line
 
   return text.Lines { lines = lines }
 end
@@ -1203,11 +1374,18 @@ function pretty.top(cx, node)
 end
 
 function pretty.entry(node)
-  local cx = context.new_global_scope()
-  return render.entry(cx:new_render_scope(), pretty.top(cx, node))
+  local cx = pretty_context.new_global_scope()
+  return render.entry(render_context.new_render_scope(), pretty.top(cx, node))
 end
 
-pretty.render = render
+function pretty.entry_stat(node)
+  local cx = pretty_context.new_global_scope()
+  return render.entry(render_context.new_render_scope(), pretty.stat(cx, node))
+end
+
+function pretty.entry_expr(node)
+  local cx = pretty_context.new_global_scope()
+  return render.entry(render_context.new_render_scope(), pretty.expr(cx, node))
+end
 
 return pretty
-

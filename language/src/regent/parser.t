@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University, NVIDIA Corporation
+-- Copyright 2018 Stanford University, NVIDIA Corporation
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -61,8 +61,14 @@ function parser.annotation_name(p, required)
     return "external"
   elseif p:nextif("__inline") then
     return "inline"
+  elseif p:nextif("__inner") then
+    return "inner"
+  elseif p:nextif("__leaf") then
+    return "leaf"
   elseif p:nextif("__openmp") then
     return "openmp"
+  elseif p:nextif("__optimize") then
+    return "optimize"
   elseif p:nextif("__parallel") then
     return "parallel"
   elseif p:nextif("__spmd") then
@@ -425,6 +431,17 @@ function parser.disjointness_kind(p)
     return ast.disjointness_kind.Disjoint {}
   else
     p:error("expected disjointness")
+  end
+end
+
+function parser.fence_kind(p)
+  local start = ast.save(p)
+  if p:nextif("__execution") then
+    return ast.fence_kind.Execution {}
+  elseif p:nextif("__mapping") then
+    return ast.fence_kind.Mapping {}
+  else
+    p:error("expected fence kind (__execution or __mapping)")
   end
 end
 
@@ -1671,6 +1688,25 @@ function parser.stat_raw_delete(p, annotations)
   }
 end
 
+function parser.stat_fence(p, annotations)
+  local start = ast.save(p)
+  p:expect("__fence")
+  p:expect("(")
+  local kind = p:fence_kind()
+  local blocking = false
+  if p:nextif(",") then
+    p:expect("__block")
+    blocking = true
+  end
+  p:expect(")")
+  return ast.unspecialized.stat.Fence {
+    kind = kind,
+    blocking = blocking,
+    annotations = ast.default_annotations(),
+    span = ast.span(start, p),
+  }
+end
+
 function parser.stat_parallelize_with(p, annotations)
   local start = ast.save(p)
   p:expect("__parallelize_with")
@@ -1822,6 +1858,9 @@ function parser.stat(p)
 
   elseif p:matches("__delete") then
     return p:stat_raw_delete(annotations)
+
+  elseif p:matches("__fence") then
+    return p:stat_fence(annotations)
 
   elseif p:matches("__parallelize_with") then
     return p:stat_parallelize_with(annotations)

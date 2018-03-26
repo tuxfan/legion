@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -103,7 +103,7 @@ local raw_ptr = raw_ptr_factory(double)
 terra get_raw_ptr(y : int, x : int, bn : int,
                   pr : c.legion_physical_region_t,
                   fld : c.legion_field_id_t)
-  var fa = c.legion_physical_region_get_field_accessor_generic(pr, fld)
+  var fa = c.legion_physical_region_get_field_accessor_array_2d(pr, fld)
   var rect : c.legion_rect_2d_t
   var subrect : c.legion_rect_2d_t
   var offsets : c.legion_byte_offset_t[2]
@@ -111,7 +111,7 @@ terra get_raw_ptr(y : int, x : int, bn : int,
   rect.lo.x[1] = x * bn
   rect.hi.x[0] = (y + 1) * bn - 1
   rect.hi.x[1] = (x + 1) * bn - 1
-  var ptr = c.legion_accessor_generic_raw_rect_ptr_2d(fa, rect, &subrect, offsets)
+  var ptr = c.legion_accessor_array_2d_raw_rect_ptr(fa, rect, &subrect, offsets)
   return raw_ptr { ptr = [&double](ptr), offset = offsets[1].offset / sizeof(double) }
 end
 
@@ -253,15 +253,6 @@ do
   end
 end
 
-task block(r : region(ispace(f2d), double))
-where reads writes(r) do
-  return 1
-end
-
-terra wait_for(x : int)
-  return 1
-end
-
 task cholesky(n : int, np : int, verify : bool)
   regentlib.assert(n % np == 0, "tile sizes should be uniform")
   var is = ispace(f2d, { x = n, y = n })
@@ -288,9 +279,8 @@ task cholesky(n : int, np : int, verify : bool)
     copy(src, dst)
   end
 
-  var _ = 0
-  for c in cs do _ += block(pB[c]) end
-  wait_for(_)
+  __fence(__execution, __block)
+  var ts_start = c.legion_get_current_time_in_micros()
 
   var bn = n / np
   for x = 0, np do
@@ -308,6 +298,10 @@ task cholesky(n : int, np : int, verify : bool)
       end
     end
   end
+
+  __fence(__execution, __block)
+  var ts_end = c.legion_get_current_time_in_micros()
+  c.printf("ELAPSED TIME = %7.3f ms\n", 1e-3 * (ts_end - ts_start))
 
   if verify then verify_result(n, rA, rB) end
 end

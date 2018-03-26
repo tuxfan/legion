@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University, NVIDIA Corporation
+-- Copyright 2018 Stanford University, NVIDIA Corporation
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -59,8 +59,8 @@ function context:new_task_scope(expected_return_type)
   local cx = {
     type_env = self.type_env:new_local_scope(),
     privileges = data.newmap(),
-    constraints = {},
-    region_universe = {},
+    constraints = data.new_recursive_map(2),
+    region_universe = data.newmap(),
     expected_return_type = {expected_return_type},
     fixup_nodes = terralib.newlist(),
     must_epoch = false,
@@ -980,6 +980,7 @@ function type_check.expr_call(cx, node)
     fn = fn,
     args = args,
     conditions = conditions,
+    replicable = false,
     expr_type = expr_type,
     annotations = node.annotations,
     span = node.span,
@@ -1272,14 +1273,20 @@ function type_check.expr_dynamic_cast(cx, node)
   local value = type_check.expr(cx, node.value)
   local value_type = std.check_read(cx, value)
 
-  if not std.is_bounded_type(node.expr_type) then
-    report.error(node, "dynamic_cast requires ptr type as argument 1, got " .. tostring(node.expr_type))
+  if not (std.is_bounded_type(node.expr_type) or std.is_partition(node.expr_type)) then
+    report.error(node, "dynamic_cast requires ptr type or partition type as argument 1, got " .. tostring(node.expr_type))
   end
-  if not std.validate_implicit_cast(value_type, node.expr_type.index_type) then
-    report.error(node, "dynamic_cast requires ptr as argument 2, got " .. tostring(value_type))
+  if not (std.validate_implicit_cast(value_type, node.expr_type.index_type) or
+          std.is_partition(value_type)) then
+    report.error(node, "dynamic_cast requires ptr or partition as argument 2, got " .. tostring(value_type))
   end
   if std.is_bounded_type(value_type) and not std.type_eq(node.expr_type.points_to_type, value_type.points_to_type) then
     report.error(node, "incompatible pointers for dynamic_cast: " .. tostring(node.expr_type) .. " and " .. tostring(value_type))
+  end
+  if std.is_partition(value_type) and
+     not (std.type_eq(node.expr_type:colors(), value_type:colors()) and
+          node.expr_type.parent_region_symbol == value_type.parent_region_symbol) then
+    report.error(node, "incompatible partitions for dynamic_cast: " .. tostring(node.expr_type) .. " and " .. tostring(value_type))
   end
 
   return ast.typed.expr.DynamicCast {
@@ -1415,7 +1422,7 @@ function type_check.expr_region(cx, node)
   std.add_privilege(cx, std.writes, region, data.newtuple())
   -- Freshly created regions are, by definition, disjoint from all
   -- other regions.
-  for other_region, _ in pairs(cx.region_universe) do
+  for other_region, _ in cx.region_universe:items() do
     assert(not std.type_eq(region, other_region))
     -- But still, don't bother litering the constraint space with
     -- trivial constraints.
@@ -1578,25 +1585,21 @@ function type_check.expr_partition_by_field(cx, node)
   local colors = type_check.expr(cx, node.colors)
   local colors_type = std.check_read(cx, colors)
 
-  if not region_type:is_opaque() then
-    report.error(node, "type mismatch in argument 1: expected region of ispace(ptr) but got " ..
-                tostring(region_type))
-  end
-
   if #region.fields ~= 1 then
     report.error(node, "type mismatch in argument 1: expected 1 field but got " ..
                 tostring(#region.fields))
   end
 
-  local field_type = std.get_field_path(region_type:fspace(), region.fields[1])
-  if not std.type_eq(field_type, int) then
-    report.error(node, "type mismatch in argument 1: expected field of type " .. tostring(int) ..
-                " but got " .. tostring(field_type))
-  end
-
   if not std.is_ispace(colors_type) then
     report.error(node, "type mismatch in argument 2: expected ispace but got " ..
                 tostring(colors_type))
+  end
+
+  -- Field type should be the same as the base type of the colors space is
+  local field_type = std.get_field_path(region_type:fspace(), region.fields[1])
+  if not std.type_eq(field_type, colors_type.index_type) then
+    report.error(node, "type mismatch in argument 1: expected field of type " .. tostring(colors_type.index_type) ..
+                " but got " .. tostring(field_type))
   end
 
   local region_symbol
@@ -1660,8 +1663,31 @@ function type_check.expr_image(cx, node)
   end
 
   local field_type = std.get_field_path(region_type:fspace(), region.fields[1])
-  if not (std.is_bounded_type(field_type) and field_type:is_ptr() or std.is_index_type(field_type)) then
-    report.error(node, "type mismatch in argument 3: expected field of ptr type but got " .. tostring(field_type))
+  if not ((std.is_bounded_type(field_type) and std.is_index_type(field_type.index_type)) or
+           std.is_index_type(field_type) or std.is_rect_type(field_type)) then
+    report.error(node, "type mismatch in argument 3: expected field of index or rect type but got " .. tostring(field_type))
+  else
+    -- TODO: indexspaces should be parametrized by index types.
+    --       currently they only support 64-bit points, which is why we do this check here.
+    local function is_base_type_64bit(ty)
+      if std.type_eq(ty, opaque) or std.type_eq(ty, int64) then
+        return true
+      elseif ty:isstruct() then
+        for _, entry in pairs(ty:getentries()) do
+          local entry_type = entry[2] or entry.type
+          if not is_base_type_64bit(entry_type) then return false end
+        end
+        return true
+      else return false end
+    end
+
+    local index_type = field_type
+    if std.is_bounded_type(index_type) then
+      index_type = index_type.index_type
+    end
+    if not is_base_type_64bit(index_type.base_type) then
+      report.error(node, "type mismatch in argument 3: expected field of 64-bit index type (for now) but got " .. tostring(field_type))
+    end
   end
 
   local region_symbol
@@ -1819,8 +1845,31 @@ function type_check.expr_preimage(cx, node)
   end
 
   local field_type = std.get_field_path(region_type:fspace(), region.fields[1])
-  if not (std.is_bounded_type(field_type) and field_type:is_ptr() or std.is_index_type(field_type)) then
-    report.error(node, "type mismatch in argument 3: expected field of ptr type but got " .. tostring(field_type))
+  if not ((std.is_bounded_type(field_type) and std.is_index_type(field_type.index_type)) or
+           std.is_index_type(field_type) or std.is_rect_type(field_type)) then
+    report.error(node, "type mismatch in argument 3: expected field of index or rect type but got " .. tostring(field_type))
+  else
+    -- TODO: indexspaces should be parametrized by index types.
+    --       currently they only support 64-bit points, which is why we do this check here.
+    local function is_base_type_64bit(ty)
+      if std.type_eq(ty, opaque) or std.type_eq(ty, int64) then
+        return true
+      elseif ty:isstruct() then
+        for _, entry in pairs(ty:getentries()) do
+          local entry_type = entry[2] or entry.type
+          if not is_base_type_64bit(entry_type) then return false end
+        end
+        return true
+      else return false end
+    end
+
+    local index_type = field_type
+    if std.is_bounded_type(index_type) then
+      index_type = index_type.index_type
+    end
+    if not is_base_type_64bit(index_type.base_type) then
+      report.error(node, "type mismatch in argument 3: expected field of 64-bit index type (for now) but got " .. tostring(field_type))
+    end
   end
 
   local region_symbol
@@ -1843,7 +1892,11 @@ function type_check.expr_preimage(cx, node)
   else
     parent_symbol = std.newsymbol()
   end
-  local expr_type = std.partition(partition_type.disjointness, parent_symbol, partition_type.colors_symbol)
+  local disjointness = partition_type.disjointness
+  if std.is_rect_type(field_type) then
+    disjointness = std.aliased
+  end
+  local expr_type = std.partition(disjointness, parent_symbol, partition_type.colors_symbol)
 
   -- Hack: Stuff the region type back into the partition's region
   -- argument, if necessary.
@@ -1999,7 +2052,7 @@ function type_check.expr_list_duplicate_partition(cx, node)
   std.add_privilege(cx, std.writes, expr_type, data.newtuple())
   -- Freshly created regions are, by definition, disjoint from all
   -- other regions.
-  for other_region, _ in pairs(cx.region_universe) do
+  for other_region, _ in cx.region_universe:items() do
     assert(not std.type_eq(expr_type, other_region))
     -- But still, don't bother litering the constraint space with
     -- trivial constraints.
@@ -2875,7 +2928,7 @@ function type_check.expr_deref(cx, node)
   local value = type_check.expr(cx, node.value)
   local value_type = std.check_read(cx, value)
 
-  if not std.is_bounded_type(value_type) then
+  if not (value_type:ispointer() or std.is_bounded_type(value_type)) then
     report.error(node, "dereference of non-pointer type " .. tostring(value_type))
   end
 
@@ -2883,7 +2936,14 @@ function type_check.expr_deref(cx, node)
     report.error(node, "dereference in an external task")
   end
 
-  local expr_type = std.ref(value_type)
+  local expr_type
+  if value_type:ispointer() then
+    expr_type = std.rawref(value_type)
+  elseif std.is_bounded_type(value_type) then
+    expr_type = std.ref(value_type)
+  else
+    assert(false)
+  end
 
   return ast.typed.expr.Deref {
     value = value,
@@ -3341,10 +3401,13 @@ function type_check.stat_var(cx, node)
     return insert_implicit_cast(value, value_type, sym:gettype())
   end)
 
+  local value = false
+  if #values > 0 then value = values[1] end
+
   return ast.typed.stat.Var {
-    symbols = node.symbols,
-    types = types,
-    values = values,
+    symbol = node.symbols[1],
+    type = types[1],
+    value = value,
     annotations = node.annotations,
     span = node.span,
   }
@@ -3538,6 +3601,15 @@ function type_check.stat_raw_delete(cx, node)
   }
 end
 
+function type_check.stat_fence(cx, node)
+  return ast.typed.stat.Fence {
+    kind = node.kind,
+    blocking = node.blocking,
+    annotations = node.annotations,
+    span = node.span,
+  }
+end
+
 function type_check.stat_parallelize_with(cx, node)
   local hints = node.hints:map(function(expr)
     if expr:is(ast.specialized.expr.ID) then
@@ -3609,6 +3681,9 @@ function type_check.stat(cx, node)
 
   elseif node:is(ast.specialized.stat.RawDelete) then
     return type_check.stat_raw_delete(cx, node)
+
+  elseif node:is(ast.specialized.stat.Fence) then
+    return type_check.stat_fence(cx, node)
 
   elseif node:is(ast.specialized.stat.ParallelizeWith) then
     return type_check.stat_parallelize_with(cx, node)

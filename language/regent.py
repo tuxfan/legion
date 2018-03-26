@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2017 Stanford University
+# Copyright 2018 Stanford University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,10 +36,7 @@ if 'LG_RT_DIR' in os.environ:
     runtime_dir = os.path.realpath(os.environ['LG_RT_DIR'])
 else:
     runtime_dir = os.path.join(os.path.dirname(regent_dir), 'runtime')
-realm_dir = os.path.join(runtime_dir, 'realm')
-mapper_dir = os.path.join(runtime_dir, 'mappers')
-legion_runtime_dir = os.path.join(runtime_dir, 'legion')
-bindings_dir = os.path.join(os.path.dirname(runtime_dir), 'bindings', 'terra')
+bindings_dir = os.path.join(os.path.dirname(runtime_dir), 'bindings', 'regent')
 
 # Find CUDA.
 if 'CUDA' in os.environ:
@@ -58,13 +55,20 @@ else:
     rdir = load_json_config(rdir_config_filename)
     use_rdir = '1' if rdir in ['auto', 'manual'] else '0'
 
-include_path = [
-    bindings_dir,
-    runtime_dir,
-    realm_dir,
-    mapper_dir,
-    legion_runtime_dir,
-]
+# Detect use of CMake.
+if 'USE_CMAKE' in os.environ:
+    cmake = os.environ['USE_CMAKE'] == '1'
+else:
+    cmake_config_filename = os.path.join(regent_dir, '.cmake.json')
+    cmake = load_json_config(cmake_config_filename)
+cmake_build_dir = os.path.join(regent_dir, 'build')
+
+include_path = (
+    (os.environ['INCLUDE_PATH'].split(';')
+     if 'INCLUDE_PATH' in os.environ else []) +
+    [bindings_dir,
+     runtime_dir,
+])
 if cuda_include_dir is not None:
     include_path.append(cuda_include_dir)
 
@@ -76,8 +80,7 @@ lib_path = (
     (os.environ[LD_LIBRARY_PATH].split(':')
      if LD_LIBRARY_PATH in os.environ else []) +
     [os.path.join(terra_dir, 'build'),
-     bindings_dir,
- ])
+     (os.path.join(cmake_build_dir, 'lib') if cmake else bindings_dir)])
 
 def root_dir():
     return os.path.dirname(runtime_dir)
@@ -88,7 +91,7 @@ def regent(args, env = {}, **kwargs):
         terra_exe = os.path.join(terra_dir, 'bin', 'terra')
 
     if 'TERRA_PATH' in os.environ:
-        terra_path = [os.path.realpath(os.environ['TERRA_PATH'])]
+        terra_path = os.environ['TERRA_PATH'].split(';')
     else:
         terra_path = []
 
@@ -109,6 +112,8 @@ def regent(args, env = {}, **kwargs):
         LD_LIBRARY_PATH: ':'.join(lib_path),
         'INCLUDE_PATH': ';'.join(include_path),
         'LG_RT_DIR': runtime_dir,
+        'USE_CMAKE': '1' if cmake else '0',
+        'CMAKE_BUILD_DIR': cmake_build_dir,
         'USE_RDIR': use_rdir,
     }
 
