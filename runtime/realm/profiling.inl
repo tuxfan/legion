@@ -244,7 +244,7 @@ namespace Realm {
     //ksmurthy: during resilience, we explicitly add OP_STATUS as bad when exception occurs, 
     //in those cases, when we eenter here, there is already a profiling measurement,
     //accounting for that, we should nto assert, and use whatever is reported there
-    assert(measurements.count(static_cast<ProfilingMeasurementID>(T::ID)) == 0);
+    //assert(measurements.count(static_cast<ProfilingMeasurementID>(T::ID)) == 0);
     bool should_actually_add_measurement = false;
     if((ProfilingMeasurementID)T::ID == PMID_OP_STATUS) {
       if(measurements.count((ProfilingMeasurementID)T::ID) > 0) {

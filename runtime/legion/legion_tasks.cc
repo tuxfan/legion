@@ -4257,7 +4257,7 @@ namespace Legion {
       }
 
       if(is_leaf()) 
-        return true;//because a leaf can always be re-executed TODO MIKE CHECK
+        return recover_here;//because a leaf can always be re-executed TODO MIKE CHECK
 
       const std::vector<VersionInfo>* prefail_version_info=get_version_infos();
       for(unsigned idx = 0; idx < all_physical_instances.size(); ++idx) {
