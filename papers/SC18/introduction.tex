@@ -11,12 +11,19 @@ and Schroeder and Gibson state that a large number of CPU and memory failures
 were from parity errors after tracking a five-year log of hardware replacements
 for a $765$ node high-performance computing cluster~\cite{schroeder_gibson}.
 Echoing the sentiment of Snir et al.~\cite{snir}, we believe it is critical to
-overcome this failure roadblock and to develop a resilience mechanism to make 
-avail the performance on extreme- and upcoming exa-scale parallel systems.
+overcome the effect of such failures through a productive and performant resilience 
+interface in the parallel programming model so that a developer can make avail 
+the performance on extreme- and upcoming exa-scale parallel systems.
 
-The traditional solutions to addressing such failures include: (a) the
-application developer to periodically takes checkpoints. completely manual and
-cumbersome.
+The traditional solutions to address failures during large-scale parallel
+executions includes the application developer: (a) manually takes periodic
+checkpoints, and manually controls the rollback and restart from specific
+checkpoints~\cite{checkpointrestart}, (b) employs a semi-automatic approach, 
+where the developer employs programming constructs that have well defined 
+semantics in the event of failures, e.g, \texttt{finish} blocks in X10~\cite{X10}.
+Here, the parallel programming model runtime automatically corrects itself to 
+handle further execution in the event of a failure but limited to the beginning
+of these specific programming constructs. (c) employs a sophistica
 
 In x10, use programming language constructs such as resilient finish blocks to
 capture their completing along with useful semnatic guarantees. 

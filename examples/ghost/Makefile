@@ -1,4 +1,4 @@
-# Copyright 2017 Stanford University
+# Copyright 2018 Stanford University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ endif
 
 # Flags for directing the runtime makefile what to include
 DEBUG           ?= 1		# Include debugging symbols
-REALM_USE_EXCEPTIONS           ?= 1		# ksmurthy, realm
 OUTPUT_LEVEL    ?= LEVEL_DEBUG	# Compile time logging level
 USE_CUDA        ?= 0		# Include CUDA support (requires CUDA)
 USE_GASNET      ?= 0		# Include GASNet support (requires GASNet)

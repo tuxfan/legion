@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2017 Stanford University, NVIDIA Corporation
+# Copyright 2018 Stanford University, NVIDIA Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,11 +24,9 @@ import io
 
 binary_filetype_pat = re.compile(r"FileType: BinaryLegionProf v: (?P<version>\d+(\.\d+)?)")
 
-def getFileObj(filename):
-    buffer_size = 32768
-    if filename.endswith(".gz"):
-        return io.BufferedReader(gzip.open(filename, mode='rb'), \
-                    buffer_size=buffer_size)
+def getFileObj(filename, compressed=False, buffer_size=32768):
+    if compressed:
+        return io.BufferedReader(gzip.open(filename, mode='rb'), buffer_size=buffer_size)
     else:
         return open(filename, mode='rb', buffering=buffer_size)
 
@@ -76,15 +74,16 @@ class LegionProfASCIIDeserializer(LegionDeserializer):
         "OperationInstance": re.compile(prefix + r'Prof Operation (?P<op_id>[0-9]+) (?P<kind>[0-9]+)'),
         "MultiTask": re.compile(prefix + r'Prof Multi (?P<op_id>[0-9]+) (?P<task_id>[0-9]+)'),
         "SliceOwner": re.compile(prefix + r'Prof Slice Owner (?P<parent_id>[0-9]+) (?P<op_id>[0-9]+)'),
-        "TaskWaitInfo": re.compile(prefix + r'Prof Task Wait Info (?P<op_id>[0-9]+) (?P<variant_id>[0-9]+) (?P<wait_start>[0-9]+) (?P<wait_ready>[0-9]+) (?P<wait_end>[0-9]+)'),
+        "TaskWaitInfo": re.compile(prefix + r'Prof Task Wait Info (?P<op_id>[0-9]+) (?P<task_id>[0-9]+) (?P<variant_id>[0-9]+) (?P<wait_start>[0-9]+) (?P<wait_ready>[0-9]+) (?P<wait_end>[0-9]+)'),
         "MetaWaitInfo": re.compile(prefix + r'Prof Meta Wait Info (?P<op_id>[0-9]+) (?P<lg_id>[0-9]+) (?P<wait_start>[0-9]+) (?P<wait_ready>[0-9]+) (?P<wait_end>[0-9]+)'),
-        "TaskInfo": re.compile(prefix + r'Prof Task Info (?P<op_id>[0-9]+) (?P<variant_id>[0-9]+) (?P<proc_id>[a-f0-9]+) (?P<create>[0-9]+) (?P<ready>[0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
+        "TaskInfo": re.compile(prefix + r'Prof Task Info (?P<op_id>[0-9]+) (?P<task_id>[0-9]+) (?P<variant_id>[0-9]+) (?P<proc_id>[a-f0-9]+) (?P<create>[0-9]+) (?P<ready>[0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
         "MetaInfo": re.compile(prefix + r'Prof Meta Info (?P<op_id>[0-9]+) (?P<lg_id>[0-9]+) (?P<proc_id>[a-f0-9]+) (?P<create>[0-9]+) (?P<ready>[0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
         "CopyInfo": re.compile(prefix + r'Prof Copy Info (?P<op_id>[0-9]+) (?P<src>[a-f0-9]+) (?P<dst>[a-f0-9]+) (?P<size>[0-9]+) (?P<create>[0-9]+) (?P<ready>[0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
         "FillInfo": re.compile(prefix + r'Prof Fill Info (?P<op_id>[0-9]+) (?P<dst>[a-f0-9]+) (?P<create>[0-9]+) (?P<ready>[0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
         "InstCreateInfo": re.compile(prefix + r'Prof Inst Create (?P<op_id>[0-9]+) (?P<inst_id>[a-f0-9]+) (?P<create>[0-9]+)'),
         "InstUsageInfo": re.compile(prefix + r'Prof Inst Usage (?P<op_id>[0-9]+) (?P<inst_id>[a-f0-9]+) (?P<mem_id>[a-f0-9]+) (?P<size>[0-9]+)'),
         "InstTimelineInfo": re.compile(prefix + r'Prof Inst Timeline (?P<op_id>[0-9]+) (?P<inst_id>[a-f0-9]+) (?P<create>[0-9]+) (?P<destroy>[0-9]+)'),
+        "PartitionInfo": re.compile(prefix + r'Prof Partition Timeline (?P<op_id>[0-9]+) (?P<part_op>[0-9]+) (?P<create>[0-9]+) (?P<ready>[0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
         "MessageInfo": re.compile(prefix + r'Prof Message Info (?P<kind>[0-9]+) (?P<proc_id>[a-f0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
         "MapperCallInfo": re.compile(prefix + r'Prof Mapper Call Info (?P<kind>[0-9]+) (?P<proc_id>[a-f0-9]+) (?P<op_id>[0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
         "RuntimeCallInfo": re.compile(prefix + r'Prof Runtime Call Info (?P<kind>[0-9]+) (?P<proc_id>[a-f0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
@@ -103,6 +102,7 @@ class LegionProfASCIIDeserializer(LegionDeserializer):
         "task_id": int,
         "kind": int,
         "opkind": int,
+        "part_op": int,
         "proc_id": lambda x: int(x, 16),
         "mem_id": lambda x: int(x, 16),
         "src": lambda x: int(x, 16),
@@ -205,6 +205,7 @@ class LegionProfBinaryDeserializer(LegionDeserializer):
         "MessageKind":        "i", # int (really an enum so this depends)
         "MappingCallKind":    "i", # int (really an enum so this depends)
         "RuntimeCallKind":    "i", # int (really an enum so this depends)
+        "DepPartOpKind":      "i", # int (really an enum so this depends)
     }
 
     def __init__(self, state, callbacks):
@@ -266,7 +267,8 @@ class LegionProfBinaryDeserializer(LegionDeserializer):
         # change the callbacks to be by id
         if not self.callbacks_translated:
             new_callbacks = {LegionProfBinaryDeserializer.name_to_id[name]: callback 
-                               for name, callback in self.callbacks.iteritems()}
+                               for name, callback in self.callbacks.iteritems()
+                               if name in LegionProfBinaryDeserializer.name_to_id}
             self.callbacks = new_callbacks
             self.callbacks_translated = True
 
@@ -280,8 +282,8 @@ class LegionProfBinaryDeserializer(LegionDeserializer):
 
     def parse(self, filename, verbose):
         print("parsing " + str(filename))
-        matches = 0
-        with getFileObj(filename) as log:
+        def parse_file(log):
+            matches = 0
             self.parse_preamble(log)
             _id_raw = log.read(4)
             while _id_raw:
@@ -294,12 +296,20 @@ class LegionProfBinaryDeserializer(LegionDeserializer):
                     kwargs[param_name] = val
                 self.callbacks[_id](**kwargs)
                 _id_raw = log.read(4)
-        return matches
+            return matches
+        try:
+            # Try it as a gzip file first
+            with getFileObj(filename,compressed=True) as log:
+                return parse_file(log)    
+        except IOError:
+            # If its not a gzip file try a normal file
+            with getFileObj(filename,compressed=False) as log:
+                return parse_file(log)
 
 def GetFileTypeInfo(filename):
-    filetype = None
-    version = None
-    with getFileObj(filename) as log:
+    def parse_file(log):
+        filetype = None
+        version = None
         line = log.readline().rstrip()
         m = binary_filetype_pat.match(line)
         if m is not None:
@@ -307,4 +317,11 @@ def GetFileTypeInfo(filename):
             version = m.group("version")
         else:
             filetype = "ascii" # assume if not binary, it's ascii
-    return filetype, version
+        return filetype,version
+    try:
+        # Try it as a gzip file first
+        with getFileObj(filename,compressed=True) as log:
+            return parse_file(log)
+    except IOError:
+        with getFileObj(filename,compressed=False) as log:
+            return parse_file(log)
