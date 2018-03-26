@@ -1,4 +1,0 @@
-pdflatex conference_071817.tex
-bibtex conference_071817.tex
-pdflatex conference_071817.tex
-pdflatex conference_071817.tex
