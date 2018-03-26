@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,12 +14,11 @@
  */
 
 #include "legion.h"
-#include "legion_ops.h"
-#include "legion_tasks.h"
-#include "mapper_manager.h"
-#include "legion_instances.h"
-#include "garbage_collection.h"
-#include "logger_message_descriptor.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_tasks.h"
+#include "legion/mapper_manager.h"
+#include "legion/legion_instances.h"
+#include "legion/garbage_collection.h"
 
 namespace Legion {
   namespace Internal {
@@ -48,7 +47,7 @@ namespace Legion {
     MapperManager::MapperManager(Runtime *rt, Mapping::Mapper *mp, 
                                  MapperID mid, Processor p)
       : runtime(rt), mapper(mp), mapper_id(mid), processor(p),
-        mapper_lock(Reservation::create_reservation()), next_mapper_event(1)
+        profile_mapper(runtime->profiler != NULL)
     //--------------------------------------------------------------------------
     {
     }
@@ -59,8 +58,13 @@ namespace Legion {
     {
       // We can now delete our mapper
       delete mapper;
-      mapper_lock.destroy_reservation();
-      mapper_lock = Reservation::NO_RESERVATION;
+      // Free all the available MappingCallInfo's we were keeping around
+      for (std::vector<MappingCallInfo*>::iterator
+	     it = available_infos.begin(); it != available_infos.end(); it++)
+      {
+	delete *it;
+      }
+      available_infos.clear();
     }
 
     //--------------------------------------------------------------------------
@@ -72,14 +76,14 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void MapperManager::invoke_select_task_options(TaskOp *task, 
-     Mapper::TaskOptions *options, bool first_invocation, MappingCallInfo *info)
+                            Mapper::TaskOptions *options, MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
       if (info == NULL)
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(SELECT_TASK_OPTIONS_CALL,
-                            NULL, first_invocation, continuation_precondition);
+                                 NULL, continuation_precondition);
         // If we need to build a continuation do that now
         if (continuation_precondition.exists())
         {
@@ -99,7 +103,6 @@ namespace Legion {
     void MapperManager::invoke_premap_task(TaskOp *task, 
                                            Mapper::PremapTaskInput *input,
                                            Mapper::PremapTaskOutput *output, 
-                                           bool first_invocation,
                                            MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -107,7 +110,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(PREMAP_TASK_CALL,
-                             task, first_invocation, continuation_precondition);
+                                 task, continuation_precondition);
         // Build a continuation if necessary
         if (continuation_precondition.exists())
         {
@@ -126,7 +129,6 @@ namespace Legion {
     void MapperManager::invoke_slice_task(TaskOp *task, 
                                           Mapper::SliceTaskInput *input,
                                           Mapper::SliceTaskOutput *output, 
-                                          bool first_invocation,
                                           MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -134,7 +136,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(SLICE_TASK_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 NULL, continuation_precondition);
         // Build a continuation if necessary
         if (continuation_precondition.exists())
         {
@@ -153,7 +155,6 @@ namespace Legion {
     void MapperManager::invoke_map_task(TaskOp *task, 
                                         Mapper::MapTaskInput *input,
                                         Mapper::MapTaskOutput *output, 
-                                        bool first_invocation,
                                         MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -161,7 +162,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(MAP_TASK_CALL,
-                             task, first_invocation, continuation_precondition);
+                                 task, continuation_precondition);
         // Build a continuation if necessary
         if (continuation_precondition.exists())
         {
@@ -180,7 +181,6 @@ namespace Legion {
     void MapperManager::invoke_select_task_variant(TaskOp *task,
                                             Mapper::SelectVariantInput *input,
                                             Mapper::SelectVariantOutput *output,
-                                            bool first_invocation,
                                             MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -188,7 +188,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(SELECT_VARIANT_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 NULL, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<TaskOp, Mapper::SelectVariantInput, 
@@ -207,7 +207,6 @@ namespace Legion {
     void MapperManager::invoke_post_map_task(TaskOp *task, 
                                              Mapper::PostMapInput *input,
                                              Mapper::PostMapOutput *output,
-                                             bool first_invocation,
                                              MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -215,7 +214,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(POSTMAP_TASK_CALL,
-                             task, first_invocation, continuation_precondition);
+                                 task, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<TaskOp,Mapper::PostMapInput,Mapper::PostMapOutput,
@@ -233,7 +232,6 @@ namespace Legion {
     void MapperManager::invoke_select_task_sources(TaskOp *task, 
                                     Mapper::SelectTaskSrcInput *input,
                                     Mapper::SelectTaskSrcOutput *output,
-                                    bool first_invocation,
                                     MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -241,7 +239,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(TASK_SELECT_SOURCES_CALL,
-                             task, first_invocation, continuation_precondition);
+                                 task, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<TaskOp, Mapper::SelectTaskSrcInput,
@@ -260,7 +258,6 @@ namespace Legion {
     void MapperManager::invoke_task_create_temporary(TaskOp *task,
                                       Mapper::CreateTaskTemporaryInput *input,
                                       Mapper::CreateTaskTemporaryOutput *output,
-                                      bool first_invocation,
                                       MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -268,7 +265,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(TASK_CREATE_TEMPORARY_CALL,
-                             task, first_invocation, continuation_precondition);
+                                 task, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<TaskOp, Mapper::CreateTaskTemporaryInput,
@@ -286,7 +283,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     void MapperManager::invoke_task_speculate(TaskOp *task,
                                               Mapper::SpeculativeOutput *output,
-                                              bool first_invocation,
                                               MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -294,7 +290,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(TASK_SPECULATE_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 NULL, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<TaskOp, Mapper::SpeculativeOutput,
@@ -311,7 +307,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     void MapperManager::invoke_task_report_profiling(TaskOp *task, 
                                               Mapper::TaskProfilingInfo *input,
-                                              bool first_invocation,
                                               MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -319,7 +314,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(TASK_REPORT_PROFILING_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 NULL, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<TaskOp, Mapper::TaskProfilingInfo,
@@ -337,7 +332,6 @@ namespace Legion {
     void MapperManager::invoke_map_inline(MapOp *op, 
                                           Mapper::MapInlineInput *input,
                                           Mapper::MapInlineOutput *output, 
-                                          bool first_invocation,
                                           MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -345,7 +339,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(MAP_INLINE_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<MapOp, 
@@ -364,7 +358,6 @@ namespace Legion {
     void MapperManager::invoke_select_inline_sources(MapOp *op, 
                                       Mapper::SelectInlineSrcInput *input,
                                       Mapper::SelectInlineSrcOutput *output,
-                                      bool first_invocation,
                                       MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -372,7 +365,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(INLINE_SELECT_SOURCES_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<MapOp, Mapper::SelectInlineSrcInput,
@@ -391,7 +384,6 @@ namespace Legion {
     void MapperManager::invoke_inline_create_temporary(MapOp *op,
                                     Mapper::CreateInlineTemporaryInput *input,
                                     Mapper::CreateInlineTemporaryOutput *output,
-                                    bool first_invocation, 
                                     MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -399,7 +391,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(INLINE_CREATE_TEMPORARY_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<MapOp, Mapper::CreateInlineTemporaryInput,
@@ -417,7 +409,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     void MapperManager::invoke_inline_report_profiling(MapOp *op, 
                                      Mapper::InlineProfilingInfo *input,
-                                     bool first_invocation,
                                      MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -425,7 +416,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(INLINE_REPORT_PROFILING_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 NULL, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<MapOp, Mapper::InlineProfilingInfo,
@@ -443,7 +434,6 @@ namespace Legion {
     void MapperManager::invoke_map_copy(CopyOp *op,
                                         Mapper::MapCopyInput *input,
                                         Mapper::MapCopyOutput *output,
-                                        bool first_invocation,
                                         MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -451,7 +441,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(MAP_COPY_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<CopyOp,Mapper::MapCopyInput,Mapper::MapCopyOutput,
@@ -469,7 +459,6 @@ namespace Legion {
     void MapperManager::invoke_select_copy_sources(CopyOp *op,
                                     Mapper::SelectCopySrcInput *input,
                                     Mapper::SelectCopySrcOutput *output,
-                                    bool first_invocation,
                                     MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -477,7 +466,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(COPY_SELECT_SOURCES_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<CopyOp, Mapper::SelectCopySrcInput,
@@ -496,7 +485,6 @@ namespace Legion {
     void MapperManager::invoke_copy_create_temporary(CopyOp *op,
                                     Mapper::CreateCopyTemporaryInput *input,
                                     Mapper::CreateCopyTemporaryOutput *output,
-                                    bool first_invocation,
                                     MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -504,7 +492,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(COPY_CREATE_TEMPORARY_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<CopyOp, Mapper::CreateCopyTemporaryInput,
@@ -522,7 +510,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     void MapperManager::invoke_copy_speculate(CopyOp *op, 
                                               Mapper::SpeculativeOutput *output,
-                                              bool first_invocation,
                                               MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -530,7 +517,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(COPY_SPECULATE_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<CopyOp, Mapper::SpeculativeOutput,
@@ -547,7 +534,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     void MapperManager::invoke_copy_report_profiling(CopyOp *op,
                                              Mapper::CopyProfilingInfo *input,
-                                             bool first_invocation,
                                              MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -555,7 +541,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(COPY_REPORT_PROFILING_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<CopyOp, Mapper::CopyProfilingInfo,
@@ -573,7 +559,6 @@ namespace Legion {
     void MapperManager::invoke_map_close(CloseOp *op,
                                          Mapper::MapCloseInput *input,
                                          Mapper::MapCloseOutput *output,
-                                         bool first_invocation,
                                          MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -581,7 +566,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(MAP_CLOSE_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<CloseOp, Mapper::MapCloseInput, 
@@ -599,7 +584,6 @@ namespace Legion {
     void MapperManager::invoke_select_close_sources(CloseOp *op,
                                          Mapper::SelectCloseSrcInput *input,
                                          Mapper::SelectCloseSrcOutput *output,
-                                         bool first_invocation,
                                          MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -607,7 +591,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(CLOSE_SELECT_SOURCES_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<CloseOp, Mapper::SelectCloseSrcInput,
@@ -626,7 +610,6 @@ namespace Legion {
     void MapperManager::invoke_close_create_temporary(CloseOp *op,
                                     Mapper::CreateCloseTemporaryInput *input,
                                     Mapper::CreateCloseTemporaryOutput *output,
-                                    bool first_invocation, 
                                     MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -634,7 +617,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(CLOSE_CREATE_TEMPORARY_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<CloseOp, Mapper::CreateCloseTemporaryInput,
@@ -652,7 +635,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     void MapperManager::invoke_close_report_profiling(CloseOp *op,
                                           Mapper::CloseProfilingInfo *input,
-                                          bool first_invocation,
                                           MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -660,7 +642,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(CLOSE_REPORT_PROFILING_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<CloseOp, Mapper::CloseProfilingInfo,
@@ -678,7 +660,6 @@ namespace Legion {
     void MapperManager::invoke_map_acquire(AcquireOp *op,
                                            Mapper::MapAcquireInput *input,
                                            Mapper::MapAcquireOutput *output,
-                                           bool first_invocation,
                                            MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -686,7 +667,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(MAP_ACQUIRE_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<AcquireOp, Mapper::MapAcquireInput,
@@ -703,7 +684,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     void MapperManager::invoke_acquire_speculate(AcquireOp *op,
                                              Mapper::SpeculativeOutput *output,
-                                             bool first_invocation,
                                              MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -711,7 +691,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(ACQUIRE_SPECULATE_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<AcquireOp, Mapper::SpeculativeOutput,
@@ -728,7 +708,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     void MapperManager::invoke_acquire_report_profiling(AcquireOp *op,
                                          Mapper::AcquireProfilingInfo *input,
-                                         bool first_invocation,
                                          MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -736,7 +715,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(ACQUIRE_REPORT_PROFILING_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<AcquireOp, Mapper::AcquireProfilingInfo,
@@ -754,7 +733,6 @@ namespace Legion {
     void MapperManager::invoke_map_release(ReleaseOp *op,
                                            Mapper::MapReleaseInput *input,
                                            Mapper::MapReleaseOutput *output,
-                                           bool first_invocation,
                                            MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -762,7 +740,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(MAP_RELEASE_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<ReleaseOp, Mapper::MapReleaseInput,
@@ -780,7 +758,6 @@ namespace Legion {
     void MapperManager::invoke_select_release_sources(ReleaseOp *op,
                                        Mapper::SelectReleaseSrcInput *input,
                                        Mapper::SelectReleaseSrcOutput *output,
-                                       bool first_invocation,
                                        MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -788,7 +765,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(RELEASE_SELECT_SOURCES_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<ReleaseOp, Mapper::SelectReleaseSrcInput,
@@ -807,14 +784,14 @@ namespace Legion {
     void MapperManager::invoke_release_create_temporary(ReleaseOp *op,
                                   Mapper::CreateReleaseTemporaryInput *input,
                                   Mapper::CreateReleaseTemporaryOutput *output,
-                                  bool first_invocation, MappingCallInfo *info)
+                                  MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
       if (info == NULL)
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(RELEASE_CREATE_TEMPORARY_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<ReleaseOp, Mapper::CreateReleaseTemporaryInput,
@@ -832,7 +809,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     void MapperManager::invoke_release_speculate(ReleaseOp *op,
                                              Mapper::SpeculativeOutput *output,
-                                             bool first_invocation,
                                              MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -840,7 +816,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(RELEASE_SPECULATE_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<ReleaseOp, Mapper::SpeculativeOutput,
@@ -857,7 +833,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     void MapperManager::invoke_release_report_profiling(ReleaseOp *op,
                                          Mapper::ReleaseProfilingInfo *input,
-                                         bool first_invocation,
                                          MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -865,7 +840,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(RELEASE_REPORT_PROFILING_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<ReleaseOp, Mapper::ReleaseProfilingInfo,
@@ -880,9 +855,145 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    void MapperManager::invoke_select_partition_projection(
+                          DependentPartitionOp *op,
+                          Mapper::SelectPartitionProjectionInput *input,
+                          Mapper::SelectPartitionProjectionOutput *output,
+                          MappingCallInfo *info)
+    //--------------------------------------------------------------------------
+    {
+      if (info == NULL)
+      {
+        RtEvent continuation_precondition;
+        info = begin_mapper_call(SELECT_PARTITION_PROJECTION_CALL,
+                                 op, continuation_precondition);
+        if (continuation_precondition.exists())
+        {
+          MapperContinuation3<DependentPartitionOp, 
+                            Mapper::SelectPartitionProjectionInput,
+                            Mapper::SelectPartitionProjectionOutput, 
+                            &MapperManager::invoke_select_partition_projection>
+                              continuation(this, op, input, output, info);
+          continuation.defer(runtime, continuation_precondition, op);
+          return;
+        }
+      }
+      mapper->select_partition_projection(info, *op, *input, *output);
+      finish_mapper_call(info);
+    }
+
+    //--------------------------------------------------------------------------
+    void MapperManager::invoke_map_partition(DependentPartitionOp *op,
+                                  Mapper::MapPartitionInput *input,
+                                  Mapper::MapPartitionOutput *output,
+                                  MappingCallInfo *info)
+    //--------------------------------------------------------------------------
+    {
+      if (info == NULL)
+      {
+        RtEvent continuation_precondition;
+        info = begin_mapper_call(MAP_PARTITION_CALL,
+                                 op, continuation_precondition);
+        if (continuation_precondition.exists())
+        {
+          MapperContinuation3<DependentPartitionOp, 
+                            Mapper::MapPartitionInput,
+                            Mapper::MapPartitionOutput, 
+                            &MapperManager::invoke_map_partition>
+                              continuation(this, op, input, output, info);
+          continuation.defer(runtime, continuation_precondition, op);
+          return;
+        }
+      }
+      mapper->map_partition(info, *op, *input, *output);
+      finish_mapper_call(info);
+    }
+
+    //--------------------------------------------------------------------------
+    void MapperManager::invoke_select_partition_sources(
+                                  DependentPartitionOp *op,
+                                  Mapper::SelectPartitionSrcInput *input,
+                                  Mapper::SelectPartitionSrcOutput *output,
+                                  MappingCallInfo *info)
+    //--------------------------------------------------------------------------
+    {
+      if (info == NULL)
+      {
+        RtEvent continuation_precondition;
+        info = begin_mapper_call(PARTITION_SELECT_SOURCES_CALL,
+                                 op, continuation_precondition);
+        if (continuation_precondition.exists())
+        {
+          MapperContinuation3<DependentPartitionOp, 
+                            Mapper::SelectPartitionSrcInput,
+                            Mapper::SelectPartitionSrcOutput, 
+                            &MapperManager::invoke_select_partition_sources>
+                              continuation(this, op, input, output, info);
+          continuation.defer(runtime, continuation_precondition, op);
+          return;
+        }
+      }
+      mapper->select_partition_sources(info, *op, *input, *output);
+      finish_mapper_call(info);
+    }
+
+    //--------------------------------------------------------------------------
+    void MapperManager::invoke_partition_create_temporary(
+                                DependentPartitionOp *op,
+                                Mapper::CreatePartitionTemporaryInput *input,
+                                Mapper::CreatePartitionTemporaryOutput *output,
+                                MappingCallInfo *info)
+    //--------------------------------------------------------------------------
+    {
+      if (info == NULL)
+      {
+        RtEvent continuation_precondition;
+        info = begin_mapper_call(PARTITION_CREATE_TEMPORARY_CALL,
+                                 op, continuation_precondition);
+        if (continuation_precondition.exists())
+        {
+          MapperContinuation3<DependentPartitionOp, 
+                            Mapper::CreatePartitionTemporaryInput,
+                            Mapper::CreatePartitionTemporaryOutput, 
+                            &MapperManager::invoke_partition_create_temporary>
+                              continuation(this, op, input, output, info);
+          continuation.defer(runtime, continuation_precondition, op);
+          return;
+        }
+      }
+      mapper->create_partition_temporary_instance(info, *op, *input, *output);
+      finish_mapper_call(info);
+    }
+
+    //--------------------------------------------------------------------------
+    void MapperManager::invoke_partition_report_profiling(
+                                         DependentPartitionOp *op,
+                                         Mapper::PartitionProfilingInfo *input,
+                                         MappingCallInfo *info)
+    //--------------------------------------------------------------------------
+    {
+      if (info == NULL)
+      {
+        RtEvent continuation_precondition;
+        info = begin_mapper_call(PARTITION_REPORT_PROFILING_CALL,
+                                 op, continuation_precondition);
+        if (continuation_precondition.exists())
+        {
+          MapperContinuation2<DependentPartitionOp, 
+                              Mapper::PartitionProfilingInfo,
+                              &MapperManager::invoke_partition_report_profiling>
+                                continuation(this, op, input, info);
+          continuation.defer(runtime, continuation_precondition, op);  
+          return;
+        }
+      }
+      mapper->report_profiling(info, *op, *input);
+      finish_mapper_call(info);
+    }
+
+    //--------------------------------------------------------------------------
     void MapperManager::invoke_configure_context(TaskOp *task,
                                          Mapper::ContextConfigOutput *output,
-                                         bool first_invocation,
                                          MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -890,7 +1001,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(CONFIGURE_CONTEXT_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 task, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<TaskOp, Mapper::ContextConfigOutput,
@@ -908,7 +1019,6 @@ namespace Legion {
     void MapperManager::invoke_select_tunable_value(TaskOp *task,
                                      Mapper::SelectTunableInput *input,
                                      Mapper::SelectTunableOutput *output,
-                                     bool first_invocation,
                                      MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -916,7 +1026,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(SELECT_TUNABLE_VALUE_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 task, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<TaskOp, Mapper::SelectTunableInput,
@@ -935,7 +1045,6 @@ namespace Legion {
     void MapperManager::invoke_map_must_epoch(MustEpochOp *op,
                                             Mapper::MapMustEpochInput *input,
                                             Mapper::MapMustEpochOutput *output,
-                                            bool first_invocation,
                                             MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -943,7 +1052,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(MAP_MUST_EPOCH_CALL,
-                              op, first_invocation, continuation_precondition);
+                                 op, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation3<MustEpochOp, Mapper::MapMustEpochInput, 
@@ -962,7 +1071,6 @@ namespace Legion {
     void MapperManager::invoke_map_dataflow_graph(
                                    Mapper::MapDataflowGraphInput *input,
                                    Mapper::MapDataflowGraphOutput *output,
-                                   bool first_invocation,
                                    MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -970,7 +1078,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(MAP_DATAFLOW_GRAPH_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 NULL, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<Mapper::MapDataflowGraphInput, 
@@ -989,7 +1097,6 @@ namespace Legion {
     void MapperManager::invoke_select_tasks_to_map(
                                     Mapper::SelectMappingInput *input,
                                     Mapper::SelectMappingOutput *output,
-                                    bool first_invocation,
                                     MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -997,7 +1104,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(SELECT_TASKS_TO_MAP_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 NULL, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<Mapper::SelectMappingInput,
@@ -1016,7 +1123,6 @@ namespace Legion {
     void MapperManager::invoke_select_steal_targets(
                                      Mapper::SelectStealingInput *input,
                                      Mapper::SelectStealingOutput *output,
-                                     bool first_invocation,
                                      MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -1024,7 +1130,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(SELECT_STEAL_TARGETS_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 NULL, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<Mapper::SelectStealingInput,
@@ -1043,7 +1149,6 @@ namespace Legion {
     void MapperManager::invoke_permit_steal_request(
                                      Mapper::StealRequestInput *input,
                                      Mapper::StealRequestOutput *output,
-                                     bool first_invocation,
                                      MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -1051,7 +1156,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(PERMIT_STEAL_REQUEST_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 NULL, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation2<Mapper::StealRequestInput,
@@ -1068,27 +1173,33 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void MapperManager::invoke_handle_message(Mapper::MapperMessage *message,
-                                              bool first_invocation,
-                                              MappingCallInfo *info)
+                                       void *check_defer, MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
       if (info == NULL)
       {
         // Special case for handle message, always defer it if we are also
-        // the sender in order to avoid deadlocks
-        if ((message->sender == processor) && first_invocation)
+        // the sender in order to avoid deadlocks, same thing for any
+        // local processor for non-reentrant mappers, have to use a test
+        // for NULL pointer here since mapper continuation want
+        // pointer arguments
+        if ((check_defer == NULL) && 
+            ((message->sender == processor) ||
+             ((mapper->get_mapper_sync_model() == 
+               Mapper::SERIALIZED_NON_REENTRANT_MAPPER_MODEL) && 
+              runtime->is_local(message->sender))))
         {
           defer_message(message);
           return;
         }
         RtEvent continuation_precondition;
         info = begin_mapper_call(HANDLE_MESSAGE_CALL,
-                          NULL, first_invocation, continuation_precondition);
+                                 NULL, continuation_precondition);
         if (continuation_precondition.exists())
         {
-          MapperContinuation1<Mapper::MapperMessage,
+          MapperContinuation2<Mapper::MapperMessage, void,
                               &MapperManager::invoke_handle_message>
-                                continuation(this, message, info);
+                                continuation(this, message, info, info);
           continuation.defer(runtime, continuation_precondition);
           return;
         }
@@ -1100,7 +1211,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     void MapperManager::invoke_handle_task_result(
                                    Mapper::MapperTaskResult *result,
-                                   bool first_invocation,
                                    MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
@@ -1108,7 +1218,7 @@ namespace Legion {
       {
         RtEvent continuation_precondition;
         info = begin_mapper_call(HANDLE_TASK_RESULT_CALL,
-                             NULL, first_invocation, continuation_precondition);
+                                 NULL, continuation_precondition);
         if (continuation_precondition.exists())
         {
           MapperContinuation1<Mapper::MapperTaskResult,
@@ -1123,11 +1233,31 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    /*static*/ void MapperManager::finish_mapper_call(
-                                   const FinishMapperCallContinuationArgs *args)
+    void MapperManager::update_mappable_tag(MappingCallInfo *ctx,
+                                 const Mappable &mappable, MappingTagID new_tag)
     //--------------------------------------------------------------------------
     {
-      args->manager->finish_mapper_call(args->info, false/*first invocation*/);
+      Mappable *map = const_cast<Mappable*>(&mappable);
+      map->tag = new_tag;
+    }
+
+    //--------------------------------------------------------------------------
+    void MapperManager::update_mappable_data(MappingCallInfo *ctx,
+            const Mappable &mappable, const void *mapper_data, size_t data_size)
+    //--------------------------------------------------------------------------
+    {
+      Mappable *map = const_cast<Mappable*>(&mappable);
+      // Free the old buffer if there is one
+      if (map->mapper_data != NULL)
+        free(map->mapper_data);
+      map->mapper_data_size = data_size;
+      if (data_size > 0)
+      {
+        map->mapper_data = malloc(data_size);
+        memcpy(map->mapper_data, mapper_data, data_size);
+      }
+      else
+        map->mapper_data = NULL;
     }
 
     //--------------------------------------------------------------------------
@@ -1172,7 +1302,7 @@ namespace Legion {
       RtEvent ready;
       instance.impl = runtime->find_or_request_physical_manager(did, ready);
       if (ready.exists())
-        ready.lg_wait();
+        ready.wait();
       resume_mapper_call(ctx);
     }
 
@@ -1182,12 +1312,7 @@ namespace Legion {
     {
       pause_mapper_call(ctx);
       MapperEvent result;
-      RtUserEvent event = Runtime::create_rt_user_event();
-      {
-        AutoLock m_lock(mapper_lock);
-        result.mapper_event_id = next_mapper_event++;
-        mapper_events[result.mapper_event_id] = event;
-      }
+      result.impl = Runtime::create_rt_user_event();
       resume_mapper_call(ctx);
       return result;
     }
@@ -1198,17 +1323,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
-      bool triggered = true;
-      RtEvent wait_on;
-      {
-        AutoLock m_lock(mapper_lock, 1, false/*exclusive*/); 
-        std::map<unsigned,RtUserEvent>::const_iterator finder = 
-          mapper_events.find(event.mapper_event_id);
-        if (finder != mapper_events.end())
-          wait_on = finder->second;
-      }
-      if (wait_on.exists())
-        triggered = wait_on.has_triggered();
+      const bool triggered = event.impl.has_triggered();
       resume_mapper_call(ctx);
       return triggered;
     }
@@ -1219,17 +1334,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
-      RtUserEvent to_trigger;
-      {
-        AutoLock m_lock(mapper_lock);
-        std::map<unsigned,RtUserEvent>::iterator finder = 
-          mapper_events.find(event.mapper_event_id);
-        if (finder != mapper_events.end())
-        {
-          to_trigger = finder->second;
-          mapper_events.erase(finder);
-        }
-      }
+      RtUserEvent to_trigger = event.impl;
       if (to_trigger.exists())
         Runtime::trigger_event(to_trigger);
       resume_mapper_call(ctx);
@@ -1241,16 +1346,9 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
-      RtEvent wait_on;
-      {
-        AutoLock m_lock(mapper_lock);
-        std::map<unsigned,RtUserEvent>::iterator finder = 
-          mapper_events.find(event.mapper_event_id);
-        if (finder != mapper_events.end())
-          wait_on = finder->second;
-      }
+      RtEvent wait_on = event.impl;
       if (wait_on.exists())
-        wait_on.lg_wait();
+        wait_on.wait();
       resume_mapper_call(ctx);
     }
 
@@ -1263,18 +1361,11 @@ namespace Legion {
       VariantImpl *impl = 
         runtime->find_variant_impl(task_id, vid, true/*can fail*/);
       if (impl == NULL)
-      {
-        MessageDescriptor INVALID_MAPPER_REQUEST(1700, "undefined");
-        log_run.error(INVALID_MAPPER_REQUEST.id(),
+        REPORT_LEGION_ERROR(ERROR_INVALID_ARGUMENTS_TO_MAPPER_RUNTIME,
                       "Invalid mapper request: mapper %s requested execution "
                       "constraints for variant %ld in mapper call %s, but "
                       "that variant does not exist.", mapper->get_mapper_name(),
-                      vid, get_mapper_call_name(ctx->kind));
-#ifdef DEBUG_LEGION
-        assert(false);
-#endif
-        exit(ERROR_INVALID_ARGUMENTS_TO_MAPPER_RUNTIME);
-      }
+                      vid, get_mapper_call_name(ctx->kind))
       const ExecutionConstraintSet &result = impl->get_execution_constraints();
       resume_mapper_call(ctx);
       return result;
@@ -1289,18 +1380,11 @@ namespace Legion {
       VariantImpl *impl = 
         runtime->find_variant_impl(task_id, vid, true/*can fail*/);
       if (impl == NULL)
-      {
-        MessageDescriptor INVALID_MAPPER_REQUEST2(1701, "undefined");
-        log_run.error(INVALID_MAPPER_REQUEST2.id(),
+        REPORT_LEGION_ERROR(ERROR_INVALID_ARGUMENTS_TO_MAPPER_RUNTIME,
                       "Invalid mapper request: mapper %s requested task layout "
                       "constraints for variant %ld in mapper call %s, but "
                       "that variant does not exist.", mapper->get_mapper_name(),
-                      vid, get_mapper_call_name(ctx->kind));
-#ifdef DEBUG_LEGION
-        assert(false);
-#endif
-        exit(ERROR_INVALID_ARGUMENTS_TO_MAPPER_RUNTIME);
-      }
+                      vid, get_mapper_call_name(ctx->kind))
       const TaskLayoutConstraintSet& result = impl->get_layout_constraints();
       resume_mapper_call(ctx);
       return result;
@@ -1315,19 +1399,12 @@ namespace Legion {
       LayoutConstraints *constraints = 
         runtime->find_layout_constraints(layout_id, true/*can fail*/);
       if (constraints == NULL)
-      {
-        MessageDescriptor INVALID_MAPPER_REQUEST3(1702, "undefined");
-        log_run.error(INVALID_MAPPER_REQUEST3.id(),
+        REPORT_LEGION_ERROR(ERROR_INVALID_ARGUMENTS_TO_MAPPER_RUNTIME,
                       "Invalid mapper request: mapper %s requested layout "
                       "constraints for layout ID %ld in mapper call %s, but "
                       "that layout constraint ID is invalid.",
                       mapper->get_mapper_name(), layout_id,
-                      get_mapper_call_name(ctx->kind));
-#ifdef DEBUG_LEGION
-        assert(false);
-#endif
-        exit(ERROR_INVALID_ARGUMENTS_TO_MAPPER_RUNTIME);
-      }
+                      get_mapper_call_name(ctx->kind))
       resume_mapper_call(ctx);
       return *constraints;
     }
@@ -1365,20 +1442,13 @@ namespace Legion {
       LayoutConstraints *c2 = 
         runtime->find_layout_constraints(set2, true/*can fail*/);
       if ((c1 == NULL) || (c2 == NULL))
-      {
-        MessageDescriptor INVALID_MAPPER_REQUEST4(1703, "undefined");
-        log_run.error(INVALID_MAPPER_REQUEST4.id(),
+        REPORT_LEGION_ERROR(ERROR_INVALID_ARGUMENTS_TO_MAPPER_RUNTIME,
                       "Invalid mapper request: mapper %s passed layout ID %ld "
                       "to conflict test in mapper call %s, but that layout ID "
                       "is invalid.", mapper->get_mapper_name(), 
                       (c1 == NULL) ? set1 : set2, 
-                      get_mapper_call_name(ctx->kind));
-#ifdef DEBUG_LEGION
-        assert(false);
-#endif
-        exit(ERROR_INVALID_ARGUMENTS_TO_MAPPER_RUNTIME);
-      }
-      bool result = c1->conflicts(c2);
+                      get_mapper_call_name(ctx->kind))
+      bool result = c1->conflicts(c2, 0/*dont care about dimensions*/);
       resume_mapper_call(ctx);
       return result;
     }
@@ -1394,20 +1464,13 @@ namespace Legion {
       LayoutConstraints *c2 = 
         runtime->find_layout_constraints(target, true/*can fail*/);
       if ((c1 == NULL) || (c2 == NULL))
-      {
-        MessageDescriptor INVALID_MAPPER_REQUEST5(1704, "undefined");
-        log_run.error(INVALID_MAPPER_REQUEST5.id(),
+        REPORT_LEGION_ERROR(ERROR_INVALID_ARGUMENTS_TO_MAPPER_RUNTIME,
                       "Invalid mapper request: mapper %s passed layout ID %ld "
                       "to entailment test in mapper call %s, but that layout "
                       "ID is invalid.", mapper->get_mapper_name(), 
                       (c1 == NULL) ? source : target, 
-                      get_mapper_call_name(ctx->kind));
-#ifdef DEBUG_LEGION
-        assert(false);
-#endif
-        exit(ERROR_INVALID_ARGUMENTS_TO_MAPPER_RUNTIME);
-      }
-      bool result = c1->entails(c2);
+                      get_mapper_call_name(ctx->kind))
+      bool result = c1->entails(c2, 0/*don't care about dimensions*/);
       resume_mapper_call(ctx);
       return result;
     }
@@ -1635,8 +1698,7 @@ namespace Legion {
         check_region_consistency(ctx, "create_physical_instance", regions);
       if (acquire && (ctx->acquired_instances == NULL))
       {
-        MessageDescriptor IGNORING_ACQUIRE_REQUEST(1705, "undefined");
-        log_run.warning(IGNORING_ACQUIRE_REQUEST.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_ACQUIRE_REQUEST,
                         "Ignoring acquire request to create_physical_instance "
                         "in unsupported mapper call %s in mapper %s", 
                         get_mapper_call_name(ctx->kind), get_mapper_name());
@@ -1669,8 +1731,7 @@ namespace Legion {
         check_region_consistency(ctx, "create_physical_instance", regions);
       if (acquire && (ctx->acquired_instances == NULL))
       {
-        MessageDescriptor IGNORING_ACQUIRE_REQUEST2(1706, "undefined");
-        log_run.warning(IGNORING_ACQUIRE_REQUEST2.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_ACQUIRE_REQUEST,
                         "Ignoring acquire request to create_physical_instance "
                         "in unsupported mapper call %s in mapper %s", 
                         get_mapper_call_name(ctx->kind), get_mapper_name());
@@ -1705,8 +1766,7 @@ namespace Legion {
                                  regions);
       if (acquire && (ctx->acquired_instances == NULL))
       {
-        MessageDescriptor IGNORING_ACQUIRE_REQUEST3(1707, "undefined");
-        log_run.warning(IGNORING_ACQUIRE_REQUEST3.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_ACQUIRE_REQUEST,
                         "Ignoring acquire request to find_or_create_physical"
                         "_instance in unsupported mapper call %s in mapper %s",
                         get_mapper_call_name(ctx->kind), get_mapper_name());
@@ -1743,8 +1803,7 @@ namespace Legion {
                                  regions);
       if (acquire && (ctx->acquired_instances == NULL))
       {
-        MessageDescriptor IGNORING_ACQUIRE_REQUEST4(1708, "undefined");
-        log_run.warning(IGNORING_ACQUIRE_REQUEST4.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_ACQUIRE_REQUEST,
                         "Ignoring acquire request to find_or_create_physical"
                         "_instance in unsupported mapper call %s in mapper %s",
                         get_mapper_call_name(ctx->kind), get_mapper_name());
@@ -1779,8 +1838,7 @@ namespace Legion {
         check_region_consistency(ctx, "find_physical_instance", regions);
       if (acquire && (ctx->acquired_instances == NULL))
       {
-        MessageDescriptor IGNORING_ACQUIRE_REQUEST5(1709, "undefined");
-        log_run.warning(IGNORING_ACQUIRE_REQUEST5.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_ACQUIRE_REQUEST,
                         "Ignoring acquire request to find_physical_instance "
                         "in unsupported mapper call %s in mapper %s",
                         get_mapper_call_name(ctx->kind), get_mapper_name());
@@ -1812,8 +1870,7 @@ namespace Legion {
         check_region_consistency(ctx, "find_physical_instance", regions);
       if (acquire && (ctx->acquired_instances == NULL))
       {
-        MessageDescriptor IGNORING_ACQUIRE_REQUEST6(1710, "undefined");
-        log_run.warning(IGNORING_ACQUIRE_REQUEST6.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_ACQUIRE_REQUEST,
                         "Ignoring acquire request to find_physical_instance "
                         "in unsupported mapper call %s in mapper %s",
                         get_mapper_call_name(ctx->kind), get_mapper_name());
@@ -1864,8 +1921,7 @@ namespace Legion {
     {
       if (ctx->acquired_instances == NULL)
       {
-        MessageDescriptor IGNORING_ACQUIRE_REQUEST7(1711, "undefined");
-        log_run.warning(IGNORING_ACQUIRE_REQUEST7.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_ACQUIRE_REQUEST,
                         "Ignoring acquire request in unsupported mapper call "
                         "%s in mapper %s", get_mapper_call_name(ctx->kind),
                         get_mapper_name());
@@ -1880,8 +1936,7 @@ namespace Legion {
           ctx->acquired_instances->end())
         return true;
       pause_mapper_call(ctx);
-      if (manager->try_add_base_valid_ref(MAPPING_ACQUIRE_REF, ctx->operation,
-                                          !manager->is_owner()))
+      if (manager->acquire_instance(MAPPING_ACQUIRE_REF, ctx->operation))
       {
         record_acquired_instance(ctx, manager, false/*created*/);
         resume_mapper_call(ctx);
@@ -1898,7 +1953,7 @@ namespace Legion {
       RtEvent wait_on = 
         manager->memory_manager->acquire_instances(instances, results);
       if (wait_on.exists())
-        wait_on.lg_wait(); // wait for the results to be ready
+        wait_on.wait(); // wait for the results to be ready
       bool success = results[0];
       if (success)
         record_acquired_instance(ctx, manager, false/*created*/);
@@ -1913,8 +1968,7 @@ namespace Legion {
     {
       if (ctx->acquired_instances == NULL)
       {
-        MessageDescriptor IGNORING_ACQUIRE_REQUEST8(1712, "undefined");
-        log_run.warning(IGNORING_ACQUIRE_REQUEST8.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_ACQUIRE_REQUEST,
                         "Ignoring acquire request in unsupported mapper call "
                         "%s in mapper %s", get_mapper_call_name(ctx->kind),
                         get_mapper_name());
@@ -1945,8 +1999,7 @@ namespace Legion {
     {
       if (ctx->acquired_instances == NULL)
       {
-        MessageDescriptor IGNORING_ACQUIRE_REQUEST9(1713, "undefined");
-        log_run.warning(IGNORING_ACQUIRE_REQUEST9.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_ACQUIRE_REQUEST,
                         "Ignoring acquire request in unsupported mapper call "
                         "%s in mapper %s", get_mapper_call_name(ctx->kind),
                         get_mapper_name());
@@ -2000,6 +2053,7 @@ namespace Legion {
             instances.erase(instances.begin()+(*it));
         }
       }
+      resume_mapper_call(ctx);
       return (local_acquired && remote_acquired);
     }
 
@@ -2010,8 +2064,7 @@ namespace Legion {
     {
       if (ctx->acquired_instances == NULL)
       {
-        MessageDescriptor IGNORING_ACQUIRE_REQUEST10(1714, "undefined");
-        log_run.warning(IGNORING_ACQUIRE_REQUEST10.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_ACQUIRE_REQUEST,
                         "Ignoring acquire request in unsupported mapper call "
                         "%s in mapper %s", get_mapper_call_name(ctx->kind),
                         get_mapper_name());
@@ -2044,8 +2097,7 @@ namespace Legion {
     {
       if (ctx->acquired_instances == NULL)
       {
-        MessageDescriptor IGNORING_ACQUIRE_REQUEST11(1715, "undefined");
-        log_run.warning(IGNORING_ACQUIRE_REQUEST11.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_ACQUIRE_REQUEST,
                         "Ignoring acquire request in unsupported mapper call "
                         "%s in mapper %s", get_mapper_call_name(ctx->kind),
                         get_mapper_name());
@@ -2124,8 +2176,7 @@ namespace Legion {
         // Try to add an acquired reference immediately
         // If we're remote it has to be valid already to be sound, but if
         // we're local whatever works
-        if (manager->try_add_base_valid_ref(MAPPING_ACQUIRE_REF, 
-                                info->operation, !manager->is_owner()))
+        if (manager->acquire_instance(MAPPING_ACQUIRE_REF, info->operation))
         {
           // We already know it wasn't there before
           already_acquired[manager] = std::pair<unsigned,bool>(1, false);
@@ -2163,7 +2214,7 @@ namespace Legion {
       if (!done_events.empty())
       {
         RtEvent ready = Runtime::merge_events(done_events);
-        ready.lg_wait();
+        ready.wait();
       }
       // Now find out which ones we acquired and which ones didn't
       bool all_acquired = true;
@@ -2176,15 +2227,8 @@ namespace Legion {
               req_it->second.instances.end(); it++, idx++)
         {
           if (req_it->second.results[idx])
-          {
             // record that we acquired it
             record_acquired_instance(info, *it, false/*created*/); 
-            // make the reference a local reference and 
-            // remove our remote did reference
-            (*it)->add_base_valid_ref(MAPPING_ACQUIRE_REF, info->operation);
-            (*it)->send_remote_valid_update(req_it->first->owner_space, NULL,
-                                            1, false/*add*/);
-          }
           else
             all_acquired = false;
         }
@@ -2199,8 +2243,7 @@ namespace Legion {
     {
       if (ctx->acquired_instances == NULL)
       {
-        MessageDescriptor IGNORING_RELEASE_REQUEST(1716, "undefined");
-        log_run.warning(IGNORING_RELEASE_REQUEST.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_RELEASE_REQUEST,
                         "Ignoring release request in unsupported mapper call "
                         "%s in mapper %s", get_mapper_call_name(ctx->kind),
                         get_mapper_name());
@@ -2218,8 +2261,7 @@ namespace Legion {
     {
       if (ctx->acquired_instances == NULL)
       {
-        MessageDescriptor IGNORING_RELEASE_REQUEST2(1717, "undefined");
-        log_run.warning(IGNORING_RELEASE_REQUEST2.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_RELEASE_REQUEST,
                         "Ignoring release request in unsupported mapper call "
                         "%s in mapper %s", get_mapper_call_name(ctx->kind),
                         get_mapper_name());
@@ -2238,8 +2280,7 @@ namespace Legion {
     {
       if (ctx->acquired_instances == NULL)
       {
-        MessageDescriptor IGNORING_RELEASE_REQUEST3(1718, "undefined");
-        log_run.warning(IGNORING_RELEASE_REQUEST3.id(),
+        REPORT_LEGION_WARNING(LEGION_WARNING_IGNORING_RELEASE_REQUEST,
                         "Ignoring release request in unsupported mapper call "
                         "%s in mapper %s", get_mapper_call_name(ctx->kind),
                         get_mapper_name());
@@ -2311,23 +2352,41 @@ namespace Legion {
         {
           RegionTreeID other_id = regions[idx].get_tree_id();
           if (other_id != tree_id)
-          {
-            MessageDescriptor INVALID_REGION_ARGUMENTS(1719, "undefined");
-            log_run.error(INVALID_REGION_ARGUMENTS.id(),
+            REPORT_LEGION_ERROR(ERROR_INVALID_ARGUMENTS_TO_MAPPER_RUNTIME,
                           "Invalid region arguments passed to %s in "
                           "mapper call %s of mapper %s. All region arguments "
                           "must be from the same region tree (%d != %d).",
                           call_name, get_mapper_call_name(info->kind),
-                          mapper->get_mapper_name(), tree_id, other_id);
-#ifdef DEBUG_LEGION
-            assert(false);
-#endif
-            exit(ERROR_INVALID_ARGUMENTS_TO_MAPPER_RUNTIME);
-          }
+                          mapper->get_mapper_name(), tree_id, other_id)
         }
         else
           tree_id = regions[idx].get_tree_id();
       }
+    }
+
+    //--------------------------------------------------------------------------
+    IndexSpace MapperManager::create_index_space(MappingCallInfo *ctx,
+                                                 const Domain &domain,
+                                                 const void *realm_is,
+                                                 TypeTag type_tag)
+    //--------------------------------------------------------------------------
+    {
+      pause_mapper_call(ctx);
+      IndexSpace result = 
+        runtime->find_or_create_index_launch_space(domain, realm_is, type_tag);
+      resume_mapper_call(ctx);
+      return result; 
+    }
+
+    //--------------------------------------------------------------------------
+    bool MapperManager::has_index_partition(MappingCallInfo *ctx,
+                                            IndexSpace parent, Color color)
+    //--------------------------------------------------------------------------
+    {
+      pause_mapper_call(ctx);
+      bool result = runtime->has_index_partition(parent, color);
+      resume_mapper_call(ctx);
+      return result;
     }
 
     //--------------------------------------------------------------------------
@@ -2348,7 +2407,9 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
-      IndexSpace result = runtime->get_index_subspace(p, c);
+      Point<1,coord_t> color(c);
+      IndexSpace result = runtime->get_index_subspace(p, &color,
+                    NT_TemplateHelper::encode_tag<1,coord_t>());
       resume_mapper_call(ctx);
       return result;
     }
@@ -2360,7 +2421,33 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
-      IndexSpace result = runtime->get_index_subspace(p, color);
+      IndexSpace result = IndexSpace::NO_SPACE;
+      switch (color.get_dim())
+      {
+        case 1:
+          {
+            Point<1,coord_t> point(color);
+            result = runtime->get_index_subspace(p, &point,
+                NT_TemplateHelper::encode_tag<1,coord_t>());
+            break;
+          }
+        case 2:
+          {
+            Point<2,coord_t> point(color);
+            result = runtime->get_index_subspace(p, &point,
+                NT_TemplateHelper::encode_tag<2,coord_t>());
+            break;
+          }
+        case 3:
+          {
+            Point<3,coord_t> point(color);
+            result = runtime->get_index_subspace(p, &point,
+                NT_TemplateHelper::encode_tag<3,coord_t>());
+            break;
+          }
+        default:
+          assert(false);
+      }
       resume_mapper_call(ctx);
       return result;
     }
@@ -2370,10 +2457,8 @@ namespace Legion {
                                              IndexSpace handle)
     //--------------------------------------------------------------------------
     {
-      pause_mapper_call(ctx);
-      bool result = runtime->has_multiple_domains(handle);
-      resume_mapper_call(ctx);
-      return result;
+      // Never have multiple domains
+      return false;
     }
 
     //--------------------------------------------------------------------------
@@ -2382,7 +2467,34 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
-      Domain result = runtime->get_index_space_domain(handle);
+      Domain result = Domain::NO_DOMAIN;
+      const TypeTag type_tag = handle.get_type_tag();
+      switch (NT_TemplateHelper::get_dim(type_tag))
+      {
+        case 1:
+          {
+            DomainT<1,coord_t> realm_is;
+            runtime->get_index_space_domain(handle, &realm_is, type_tag);
+            result = realm_is;
+            break;
+          }
+        case 2:
+          {
+            DomainT<2,coord_t> realm_is;
+            runtime->get_index_space_domain(handle, &realm_is, type_tag);
+            result = realm_is;
+            break;
+          }
+        case 3:
+          {
+            DomainT<3,coord_t> realm_is;
+            runtime->get_index_space_domain(handle, &realm_is, type_tag);
+            result = realm_is;
+            break;
+          }
+        default:
+          assert(false);
+      }
       resume_mapper_call(ctx);
       return result;
     }
@@ -2393,9 +2505,7 @@ namespace Legion {
                                                 std::vector<Domain> &domains)
     //--------------------------------------------------------------------------
     {
-      pause_mapper_call(ctx);
-      runtime->get_index_space_domains(handle, domains);
-      resume_mapper_call(ctx);
+      domains.push_back(get_index_space_domain(ctx, handle));
     }
 
     //--------------------------------------------------------------------------
@@ -2431,14 +2541,27 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    bool MapperManager::is_index_partition_complete(MappingCallInfo *ctx,
+                                                    IndexPartition p)
+    //--------------------------------------------------------------------------
+    {
+      pause_mapper_call(ctx);
+      bool result = runtime->is_index_partition_complete(p);
+      resume_mapper_call(ctx);
+      return result;
+    }
+
+    //--------------------------------------------------------------------------
     Color MapperManager::get_index_space_color(MappingCallInfo *ctx,
                                                IndexSpace handle)
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
-      Color result = runtime->get_index_space_color(handle);
+      Point<1,coord_t> point;
+      runtime->get_index_space_color_point(handle, &point,
+                NT_TemplateHelper::encode_tag<1,coord_t>());
       resume_mapper_call(ctx);
-      return result;
+      return point[0];
     }
 
     //--------------------------------------------------------------------------
@@ -2558,8 +2681,11 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
+#ifdef DEBUG_LEGION
+      assert((color.get_dim() == 0) || (color.get_dim() == 1));
+#endif
       LogicalPartition result = 
-        runtime->get_logical_partition_by_color(par, color);
+        runtime->get_logical_partition_by_color(par, color[0]);
       resume_mapper_call(ctx);
       return result;
     }
@@ -2597,7 +2723,9 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
-      LogicalRegion result = runtime->get_logical_subregion_by_color(par,color);
+      Point<1,coord_t> point(color);
+      LogicalRegion result = runtime->get_logical_subregion_by_color(par,
+                      &point, NT_TemplateHelper::encode_tag<1,coord_t>());
       resume_mapper_call(ctx);
       return result;
     }
@@ -2608,7 +2736,33 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
-      LogicalRegion result = runtime->get_logical_subregion_by_color(par,color);
+      LogicalRegion result = LogicalRegion::NO_REGION;
+      switch (color.get_dim())
+      {
+        case 1:
+          {
+            Point<1,coord_t> point(color);
+            result = runtime->get_logical_subregion_by_color(par, &point,
+                              NT_TemplateHelper::encode_tag<1,coord_t>());
+            break;
+          }
+        case 2:
+          {
+            Point<2,coord_t> point(color);
+            result = runtime->get_logical_subregion_by_color(par, &point,
+                              NT_TemplateHelper::encode_tag<2,coord_t>());
+            break;
+          }
+        case 3:
+          {
+            Point<3,coord_t> point(color);
+            result = runtime->get_logical_subregion_by_color(par, &point,
+                              NT_TemplateHelper::encode_tag<3,coord_t>());
+            break;
+          }
+        default:
+          assert(false);
+      }
       resume_mapper_call(ctx);
       return result;
     }
@@ -2632,9 +2786,11 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
-      Color result = runtime->get_logical_region_color(handle);
+      Point<1,coord_t> point;
+      runtime->get_logical_region_color(handle, &point, 
+            NT_TemplateHelper::encode_tag<1,coord_t>());
       resume_mapper_call(ctx);
-      return result;
+      return point[0];
     }
 
     //--------------------------------------------------------------------------
@@ -2900,14 +3056,9 @@ namespace Legion {
         result->operation = op;
         if (op != NULL)
           result->acquired_instances = op->get_acquired_instances_ref();
-        if (runtime->profiler != NULL)
-          result->start_time = Realm::Clock::current_time_in_nanoseconds();
         return result;
       }
-      MappingCallInfo *result = new MappingCallInfo(this, kind, op);
-      if (runtime->profiler != NULL)
-        result->start_time = Realm::Clock::current_time_in_nanoseconds();
-      return result;
+      return new MappingCallInfo(this, kind, op);
     }
 
     //--------------------------------------------------------------------------
@@ -2920,18 +3071,15 @@ namespace Legion {
         free_call_info(info, false/*need lock*/);
         return;
       }
-      if (runtime->profiler != NULL)
-      {
-        unsigned long long stop_time = 
-          Realm::Clock::current_time_in_nanoseconds();
+      if (profile_mapper)
         runtime->profiler->record_mapper_call(info->kind, 
             (info->operation == NULL) ? 0 : info->operation->get_unique_op_id(),
-            info->start_time, stop_time); 
-      }
+            info->start_time, info->stop_time); 
       info->resume = RtUserEvent::NO_RT_USER_EVENT;
       info->operation = NULL;
       info->acquired_instances = NULL;
       info->start_time = 0;
+      info->stop_time = 0;
       available_infos.push_back(info);
     }
 
@@ -2952,8 +3100,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       // Acquire the lock as the precondition
-      RtEvent precondition = 
-        Runtime::acquire_rt_reservation(mapper_lock, true/*exclusive*/);
       DeferMessageArgs args;
       args.manager = this;
       args.sender = message->sender;
@@ -2962,8 +3108,7 @@ namespace Legion {
       args.message = malloc(args.size);
       memcpy(args.message, message->message, args.size);
       args.broadcast = message->broadcast;
-      runtime->issue_runtime_meta_task(args, LG_RESOURCE_PRIORITY,
-                                       NULL, precondition);
+      runtime->issue_runtime_meta_task(args, LG_RESOURCE_PRIORITY);
     }
 
     //--------------------------------------------------------------------------
@@ -2977,9 +3122,71 @@ namespace Legion {
       message.message = margs->message;
       message.size = margs->size;
       message.broadcast = margs->broadcast;
-      margs->manager->invoke_handle_message(&message,false/*first invocation*/);
+      margs->manager->invoke_handle_message(&message, &message/*non-NULL*/);
       // Then free up the allocated memory
       free(margs->message);
+    }
+
+    //--------------------------------------------------------------------------
+    void MapperManager::process_advertisement(Processor advertiser)
+    //--------------------------------------------------------------------------
+    {
+      AutoLock m_lock(mapper_lock);
+#ifdef DEBUG_LEGION
+      assert(steal_blacklist.find(advertiser) !=
+             steal_blacklist.end());
+#endif
+      steal_blacklist.erase(advertiser);
+    }
+
+    //--------------------------------------------------------------------------
+    void MapperManager::perform_stealing(
+                                     std::multimap<Processor,MapperID> &targets)
+    //--------------------------------------------------------------------------
+    {
+      Mapper::SelectStealingInput steal_input;
+      Mapper::SelectStealingOutput steal_output;
+      {
+        AutoLock m_lock(mapper_lock, 1, false/*exclusive*/);
+        steal_input.blacklist = steal_blacklist; 
+      }
+      invoke_select_steal_targets(&steal_input, &steal_output);
+      if (steal_output.targets.empty())
+        return;
+      // Retake the lock and process the results
+      AutoLock m_lock(mapper_lock);
+      for (std::set<Processor>::const_iterator it = 
+            steal_output.targets.begin(); it != 
+            steal_output.targets.end(); it++)
+      {
+        if (it->exists() && ((*it) != processor) &&
+            (steal_blacklist.find(*it) == steal_blacklist.end()))
+        {
+          targets.insert(std::pair<Processor,MapperID>(*it,mapper_id));
+          steal_blacklist.insert(*it);
+        }
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    void MapperManager::process_failed_steal(Processor thief)
+    //--------------------------------------------------------------------------
+    {
+      AutoLock m_lock(mapper_lock);
+#ifdef DEBUG_LEGION
+      assert(failed_thiefs.find(thief) == failed_thiefs.end());
+#endif
+      failed_thiefs.insert(thief);
+    }
+
+    //--------------------------------------------------------------------------
+    void MapperManager::perform_advertisements(
+                                            std::set<Processor> &failed_waiters)
+    //--------------------------------------------------------------------------
+    {
+      AutoLock m_lock(mapper_lock);
+      failed_waiters = failed_thiefs;
+      failed_thiefs.clear();
     }
 
     /////////////////////////////////////////////////////////////
@@ -2989,8 +3196,9 @@ namespace Legion {
     //--------------------------------------------------------------------------
     SerializingManager::SerializingManager(Runtime *rt, Mapping::Mapper *mp,
                              MapperID map_id, Processor p, bool init_reentrant)
-      : MapperManager(rt, mp, map_id, p), permit_reentrant(init_reentrant), 
-        executing_call(NULL), paused_calls(0)
+      : MapperManager(rt, mp, map_id, p), executing_call(NULL), paused_calls(0),
+        permit_reentrant(init_reentrant), pending_pause_call(false),
+        pending_finish_call(false)
     //--------------------------------------------------------------------------
     {
     }
@@ -3084,7 +3292,7 @@ namespace Legion {
           RtUserEvent ready_event = Runtime::create_rt_user_event();
           info->resume = ready_event;
           non_reentrant_calls.push_back(info);
-          ready_event.lg_wait();
+          ready_event.wait();
           // When we wake up, we should be non-reentrant
 #ifdef DEBUG_LEGION
           assert(!permit_reentrant);
@@ -3097,32 +3305,38 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     MappingCallInfo* SerializingManager::begin_mapper_call(MappingCallKind kind,
-                    Operation *op, bool first_invocation, RtEvent &precondition)
+                                           Operation *op, RtEvent &precondition)
     //--------------------------------------------------------------------------
     {
+      RtUserEvent to_trigger;
       MappingCallInfo *result = NULL;
-      // If this is the first invocation we have to ask for the lock
-      // otherwise we know we already have it
-      if (first_invocation)
       {
-        precondition = 
-          Runtime::acquire_rt_reservation(mapper_lock, true/*exclusive*/);
-        if (!precondition.has_triggered())
-          return NULL;
+        AutoLock m_lock(mapper_lock);
+        result = allocate_call_info(kind, op,false/*need lock*/);
+        // See if there is a pending call for us to handle
+        if (pending_pause_call)
+          to_trigger = complete_pending_pause_mapper_call();
+        else if (pending_finish_call)
+          to_trigger = complete_pending_finish_mapper_call();
+        // See if we are ready to run this or not
+        if ((executing_call != NULL) || (!permit_reentrant && 
+              ((paused_calls > 0) || !ready_calls.empty())))
+        {
+          // Put this on the list of pending calls
+          result->resume = Runtime::create_rt_user_event();
+          precondition = result->resume;
+          pending_calls.push_back(result);
+        }
+        else
+          executing_call = result;
       }
-      result = allocate_call_info(kind, op, false/*need lock*/);
-      // See if we are ready to run this or not
-      if ((executing_call != NULL) || (!permit_reentrant && 
-            ((paused_calls > 0) || !ready_calls.empty())))
-      {
-        // Put this on the list of pending calls
-        result->resume = Runtime::create_rt_user_event();
-        precondition = result->resume;
-        pending_calls.push_back(result);
-      }
-      else
-        executing_call = result;
-      Runtime::release_reservation(mapper_lock);
+      // Wake up a pending mapper call to run if necessary
+      if (to_trigger.exists())
+        Runtime::trigger_event(to_trigger);
+      if (!precondition.exists() && profile_mapper) 
+        // Record our start time in this case since there is no continuation
+        result->start_time = Realm::Clock::current_time_in_nanoseconds();
+      // else the continuation will initialize the start time
       return result;
     }
 
@@ -3131,43 +3345,28 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       if (executing_call != info)
-      {
-        MessageDescriptor INVALID_MAPPER_CONTENT(1720, "undefined");
-        log_run.error(INVALID_MAPPER_CONTENT.id(),
+        REPORT_LEGION_ERROR(ERROR_INVALID_MAPPER_CONTENT,
                       "Invalid mapper context passed to mapper_rt "
                       "call by mapper %s. Mapper contexts are only valid "
                       "for the mapper call to which they are passed. They "
                       "cannot be stored beyond the lifetime of the "
-                      "mapper call.", mapper->get_mapper_name());
+                      "mapper call.", mapper->get_mapper_name())
 #ifdef DEBUG_LEGION
-        assert(false);
+      assert(!pending_pause_call);
 #endif
-        exit(ERROR_INVALID_ARGUMENTS_TO_MAPPER_RUNTIME);
-      }
+      // Set the flag indicating there is a paused mapper call that
+      // needs to be handled, do this asynchronoulsy and check to 
+      // see if we lost the race later
+      pending_pause_call = true; 
       // We definitely know we can't start any non_reentrant calls
       // Screw fairness, we care about throughput, see if there are any
       // pending calls to wake up, and then go to sleep ourself
       RtUserEvent to_trigger;
       {
         AutoLock m_lock(mapper_lock);
-        // Increment the count of the paused mapper calls
-        paused_calls++;
-        if (permit_reentrant && !ready_calls.empty())
-        {
-          // Get the next ready call to continue executing
-          executing_call = ready_calls.front();
-          ready_calls.pop_front();
-          to_trigger = executing_call->resume;
-        }
-        else if (permit_reentrant && !pending_calls.empty())
-        {
-          // Get the next available call to handle
-          executing_call = pending_calls.front();
-          pending_calls.pop_front();
-          to_trigger = executing_call->resume; 
-        }
-        else // No one to wake up
-          executing_call = NULL;
+        // See if we lost the race
+        if (pending_pause_call)
+          to_trigger = complete_pending_pause_mapper_call(); 
       }
       if (to_trigger.exists())
         Runtime::trigger_event(to_trigger);
@@ -3195,37 +3394,84 @@ namespace Legion {
           executing_call = info;
       }
       if (wait_on.exists())
-        wait_on.lg_wait();
+        wait_on.wait();
 #ifdef DEBUG_LEGION
       assert(executing_call == info);
 #endif
     }
 
     //--------------------------------------------------------------------------
-    void SerializingManager::finish_mapper_call(MappingCallInfo *info,
-                                                bool first_invocation)
+    void SerializingManager::finish_mapper_call(MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
       assert(executing_call == info);
 #endif
-      if (first_invocation)
-      {
-        RtEvent precondition = 
-          Runtime::acquire_rt_reservation(mapper_lock, true/*exclusive*/);
-        if (!precondition.has_triggered())
-        {
-          FinishMapperCallContinuationArgs args;
-          args.manager = this;
-          args.info = info;
-          runtime->issue_runtime_meta_task(args, LG_RESOURCE_PRIORITY,
-                                           info->operation, precondition);
-          // No need to wait, we know the mapper call is done
-          // This is all just clean up and can be done asynchronously
-          return;
-        }
-      }
+      // Record our finish time when we're done
+      if (profile_mapper)
+        info->stop_time = Realm::Clock::current_time_in_nanoseconds();
+      // Set this flag asynchronously without the lock, there will
+      // be a race to see who gets the lock next and therefore can
+      // do the rest of the finish mapper call routine, we do this
+      // to avoid the priority inversion that can occur where this
+      // lock acquire gets stuck behind a bunch of pending ones
+#ifdef DEBUG_LEGION
+      assert(!pending_finish_call);
+#endif
+      pending_finish_call = true;
       RtUserEvent to_trigger;
+      {
+        AutoLock m_lock(mapper_lock);
+        // We've got the lock, see if we won the race to the flag
+        if (pending_finish_call)
+          to_trigger = complete_pending_finish_mapper_call();  
+        // Return our call info
+        free_call_info(info, false/*need lock*/);
+      }
+      // Wake up the next task if necessary
+      if (to_trigger.exists())
+        Runtime::trigger_event(to_trigger);
+    }
+
+    //--------------------------------------------------------------------------
+    RtUserEvent SerializingManager::complete_pending_pause_mapper_call(void)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      assert(pending_pause_call);
+      assert(!pending_finish_call);
+#endif
+      pending_pause_call = false;
+      // Increment the count of the paused mapper calls
+      paused_calls++;
+      if (permit_reentrant && !ready_calls.empty())
+      {
+        // Get the next ready call to continue executing
+        executing_call = ready_calls.front();
+        ready_calls.pop_front();
+        return executing_call->resume;
+      }
+      else if (permit_reentrant && !pending_calls.empty())
+      {
+        // Get the next available call to handle
+        executing_call = pending_calls.front();
+        pending_calls.pop_front();
+        return executing_call->resume; 
+      }
+      else // No one to wake up
+        executing_call = NULL;
+      return RtUserEvent::NO_RT_USER_EVENT;
+    }
+
+    //--------------------------------------------------------------------------
+    RtUserEvent SerializingManager::complete_pending_finish_mapper_call(void)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      assert(!pending_pause_call);
+      assert(pending_finish_call);
+#endif
+      pending_finish_call = false;
       // See if can start a non-reentrant task
       if (!non_reentrant_calls.empty() && 
           (paused_calls == 0) && ready_calls.empty())
@@ -3234,28 +3480,23 @@ namespace Legion {
         permit_reentrant = false;
         executing_call = non_reentrant_calls.front();
         non_reentrant_calls.pop_front();
-        to_trigger = executing_call->resume;
+        return executing_call->resume;
       }
       else if (!ready_calls.empty())
       {
         executing_call = ready_calls.front();
         ready_calls.pop_front();
-        to_trigger = executing_call->resume;
+        return executing_call->resume;
       }
       else if (!pending_calls.empty())
       {
         executing_call = pending_calls.front();
         pending_calls.pop_front();
-        to_trigger = executing_call->resume;
+        return executing_call->resume;
       }
       else
         executing_call = NULL;
-      // Return our call info
-      free_call_info(info, false/*need lock*/);
-      Runtime::release_reservation(mapper_lock);
-      // Wake up the next task if necessary
-      if (to_trigger.exists())
-        Runtime::trigger_event(to_trigger);
+      return RtUserEvent::NO_RT_USER_EVENT;
     }
 
     /////////////////////////////////////////////////////////////
@@ -3311,17 +3552,10 @@ namespace Legion {
       {
         AutoLock m_lock(mapper_lock); 
         if (current_holders.find(info) != current_holders.end())
-        {
-          MessageDescriptor INVALID_DUPLICATE_MAPPER(1721, "undefined");
-          log_run.error(INVALID_DUPLICATE_MAPPER.id(),
+          REPORT_LEGION_ERROR(ERROR_INVALID_DUPLICATE_MAPPER,
                         "Invalid duplicate mapper lock request in mapper call "
                         "%s for mapper %s", get_mapper_call_name(info->kind),
-                        mapper->get_mapper_name());
-#ifdef DEBUG_LEGION
-          assert(false);
-#endif
-          exit(ERROR_INVALID_MAPPER_SYNCHRONIZATION);
-        }
+                        mapper->get_mapper_name())
         switch (lock_state)
         {
           case UNLOCKED_STATE:
@@ -3362,7 +3596,7 @@ namespace Legion {
         }
       }
       if (wait_on.exists())
-        wait_on.lg_wait();
+        wait_on.wait();
     }
 
     //--------------------------------------------------------------------------
@@ -3375,18 +3609,11 @@ namespace Legion {
         std::set<MappingCallInfo*>::iterator finder = 
           current_holders.find(info);
         if (finder == current_holders.end())
-        {
-          MessageDescriptor INVALID_UNLOCK_MAPPER(1722, "undefined");
-          log_run.error(INVALID_UNLOCK_MAPPER.id(),
+          REPORT_LEGION_ERROR(ERROR_INVALID_UNLOCK_MAPPER,
                         "Invalid unlock mapper call with no prior lock call "
                         "in mapper call %s for mapper %s",
                         get_mapper_call_name(info->kind),
-                        mapper->get_mapper_name());
-#ifdef DEBUG_LEGION
-          assert(false);
-#endif
-          exit(ERROR_INVALID_MAPPER_SYNCHRONIZATION);
-        }
+                        mapper->get_mapper_name())
         current_holders.erase(finder);
         // See if we can now give the lock to someone else
         if (current_holders.empty())
@@ -3424,18 +3651,13 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     MappingCallInfo* ConcurrentManager::begin_mapper_call(MappingCallKind kind,
-                    Operation *op, bool first_invocation, RtEvent &precondition)
+                                           Operation *op, RtEvent &precondition)
     //--------------------------------------------------------------------------
     {
-      if (first_invocation)
-      {
-        precondition = 
-          Runtime::acquire_rt_reservation(mapper_lock, true/*exclusive*/);
-        if (!precondition.has_triggered())
-          return NULL;
-      }
-      MappingCallInfo *result = allocate_call_info(kind, op,false/*need lock*/);
-      Runtime::release_reservation(mapper_lock);
+      MappingCallInfo *result = allocate_call_info(kind, op, true/*need lock*/);
+      // Record our mapper start time when we're ready to run
+      if (profile_mapper)
+        result->start_time = Realm::Clock::current_time_in_nanoseconds();
       return result;
     }
 
@@ -3454,37 +3676,25 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void ConcurrentManager::finish_mapper_call(MappingCallInfo *info,
-                                               bool first_invocation)
+    void ConcurrentManager::finish_mapper_call(MappingCallInfo *info)
     //--------------------------------------------------------------------------
     {
-      if (first_invocation)
-      {
-        RtEvent precondition = 
-          Runtime::acquire_rt_reservation(mapper_lock, true/*exclusive*/);
-        if (!precondition.has_triggered())
-        {
-          FinishMapperCallContinuationArgs args;
-          args.manager = this;
-          args.info = info;
-          runtime->issue_runtime_meta_task(args, LG_RESOURCE_PRIORITY,
-                                           info->operation, precondition);
-          // No need to wait, we know the mapper call is done
-          // This is all just clean up and can be done asynchronously
-          return;
-        }
-      }
+      // Record our finish time when we are done
+      if (profile_mapper)
+        info->stop_time = Realm::Clock::current_time_in_nanoseconds();
       std::vector<RtUserEvent> to_trigger;
-      // Check to see if we need to release the lock for the mapper call
-      std::set<MappingCallInfo*>::iterator finder = 
-          current_holders.find(info);     
-      if (finder != current_holders.end())
       {
-        current_holders.erase(finder);
-        release_lock(to_trigger);
+        AutoLock m_lock(mapper_lock);
+        // Check to see if we need to release the lock for the mapper call
+        std::set<MappingCallInfo*>::iterator finder = 
+            current_holders.find(info);     
+        if (finder != current_holders.end())
+        {
+          current_holders.erase(finder);
+          release_lock(to_trigger);
+        }
+        free_call_info(info, false/*need lock*/);
       }
-      free_call_info(info, false/*need lock*/);
-      Runtime::release_reservation(mapper_lock);
       if (!to_trigger.empty())
       {
         for (std::vector<RtUserEvent>::const_iterator it = 
@@ -3548,11 +3758,12 @@ namespace Legion {
                                    Operation *op)
     //--------------------------------------------------------------------------
     {
-      ContinuationArgs args;
-      args.continuation = this;
+      ContinuationArgs args((op == NULL) ? task_profiling_provenance :
+                              op->get_unique_op_id(), this);
+      // Give this resource priority in case we are holding the mapper lock
       RtEvent wait_on = runtime->issue_runtime_meta_task(args,
-                       LG_LATENCY_PRIORITY, op, precondition);
-      wait_on.lg_wait();
+                           LG_RESOURCE_PRIORITY, precondition);
+      wait_on.wait();
     }
 
     //--------------------------------------------------------------------------
@@ -3560,6 +3771,11 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       const ContinuationArgs *conargs = (const ContinuationArgs*)args;
+      // Update the timing if necessary since we did a continuation
+      if (conargs->continuation->manager->profile_mapper &&
+          (conargs->continuation->info != NULL))
+        conargs->continuation->info->start_time =
+          Realm::Clock::current_time_in_nanoseconds();
       conargs->continuation->execute();
     }
 

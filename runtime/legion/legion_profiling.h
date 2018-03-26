@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,11 @@
 #define __LEGION_PROFILING_H__
 
 #include "realm.h"
-#include "utilities.h"
-#include "legion_types.h"
-#include "legion_utilities.h"
+#include "legion/legion_types.h"
+#include "legion/legion_utilities.h"
 #include "realm/profiling.h"
-#include "lowlevel_config.h"
 
-#include <cassert>
+#include <assert.h>
 #include <deque>
 #include <algorithm>
 #include <sstream>
@@ -37,21 +35,16 @@
 #define DETAILED_PROFILER(runtime, call) // Nothing
 #endif
 
-#ifdef SHARED_LOWLEVEL
-#define gasnet_mynode() 0
-#endif
-
-
 namespace Legion {
   namespace Internal { 
 
     // XXX: Make sure these typedefs are consistent with Realm
-    typedef ::legion_lowlevel_barrier_timestamp_t timestamp_t;
+    typedef ::realm_barrier_timestamp_t timestamp_t;
     typedef Realm::Processor::Kind ProcKind;
     typedef Realm::Memory::Kind MemKind;
-    typedef ::legion_lowlevel_id_t ProcID;
-    typedef ::legion_lowlevel_id_t MemID;
-    typedef ::legion_lowlevel_id_t InstID;
+    typedef ::realm_id_t ProcID;
+    typedef ::realm_id_t MemID;
+    typedef ::realm_id_t InstID;
 
     class LegionProfSerializer; // forward declaration
 
@@ -143,6 +136,7 @@ namespace Legion {
       struct TaskInfo {
       public:
         UniqueID op_id;
+        TaskID task_id;
         VariantID variant_id;
         ProcID proc_id;
         timestamp_t create, ready, start, stop;
@@ -188,6 +182,12 @@ namespace Legion {
         InstID inst_id;
         timestamp_t create, destroy;
       };
+      struct PartitionInfo {
+      public:
+        UniqueID op_id;
+        DepPartOpKind part_op;
+        unsigned long long create, ready, start, stop;
+      };
       struct MessageInfo {
       public:
         MessageKind kind;
@@ -230,30 +230,32 @@ namespace Legion {
       void register_multi_task(Operation *op, TaskID kind);
       void register_slice_owner(UniqueID pid, UniqueID id);
     public:
-      void process_task(VariantID variant_id, UniqueID op_id, 
-                  Realm::ProfilingMeasurements::OperationTimeline *timeline,
-                  Realm::ProfilingMeasurements::OperationProcessorUsage *usage,
-                  Realm::ProfilingMeasurements::OperationEventWaits *waits);
+      void process_task(TaskID task_id, VariantID variant_id, UniqueID op_id, 
+            const Realm::ProfilingMeasurements::OperationTimeline &timeline,
+            const Realm::ProfilingMeasurements::OperationProcessorUsage &usage,
+            const Realm::ProfilingMeasurements::OperationEventWaits &waits);
       void process_meta(size_t id, UniqueID op_id,
-                  Realm::ProfilingMeasurements::OperationTimeline *timeline,
-                  Realm::ProfilingMeasurements::OperationProcessorUsage *usage,
-                  Realm::ProfilingMeasurements::OperationEventWaits *waits);
+            const Realm::ProfilingMeasurements::OperationTimeline &timeline,
+            const Realm::ProfilingMeasurements::OperationProcessorUsage &usage,
+            const Realm::ProfilingMeasurements::OperationEventWaits &waits);
       void process_message(
-                  Realm::ProfilingMeasurements::OperationTimeline *timeline,
-                  Realm::ProfilingMeasurements::OperationProcessorUsage *usage,
-                  Realm::ProfilingMeasurements::OperationEventWaits *waits);
+            const Realm::ProfilingMeasurements::OperationTimeline &timeline,
+            const Realm::ProfilingMeasurements::OperationProcessorUsage &usage,
+            const Realm::ProfilingMeasurements::OperationEventWaits &waits);
       void process_copy(UniqueID op_id,
-                  Realm::ProfilingMeasurements::OperationTimeline *timeline,
-                  Realm::ProfilingMeasurements::OperationMemoryUsage *usage);
+            const Realm::ProfilingMeasurements::OperationTimeline &timeline,
+            const Realm::ProfilingMeasurements::OperationMemoryUsage &usage);
       void process_fill(UniqueID op_id,
-                  Realm::ProfilingMeasurements::OperationTimeline *timeline,
-                  Realm::ProfilingMeasurements::OperationMemoryUsage *usage);
+            const Realm::ProfilingMeasurements::OperationTimeline &timeline,
+            const Realm::ProfilingMeasurements::OperationMemoryUsage &usage);
       void process_inst_create(UniqueID op_id, PhysicalInstance inst,
                                timestamp_t create);
       void process_inst_usage(UniqueID op_id,
-                  Realm::ProfilingMeasurements::InstanceMemoryUsage *usage);
+            const Realm::ProfilingMeasurements::InstanceMemoryUsage &usage);
       void process_inst_timeline(UniqueID op_id,
-                  Realm::ProfilingMeasurements::InstanceTimeline *timeline);
+            const Realm::ProfilingMeasurements::InstanceTimeline &timeline);
+      void process_partition(UniqueID op_id, DepPartOpKind part_op,
+            const Realm::ProfilingMeasurements::OperationTimeline &timeline);
     public:
       void record_message(Processor proc, MessageKind kind, timestamp_t start,
                           timestamp_t stop);
@@ -269,6 +271,7 @@ namespace Legion {
 #endif
     public:
       void dump_state(LegionProfSerializer *serializer);
+      size_t dump_inter(LegionProfSerializer *serializer, const double over);
     private:
       LegionProfiler *const owner;
       std::deque<TaskKind>          task_kinds;
@@ -284,6 +287,7 @@ namespace Legion {
       std::deque<InstCreateInfo> inst_create_infos;
       std::deque<InstUsageInfo> inst_usage_infos;
       std::deque<InstTimelineInfo> inst_timeline_infos;
+      std::deque<PartitionInfo> partition_infos;
     private:
       std::deque<MessageInfo> message_infos;
       std::deque<MapperCallInfo> mapper_call_infos;
@@ -294,7 +298,7 @@ namespace Legion {
 #endif
     };
 
-    class LegionProfiler {
+    class LegionProfiler : public ProfilingResponseHandler {
     public:
       enum ProfilingKind {
         LEGION_PROF_TASK,
@@ -303,28 +307,33 @@ namespace Legion {
         LEGION_PROF_COPY,
         LEGION_PROF_FILL,
         LEGION_PROF_INST,
+        LEGION_PROF_PARTITION,
+        LEGION_PROF_LAST,
       };
-      struct ProfilingInfo {
+      struct ProfilingInfo : public ProfilingResponseBase {
       public:
-        ProfilingInfo(ProfilingKind k)
-          : kind(k) { }
+        ProfilingInfo(LegionProfiler *p, ProfilingKind k)
+          : ProfilingResponseBase(p), kind(k) { }
       public:
         ProfilingKind kind;
-        size_t id;
+        size_t id, id2;
         UniqueID op_id;
       };
     public:
       // Statically known information passed through the constructor
       // so that it can be deduplicated
       LegionProfiler(Processor target_proc, const Machine &machine,
-                     unsigned num_meta_tasks,
+                     Runtime *rt, unsigned num_meta_tasks,
                      const char *const *const meta_task_descriptions,
                      unsigned num_operation_kinds,
                      const char *const *const operation_kind_descriptions,
                      const char *serializer_type,
-                     const char *prof_logname);
+                     const char *prof_logname,
+                     const size_t total_runtime_instances,
+                     const size_t footprint_threshold,
+                     const size_t target_latency);
       LegionProfiler(const LegionProfiler &rhs);
-      ~LegionProfiler(void);
+      virtual ~LegionProfiler(void);
     public:
       LegionProfiler& operator=(const LegionProfiler &rhs);
     public:
@@ -341,7 +350,7 @@ namespace Legion {
       void register_slice_owner(UniqueID pid, UniqueID id);
     public:
       void add_task_request(Realm::ProfilingRequestSet &requests, 
-                            TaskID tid, SingleTask *task);
+                            TaskID tid, VariantID vid, SingleTask *task);
       void add_meta_request(Realm::ProfilingRequestSet &requests,
                             LgTaskID tid, Operation *op);
       void add_copy_request(Realm::ProfilingRequestSet &requests, 
@@ -350,6 +359,8 @@ namespace Legion {
                             Operation *op);
       void add_inst_request(Realm::ProfilingRequestSet &requests,
                             Operation *op);
+      void add_partition_request(Realm::ProfilingRequestSet &requests,
+                                 Operation *op, DepPartOpKind part_op);
       // Adding a message profiling request is a static method
       // because we might not have a profiler on the local node
       static void add_message_request(Realm::ProfilingRequestSet &requests,
@@ -357,7 +368,7 @@ namespace Legion {
     public:
       // Alternate versions of the one above with op ids
       void add_task_request(Realm::ProfilingRequestSet &requests, 
-                            TaskID tid, UniqueID uid);
+                            TaskID tid, VariantID vid, UniqueID uid);
       void add_meta_request(Realm::ProfilingRequestSet &requests,
                             LgTaskID tid, UniqueID uid);
       void add_copy_request(Realm::ProfilingRequestSet &requests, 
@@ -366,9 +377,12 @@ namespace Legion {
                             UniqueID uid);
       void add_inst_request(Realm::ProfilingRequestSet &requests,
                             UniqueID uid);
+      void add_partition_request(Realm::ProfilingRequestSet &requests,
+                                 UniqueID uid, DepPartOpKind part_op);
     public:
       // Process low-level runtime profiling results
-      void process_results(Processor p, const void *buffer, size_t size);
+      virtual void handle_profiling_response(
+                            const Realm::ProfilingResponse &response);
     public:
       // Dump all the results
       void finalize(void);
@@ -391,21 +405,41 @@ namespace Legion {
       void record_runtime_call(RuntimeCallKind kind, timestamp_t start,
                                timestamp_t stop);
     public:
-      const Processor target_proc;
-      inline bool has_outstanding_requests(void)
-        { return total_outstanding_requests != 0; }
+#ifdef DEBUG_LEGION
+      void increment_total_outstanding_requests(ProfilingKind kind,
+                                                unsigned cnt = 1);
+      void decrement_total_outstanding_requests(ProfilingKind kind,
+                                                unsigned cnt = 1);
+#else
+      void increment_total_outstanding_requests(unsigned cnt = 1);
+      void decrement_total_outstanding_requests(unsigned cnt = 1);
+#endif
     public:
-      inline void increment_total_outstanding_requests(void)
-        { __sync_fetch_and_add(&total_outstanding_requests,1); }
-      inline void decrement_total_outstanding_requests(void)
-        { __sync_fetch_and_sub(&total_outstanding_requests,1); }
+      void update_footprint(size_t diff, LegionProfInstance *inst);
     private:
       void create_thread_local_profiling_instance(void);
+    public:
+      Runtime *const runtime;
+      // Event to trigger once the profiling is actually done
+      const RtUserEvent done_event;
+      // Size in bytes of the footprint before we start dumping
+      const size_t output_footprint_threshold;
+      // The goal size in microseconds of the output tasks
+      const long long output_target_latency;
+      // Target processor on which to launch jobs
+      const Processor target_proc;
     private:
       LegionProfSerializer* serializer;
-      Reservation profiler_lock;
+      mutable LocalLock profiler_lock;
       std::vector<LegionProfInstance*> instances;
+#ifdef DEBUG_LEGION
+      unsigned total_outstanding_requests[LEGION_PROF_LAST];
+#else
       unsigned total_outstanding_requests;
+#endif
+    private:
+      // For knowing when we need to start dumping early
+      size_t total_memory_footprint;
     };
 
     class DetailedProfiler {

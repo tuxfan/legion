@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,14 +14,14 @@
  */
 
 #include "legion.h"
-#include "cmdline.h"
-#include "legion_ops.h"
-#include "legion_tasks.h"
-#include "legion_profiling.h"
-#include "legion_profiling_serializer.h"
+#include "realm/cmdline.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_tasks.h"
+#include "legion/legion_profiling.h"
+#include "legion/legion_profiling_serializer.h"
 
-#include <cstring>
-#include <cstdlib>
+#include <string.h>
+#include <stdlib.h>
 
 namespace Legion {
   namespace Internal {
@@ -100,6 +100,8 @@ namespace Legion {
       kind.task_id = task_id;
       kind.name = strdup(name);
       kind.overwrite = overwrite;
+      const size_t diff = sizeof(TaskKind) + strlen(name);
+      owner->update_footprint(diff, this);
     }
 
     //--------------------------------------------------------------------------
@@ -113,6 +115,8 @@ namespace Legion {
       var.task_id = task_id;
       var.variant_id = variant_id;
       var.name = strdup(variant_name);
+      const size_t diff = sizeof(TaskVariant) + strlen(variant_name);
+      owner->update_footprint(diff, this);
     }
 
     //--------------------------------------------------------------------------
@@ -123,6 +127,7 @@ namespace Legion {
       OperationInstance &inst = operation_instances.back();
       inst.op_id = op->get_unique_op_id();
       inst.kind = op->get_operation_kind();
+      owner->update_footprint(sizeof(OperationInstance), this);
     }
 
     //--------------------------------------------------------------------------
@@ -133,6 +138,7 @@ namespace Legion {
       MultiTask &task = multi_tasks.back();
       task.op_id = op->get_unique_op_id();
       task.task_id = task_id;
+      owner->update_footprint(sizeof(MultiTask), this);
     }
 
     //--------------------------------------------------------------------------
@@ -143,150 +149,161 @@ namespace Legion {
       SliceOwner &task = slice_owners.back();
       task.parent_id = pid;
       task.op_id = id;
+      owner->update_footprint(sizeof(SliceOwner), this);
     }
 
     //--------------------------------------------------------------------------
-    void LegionProfInstance::process_task(VariantID variant_id, UniqueID op_id,
-                  Realm::ProfilingMeasurements::OperationTimeline *timeline,
-                  Realm::ProfilingMeasurements::OperationProcessorUsage *usage,
-                  Realm::ProfilingMeasurements::OperationEventWaits *waits)
+    void LegionProfInstance::process_task(
+            TaskID task_id, VariantID variant_id, UniqueID op_id,
+            const Realm::ProfilingMeasurements::OperationTimeline &timeline,
+            const Realm::ProfilingMeasurements::OperationProcessorUsage &usage,
+            const Realm::ProfilingMeasurements::OperationEventWaits &waits)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
-      assert(timeline->is_valid());
+      assert(timeline.is_valid());
 #endif
       task_infos.push_back(TaskInfo()); 
       TaskInfo &info = task_infos.back();
       info.op_id = op_id;
+      info.task_id = task_id;
       info.variant_id = variant_id;
-      info.proc_id = usage->proc.id;
-      info.create = timeline->create_time;
-      info.ready = timeline->ready_time;
-      info.start = timeline->start_time;
+      info.proc_id = usage.proc.id;
+      info.create = timeline.create_time;
+      info.ready = timeline.ready_time;
+      info.start = timeline.start_time;
       // use complete_time instead of end_time to include async work
-      info.stop = timeline->complete_time;
-      unsigned num_intervals = waits->intervals.size();
+      info.stop = timeline.complete_time;
+      unsigned num_intervals = waits.intervals.size();
       if (num_intervals > 0)
       {
         for (unsigned idx = 0; idx < num_intervals; ++idx)
         {
           info.wait_intervals.push_back(WaitInfo());
           WaitInfo& wait_info = info.wait_intervals.back();
-          wait_info.wait_start = waits->intervals[idx].wait_start;
-          wait_info.wait_ready = waits->intervals[idx].wait_ready;
-          wait_info.wait_end = waits->intervals[idx].wait_end;
+          wait_info.wait_start = waits.intervals[idx].wait_start;
+          wait_info.wait_ready = waits.intervals[idx].wait_ready;
+          wait_info.wait_end = waits.intervals[idx].wait_end;
         }
       }
+      const size_t diff = sizeof(TaskInfo) + num_intervals * sizeof(WaitInfo);
+      owner->update_footprint(diff, this);
     }
 
     //--------------------------------------------------------------------------
     void LegionProfInstance::process_meta(size_t id, UniqueID op_id,
-                  Realm::ProfilingMeasurements::OperationTimeline *timeline,
-                  Realm::ProfilingMeasurements::OperationProcessorUsage *usage,
-                  Realm::ProfilingMeasurements::OperationEventWaits *waits)
+            const Realm::ProfilingMeasurements::OperationTimeline &timeline,
+            const Realm::ProfilingMeasurements::OperationProcessorUsage &usage,
+            const Realm::ProfilingMeasurements::OperationEventWaits &waits)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
-      assert(timeline->is_valid());
+      assert(timeline.is_valid());
 #endif
       meta_infos.push_back(MetaInfo());
       MetaInfo &info = meta_infos.back();
       info.op_id = op_id;
       info.lg_id = id;
-      info.proc_id = usage->proc.id;
-      info.create = timeline->create_time;
-      info.ready = timeline->ready_time;
-      info.start = timeline->start_time;
+      info.proc_id = usage.proc.id;
+      info.create = timeline.create_time;
+      info.ready = timeline.ready_time;
+      info.start = timeline.start_time;
       // use complete_time instead of end_time to include async work
-      info.stop = timeline->complete_time;
-      unsigned num_intervals = waits->intervals.size();
+      info.stop = timeline.complete_time;
+      unsigned num_intervals = waits.intervals.size();
       if (num_intervals > 0)
       {
         for (unsigned idx = 0; idx < num_intervals; ++idx)
         {
           info.wait_intervals.push_back(WaitInfo());
           WaitInfo& wait_info = info.wait_intervals.back();
-          wait_info.wait_start = waits->intervals[idx].wait_start;
-          wait_info.wait_ready = waits->intervals[idx].wait_ready;
-          wait_info.wait_end = waits->intervals[idx].wait_end;
+          wait_info.wait_start = waits.intervals[idx].wait_start;
+          wait_info.wait_ready = waits.intervals[idx].wait_ready;
+          wait_info.wait_end = waits.intervals[idx].wait_end;
         }
       }
+      const size_t diff = sizeof(MetaInfo) + num_intervals * sizeof(WaitInfo);
+      owner->update_footprint(diff, this);
     }
 
     //--------------------------------------------------------------------------
     void LegionProfInstance::process_message(
-                  Realm::ProfilingMeasurements::OperationTimeline *timeline,
-                  Realm::ProfilingMeasurements::OperationProcessorUsage *usage,
-                  Realm::ProfilingMeasurements::OperationEventWaits *waits)
+            const Realm::ProfilingMeasurements::OperationTimeline &timeline,
+            const Realm::ProfilingMeasurements::OperationProcessorUsage &usage,
+            const Realm::ProfilingMeasurements::OperationEventWaits &waits)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
-      assert(timeline->is_valid());
+      assert(timeline.is_valid());
 #endif
       meta_infos.push_back(MetaInfo());
       MetaInfo &info = meta_infos.back();
       info.op_id = 0;
       info.lg_id = LG_MESSAGE_ID;
-      info.proc_id = usage->proc.id;
-      info.create = timeline->create_time;
-      info.ready = timeline->ready_time;
-      info.start = timeline->start_time;
+      info.proc_id = usage.proc.id;
+      info.create = timeline.create_time;
+      info.ready = timeline.ready_time;
+      info.start = timeline.start_time;
       // use complete_time instead of end_time to include async work
-      info.stop = timeline->complete_time;
-      unsigned num_intervals = waits->intervals.size();
+      info.stop = timeline.complete_time;
+      unsigned num_intervals = waits.intervals.size();
       if (num_intervals > 0)
       {
         for (unsigned idx = 0; idx < num_intervals; ++idx)
         {
           info.wait_intervals.push_back(WaitInfo());
           WaitInfo& wait_info = info.wait_intervals.back();
-          wait_info.wait_start = waits->intervals[idx].wait_start;
-          wait_info.wait_ready = waits->intervals[idx].wait_ready;
-          wait_info.wait_end = waits->intervals[idx].wait_end;
+          wait_info.wait_start = waits.intervals[idx].wait_start;
+          wait_info.wait_ready = waits.intervals[idx].wait_ready;
+          wait_info.wait_end = waits.intervals[idx].wait_end;
         }
       }
+      const size_t diff = sizeof(MetaInfo) + num_intervals * sizeof(WaitInfo);
+      owner->update_footprint(diff, this);
     }
 
     //--------------------------------------------------------------------------
     void LegionProfInstance::process_copy(UniqueID op_id,
-                  Realm::ProfilingMeasurements::OperationTimeline *timeline,
-                  Realm::ProfilingMeasurements::OperationMemoryUsage *usage)
+            const Realm::ProfilingMeasurements::OperationTimeline &timeline,
+            const Realm::ProfilingMeasurements::OperationMemoryUsage &usage)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
-      assert(timeline->is_valid());
+      assert(timeline.is_valid());
 #endif
       copy_infos.push_back(CopyInfo());
       CopyInfo &info = copy_infos.back();
       info.op_id = op_id;
-      info.src = usage->source.id;
-      info.dst = usage->target.id;
-      info.size = usage->size;
-      info.create = timeline->create_time;
-      info.ready = timeline->ready_time;
-      info.start = timeline->start_time;
+      info.src = usage.source.id;
+      info.dst = usage.target.id;
+      info.size = usage.size;
+      info.create = timeline.create_time;
+      info.ready = timeline.ready_time;
+      info.start = timeline.start_time;
       // use complete_time instead of end_time to include async work
-      info.stop = timeline->complete_time;
+      info.stop = timeline.complete_time;
+      owner->update_footprint(sizeof(CopyInfo), this);
     }
 
     //--------------------------------------------------------------------------
     void LegionProfInstance::process_fill(UniqueID op_id,
-                  Realm::ProfilingMeasurements::OperationTimeline *timeline,
-                  Realm::ProfilingMeasurements::OperationMemoryUsage *usage)
+            const Realm::ProfilingMeasurements::OperationTimeline &timeline,
+            const Realm::ProfilingMeasurements::OperationMemoryUsage &usage)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
-      assert(timeline->is_valid());
+      assert(timeline.is_valid());
 #endif
       fill_infos.push_back(FillInfo());
       FillInfo &info = fill_infos.back();
       info.op_id = op_id;
-      info.dst = usage->target.id;
-      info.create = timeline->create_time;
-      info.ready = timeline->ready_time;
-      info.start = timeline->start_time;
+      info.dst = usage.target.id;
+      info.create = timeline.create_time;
+      info.ready = timeline.ready_time;
+      info.start = timeline.start_time;
       // use complete_time instead of end_time to include async work
-      info.stop = timeline->complete_time;
+      info.stop = timeline.complete_time;
+      owner->update_footprint(sizeof(FillInfo), this);
     }
 
     //--------------------------------------------------------------------------
@@ -299,32 +316,53 @@ namespace Legion {
       info.op_id = op_id;
       info.inst_id = inst.id;
       info.create = create;
+      owner->update_footprint(sizeof(InstCreateInfo), this);
     }
 
     //--------------------------------------------------------------------------
     void LegionProfInstance::process_inst_usage(UniqueID op_id,
-                  Realm::ProfilingMeasurements::InstanceMemoryUsage *usage)
+            const Realm::ProfilingMeasurements::InstanceMemoryUsage &usage)
     //--------------------------------------------------------------------------
     {
       inst_usage_infos.push_back(InstUsageInfo());
       InstUsageInfo &info = inst_usage_infos.back();
       info.op_id = op_id;
-      info.inst_id = usage->instance.id;
-      info.mem_id = usage->memory.id;
-      info.size = usage->bytes;
+      info.inst_id = usage.instance.id;
+      info.mem_id = usage.memory.id;
+      info.size = usage.bytes;
+      owner->update_footprint(sizeof(InstUsageInfo), this);
     }
 
     //--------------------------------------------------------------------------
     void LegionProfInstance::process_inst_timeline(UniqueID op_id,
-                  Realm::ProfilingMeasurements::InstanceTimeline *timeline)
+            const Realm::ProfilingMeasurements::InstanceTimeline &timeline)
     //--------------------------------------------------------------------------
     {
       inst_timeline_infos.push_back(InstTimelineInfo());
       InstTimelineInfo &info = inst_timeline_infos.back();
       info.op_id = op_id;
-      info.inst_id = timeline->instance.id;
-      info.create = timeline->create_time;
-      info.destroy = timeline->delete_time;
+      info.inst_id = timeline.instance.id;
+      info.create = timeline.create_time;
+      info.destroy = timeline.delete_time;
+      owner->update_footprint(sizeof(InstTimelineInfo), this);
+    }
+
+    //--------------------------------------------------------------------------
+    void LegionProfInstance::process_partition(UniqueID op_id,
+                      DepPartOpKind part_op, 
+                const Realm::ProfilingMeasurements::OperationTimeline &timeline)
+    //--------------------------------------------------------------------------
+    {
+      partition_infos.push_back(PartitionInfo());
+      PartitionInfo &info = partition_infos.back();
+      info.op_id = op_id;
+      info.part_op = part_op;
+      info.create = timeline.create_time;
+      info.ready = timeline.ready_time;
+      info.start = timeline.start_time;
+      // use complete_time instead of end_time to include async work
+      info.stop = timeline.complete_time;
+      owner->update_footprint(sizeof(PartitionInfo), this);
     }
 
     //--------------------------------------------------------------------------
@@ -339,6 +377,7 @@ namespace Legion {
       info.start = start;
       info.stop = stop;
       info.proc_id = proc.id;
+      owner->update_footprint(sizeof(MessageInfo), this);
     }
 
     //--------------------------------------------------------------------------
@@ -354,6 +393,7 @@ namespace Legion {
       info.start = start;
       info.stop = stop;
       info.proc_id = proc.id;
+      owner->update_footprint(sizeof(MapperCallInfo), this);
     }
 
     //--------------------------------------------------------------------------
@@ -367,6 +407,7 @@ namespace Legion {
       info.start = start;
       info.stop = stop;
       info.proc_id = proc.id;
+      owner->update_footprint(sizeof(RuntimeCallInfo), this);
     }
 
 #ifdef LEGION_PROF_SELF_PROFILE
@@ -382,6 +423,7 @@ namespace Legion {
       info.op_id = op_id;
       info.start = start;
       info.stop = stop;
+      owner->update_footprint(sizeof(ProfTaskInfo), this);
     }
 #endif
 
@@ -461,6 +503,11 @@ namespace Legion {
       {
         serializer->serialize(*it);
       }
+      for (std::deque<PartitionInfo>::const_iterator it = 
+            partition_infos.begin(); it != partition_infos.end(); it++)
+      {
+        serializer->serialize(*it);
+      }
       for (std::deque<MessageInfo>::const_iterator it = message_infos.begin();
             it != message_infos.end(); it++)
       {
@@ -493,58 +540,262 @@ namespace Legion {
       inst_create_infos.clear();
       inst_usage_infos.clear();
       inst_timeline_infos.clear();
+      partition_infos.clear();
       message_infos.clear();
       mapper_call_infos.clear();
     }
 
     //--------------------------------------------------------------------------
+    size_t LegionProfInstance::dump_inter(LegionProfSerializer *serializer,
+                                          const double over)
+    //--------------------------------------------------------------------------
+    {
+      // Start the timing so we know how long we are taking
+      const long long t_start = Realm::Clock::current_time_in_microseconds();
+      // Scale our latency by how much we are over the space limit
+      const long long t_stop = t_start + over * owner->output_target_latency;
+      size_t diff = 0; 
+      while (!task_kinds.empty())
+      {
+        TaskKind &front = task_kinds.front();
+        serializer->serialize(front);
+        diff += sizeof(front) + strlen(front.name);
+        free(const_cast<char*>(front.name));
+        task_kinds.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!task_variants.empty())
+      {
+        TaskVariant &front = task_variants.front();
+        serializer->serialize(front);
+        diff += sizeof(front) + strlen(front.name);
+        free(const_cast<char*>(front.name));
+        task_variants.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!operation_instances.empty())
+      {
+        OperationInstance &front = operation_instances.front();
+        serializer->serialize(front);
+        diff += sizeof(front);
+        operation_instances.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!multi_tasks.empty())
+      {
+        MultiTask &front = multi_tasks.front();
+        serializer->serialize(front);
+        diff += sizeof(front);
+        multi_tasks.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!slice_owners.empty())
+      {
+        SliceOwner &front = slice_owners.front();
+        serializer->serialize(front);
+        diff += sizeof(front);
+        slice_owners.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!task_infos.empty())
+      {
+        TaskInfo &front = task_infos.front();
+        serializer->serialize(front);
+        // Have to do all of these now
+        for (std::deque<WaitInfo>::const_iterator wit =
+              front.wait_intervals.begin(); wit != 
+              front.wait_intervals.end(); wit++)
+          serializer->serialize(*wit, front);
+        diff += sizeof(front) + front.wait_intervals.size() * sizeof(WaitInfo);
+        task_infos.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!meta_infos.empty())
+      {
+        MetaInfo &front = meta_infos.front();
+        serializer->serialize(front);
+        // Have to do all of these now
+        for (std::deque<WaitInfo>::const_iterator wit =
+              front.wait_intervals.begin(); wit != 
+              front.wait_intervals.end(); wit++)
+          serializer->serialize(*wit, front);
+        diff += sizeof(front) + front.wait_intervals.size() * sizeof(WaitInfo);
+        meta_infos.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!copy_infos.empty())
+      {
+        CopyInfo &front = copy_infos.front();
+        serializer->serialize(front);
+        diff += sizeof(front);
+        copy_infos.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!fill_infos.empty())
+      {
+        FillInfo &front = fill_infos.front();
+        serializer->serialize(front);
+        diff += sizeof(front);
+        fill_infos.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!inst_create_infos.empty())
+      {
+        InstCreateInfo &front = inst_create_infos.front();
+        serializer->serialize(front);
+        diff += sizeof(front);
+        inst_create_infos.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!inst_timeline_infos.empty())
+      {
+        InstTimelineInfo &front = inst_timeline_infos.front();
+        serializer->serialize(front);
+        diff += sizeof(front);
+        inst_timeline_infos.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!partition_infos.empty())
+      {
+        PartitionInfo &front = partition_infos.front();
+        serializer->serialize(front);
+        diff += sizeof(front);
+        partition_infos.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!message_infos.empty())
+      {
+        MessageInfo &front = message_infos.front();
+        serializer->serialize(front);
+        diff += sizeof(front);
+        message_infos.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!mapper_call_infos.empty())
+      {
+        MapperCallInfo &front = mapper_call_infos.front();
+        serializer->serialize(front);
+        diff += sizeof(front);
+        mapper_call_infos.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+      while (!runtime_call_infos.empty())
+      {
+        RuntimeCallInfo &front = runtime_call_infos.front();
+        serializer->serialize(front);
+        diff += sizeof(front);
+        runtime_call_infos.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+#ifdef LEGION_PROF_SELF_PROFILE
+      while (!prof_task_infos.empty())
+      {
+        ProfTaskInfo &front = prof_task_infos.front();
+        serializer->serialize(front);
+        diff += sizeof(front);
+        prof_task_infos.pop_front();
+        const long long t_curr = Realm::Clock::current_time_in_microseconds();
+        if (t_curr >= t_stop)
+          return diff;
+      }
+#endif
+      return diff;
+    }
+
+    //--------------------------------------------------------------------------
     LegionProfiler::LegionProfiler(Processor target, const Machine &machine,
-                                   unsigned num_meta_tasks,
+                                   Runtime *rt, unsigned num_meta_tasks,
                                    const char *const *const task_descriptions,
                                    unsigned num_operation_kinds,
                                    const char *const *const 
                                                   operation_kind_descriptions,
                                    const char *serializer_type,
-                                   const char *prof_logfile)
-      : target_proc(target), total_outstanding_requests(0)
+                                   const char *prof_logfile,
+                                   const size_t total_runtime_instances,
+                                   const size_t footprint_threshold,
+                                   const size_t target_latency)
+      : runtime(rt), done_event(Runtime::create_rt_user_event()), 
+        output_footprint_threshold(footprint_threshold), 
+        output_target_latency(target_latency), target_proc(target), 
+#ifndef DEBUG_LEGION
+        total_outstanding_requests(1/*start with guard*/),
+#endif
+        total_memory_footprint(0)
     //--------------------------------------------------------------------------
     {
-      profiler_lock = Reservation::create_reservation();
-
-      if (!strcmp(serializer_type, "binary")) {
-        if (prof_logfile == NULL) {
-          fprintf(stderr, "ERROR: Please specify -lg:prof_logfile <logfile_name> "
-                          "when running with -lg:serializer binary\n");
-          exit(-1);
-        }
+#ifdef DEBUG_LEGION
+      assert(target_proc.exists());
+#endif
+      if (!strcmp(serializer_type, "binary")) 
+      {
+        if (prof_logfile == NULL) 
+          REPORT_LEGION_ERROR(ERROR_UNKNOWN_PROFILER_OPTION,
+              "ERROR: Please specify -lg:prof_logfile "
+              "<logfile_name> when running with -lg:serializer binary")
         std::string filename(prof_logfile);
         size_t pct = filename.find_first_of('%', 0);
-        if (pct == std::string::npos) {
-          fprintf(stderr, "ERROR: The logfile name must contain '%%' "
-                          "which will be replaced with the node id\n");
-          exit(-1);
+        if (pct == std::string::npos) 
+        {
+          // This is only an error if we have multiple runtimes
+          if (total_runtime_instances > 1)
+            REPORT_LEGION_ERROR(ERROR_MISSING_PROFILER_OPTION,
+                "ERROR: The logfile name must contain '%%' "
+                "which will be replaced with the node id\n")
+          serializer = new LegionProfBinarySerializer(filename.c_str());
         }
-
-	      // replace % with node number
-        Processor current = Processor::get_executing_processor();
-        std::stringstream ss;
-        ss << filename.substr(0, pct) << current.address_space() <<
-              filename.substr(pct + 1);
-        serializer = new LegionProfBinarySerializer(ss.str());
-      } else if (!strcmp(serializer_type, "ascii")) {
-        if (prof_logfile != NULL) {
-          fprintf(stderr, "ERROR: You should not specify -lg:prof_logfile "
-                          "<logfile_name> when running with -lg:serializer ascii\n"
-                          "       legion_prof output will be written to -logfile "
-                                  "<logfile_name> instead");
-          exit(-1);
+        else
+        {
+          // replace % with node number
+          std::stringstream ss;
+          ss << filename.substr(0, pct) << target.address_space() <<
+                filename.substr(pct + 1);
+          serializer = new LegionProfBinarySerializer(ss.str());
         }
+      } 
+      else if (!strcmp(serializer_type, "ascii")) 
+      {
+        if (prof_logfile != NULL) 
+          REPORT_LEGION_WARNING(LEGION_WARNING_UNUSED_PROFILING_FILE_NAME,
+                    "You should not specify -lg:prof_logfile "
+                    "<logfile_name> when running with -lg:serializer ascii\n"
+                    "       legion_prof output will be written to '-logfile "
+                    "<logfile_name>' instead")
         serializer = new LegionProfASCIISerializer();
-      } else {
-        fprintf(stderr, "Invalid serializer (%s), must be 'binary' or 'ascii'\n", 
-                        serializer_type);
-        exit(-1);
-      }
+      } 
+      else 
+        REPORT_LEGION_ERROR(ERROR_INVALID_PROFILER_SERIALIZER,
+                "Invalid serializer (%s), must be 'binary' "
+                "or 'ascii'\n", serializer_type)
 
       for (unsigned idx = 0; idx < num_meta_tasks; idx++)
       {
@@ -580,11 +831,18 @@ namespace Legion {
         mem_desc.capacity = it->capacity();
         serializer->serialize(mem_desc);
       }
+#ifdef DEBUG_LEGION
+      for (unsigned idx = 0; idx < LEGION_PROF_LAST; idx++)
+        total_outstanding_requests[idx] = 0;
+      total_outstanding_requests[LEGION_PROF_META] = 1; // guard
+#endif
     }
 
     //--------------------------------------------------------------------------
     LegionProfiler::LegionProfiler(const LegionProfiler &rhs)
-      : target_proc(rhs.target_proc)
+      : runtime(NULL), done_event(RtUserEvent::NO_RT_USER_EVENT),
+        output_footprint_threshold(0), output_target_latency(0), 
+        target_proc(rhs.target_proc)
     //--------------------------------------------------------------------------
     {
       // should never be called
@@ -595,9 +853,6 @@ namespace Legion {
     LegionProfiler::~LegionProfiler(void)
     //--------------------------------------------------------------------------
     {
-      profiler_lock.destroy_reservation();
-      profiler_lock = Reservation::NO_RESERVATION;
-      assert(total_outstanding_requests == 0);
       for (std::vector<LegionProfInstance*>::const_iterator it = 
             instances.begin(); it != instances.end(); it++)
         delete (*it);
@@ -667,16 +922,20 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void LegionProfiler::add_task_request(Realm::ProfilingRequestSet &requests,
-                                          TaskID tid, SingleTask *task)
+                                    TaskID tid, VariantID vid, SingleTask *task)
     //--------------------------------------------------------------------------
     {
+#ifdef DEBUG_LEGION
+      increment_total_outstanding_requests(LEGION_PROF_TASK);
+#else
       increment_total_outstanding_requests();
-      ProfilingInfo info(LEGION_PROF_TASK); 
+#endif
+      ProfilingInfo info(this, LEGION_PROF_TASK); 
       info.id = tid;
+      info.id2 = vid;
       info.op_id = task->get_unique_id();
-      Realm::ProfilingRequest &req = requests.add_request((target_proc.exists())
-                        ? target_proc : Processor::get_executing_processor(),
-                        LG_LEGION_PROFILING_ID, &info, sizeof(info));
+      Realm::ProfilingRequest &req = requests.add_request(target_proc,
+                LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
       req.add_measurement<
                 Realm::ProfilingMeasurements::OperationTimeline>();
       req.add_measurement<
@@ -690,13 +949,16 @@ namespace Legion {
                                           LgTaskID tid, Operation *op)
     //--------------------------------------------------------------------------
     {
+#ifdef DEBUG_LEGION
+      increment_total_outstanding_requests(LEGION_PROF_META);
+#else
       increment_total_outstanding_requests();
-      ProfilingInfo info(LEGION_PROF_META); 
+#endif
+      ProfilingInfo info(this, LEGION_PROF_META); 
       info.id = tid;
       info.op_id = (op != NULL) ? op->get_unique_op_id() : 0;
-      Realm::ProfilingRequest &req = requests.add_request((target_proc.exists())
-                        ? target_proc : Processor::get_executing_processor(),
-                        LG_LEGION_PROFILING_ID, &info, sizeof(info));
+      Realm::ProfilingRequest &req = requests.add_request(target_proc,
+                LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
       req.add_measurement<
                 Realm::ProfilingMeasurements::OperationTimeline>();
       req.add_measurement<
@@ -712,9 +974,9 @@ namespace Legion {
     {
       // Don't increment here, we'll increment on the remote side since we
       // that is where we know the profiler is going to handle the results
-      ProfilingInfo info(LEGION_PROF_MESSAGE);
+      ProfilingInfo info(NULL, LEGION_PROF_MESSAGE);
       Realm::ProfilingRequest &req = requests.add_request(remote_target,
-                        LG_LEGION_PROFILING_ID, &info, sizeof(info));
+                LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
       req.add_measurement<
                 Realm::ProfilingMeasurements::OperationTimeline>();
       req.add_measurement<
@@ -728,12 +990,16 @@ namespace Legion {
                                           Operation *op)
     //--------------------------------------------------------------------------
     {
-      ProfilingInfo info(LEGION_PROF_COPY); 
+#ifdef DEBUG_LEGION
+      increment_total_outstanding_requests(LEGION_PROF_COPY);
+#else
+      increment_total_outstanding_requests();
+#endif
+      ProfilingInfo info(this, LEGION_PROF_COPY); 
       // No ID here
       info.op_id = (op != NULL) ? op->get_unique_op_id() : 0;
-      Realm::ProfilingRequest &req = requests.add_request((target_proc.exists())
-                        ? target_proc : Processor::get_executing_processor(),
-                        LG_LEGION_PROFILING_ID, &info, sizeof(info));
+      Realm::ProfilingRequest &req = requests.add_request(target_proc,
+                LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
       req.add_measurement<
                 Realm::ProfilingMeasurements::OperationTimeline>();
       req.add_measurement<
@@ -745,15 +1011,16 @@ namespace Legion {
                                           Operation *op)
     //--------------------------------------------------------------------------
     {
-      // wonchan: don't track fill operations for the moment
-      // as their requests and responses do not exactly match
-      //increment_total_outstanding_requests();
-      ProfilingInfo info(LEGION_PROF_FILL);
+#ifdef DEBUG_LEGION
+      increment_total_outstanding_requests(LEGION_PROF_FILL);
+#else
+      increment_total_outstanding_requests();
+#endif
+      ProfilingInfo info(this, LEGION_PROF_FILL);
       // No ID here
       info.op_id = (op != NULL) ? op->get_unique_op_id() : 0;
-      Realm::ProfilingRequest &req = requests.add_request((target_proc.exists())
-                        ? target_proc : Processor::get_executing_processor(),
-                        LG_LEGION_PROFILING_ID, &info, sizeof(info));
+      Realm::ProfilingRequest &req = requests.add_request(target_proc,
+                LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
       req.add_measurement<
                 Realm::ProfilingMeasurements::OperationTimeline>();
       req.add_measurement<
@@ -765,30 +1032,65 @@ namespace Legion {
                                           Operation *op)
     //--------------------------------------------------------------------------
     {
-      ProfilingInfo info(LEGION_PROF_INST); 
+#ifdef DEBUG_LEGION
+      increment_total_outstanding_requests(LEGION_PROF_INST, 
+                                           2/*different requests*/);
+#else
+      increment_total_outstanding_requests(2/*different requests*/);
+#endif
+      ProfilingInfo info(this, LEGION_PROF_INST); 
       // No ID here
+      info.op_id = (op != NULL) ? op->get_unique_op_id() : 0;
+      // Instances use two profiling requests so that we can get MemoryUsage
+      // right away - the Timeline doesn't come until we delete the instance
+      Realm::ProfilingRequest &req1 = requests.add_request(target_proc,
+                 LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
+      req1.add_measurement<
+                 Realm::ProfilingMeasurements::InstanceMemoryUsage>();
+      Realm::ProfilingRequest &req2 = requests.add_request(target_proc,
+                 LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
+      req2.add_measurement<
+                 Realm::ProfilingMeasurements::InstanceTimeline>();
+    }
+
+    //--------------------------------------------------------------------------
+    void LegionProfiler::add_partition_request(
+                                           Realm::ProfilingRequestSet &requests,
+                                           Operation *op, DepPartOpKind part_op)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      increment_total_outstanding_requests(LEGION_PROF_PARTITION);
+#else
+      increment_total_outstanding_requests();
+#endif
+      ProfilingInfo info(this, LEGION_PROF_PARTITION);
+      // Pass the part_op as the ID
+      info.id = part_op;
       info.op_id = (op != NULL) ? op->get_unique_op_id() : 0;
       Realm::ProfilingRequest &req = requests.add_request((target_proc.exists())
                         ? target_proc : Processor::get_executing_processor(),
                         LG_LEGION_PROFILING_ID, &info, sizeof(info));
       req.add_measurement<
-                Realm::ProfilingMeasurements::InstanceTimeline>();
-      req.add_measurement<
-                Realm::ProfilingMeasurements::InstanceMemoryUsage>();
+                  Realm::ProfilingMeasurements::OperationTimeline>();
     }
 
     //--------------------------------------------------------------------------
     void LegionProfiler::add_task_request(Realm::ProfilingRequestSet &requests,
-                                          TaskID tid, UniqueID uid)
+                                        TaskID tid, VariantID vid, UniqueID uid)
     //--------------------------------------------------------------------------
     {
+#ifdef DEBUG_LEGION
+      increment_total_outstanding_requests(LEGION_PROF_TASK);
+#else
       increment_total_outstanding_requests();
-      ProfilingInfo info(LEGION_PROF_TASK); 
+#endif
+      ProfilingInfo info(this, LEGION_PROF_TASK); 
       info.id = tid;
+      info.id2 = vid;
       info.op_id = uid;
-      Realm::ProfilingRequest &req = requests.add_request((target_proc.exists())
-                        ? target_proc : Processor::get_executing_processor(),
-                        LG_LEGION_PROFILING_ID, &info, sizeof(info));
+      Realm::ProfilingRequest &req = requests.add_request(target_proc,
+                LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
       req.add_measurement<
                 Realm::ProfilingMeasurements::OperationTimeline>();
       req.add_measurement<
@@ -802,13 +1104,16 @@ namespace Legion {
                                           LgTaskID tid, UniqueID uid)
     //--------------------------------------------------------------------------
     {
+#ifdef DEBUG_LEGION
+      increment_total_outstanding_requests(LEGION_PROF_META);
+#else
       increment_total_outstanding_requests();
-      ProfilingInfo info(LEGION_PROF_META); 
+#endif
+      ProfilingInfo info(this, LEGION_PROF_META); 
       info.id = tid;
       info.op_id = uid;
-      Realm::ProfilingRequest &req = requests.add_request((target_proc.exists())
-                        ? target_proc : Processor::get_executing_processor(),
-                        LG_LEGION_PROFILING_ID, &info, sizeof(info));
+      Realm::ProfilingRequest &req = requests.add_request(target_proc,
+                LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
       req.add_measurement<
                 Realm::ProfilingMeasurements::OperationTimeline>();
       req.add_measurement<
@@ -822,12 +1127,16 @@ namespace Legion {
                                           UniqueID uid)
     //--------------------------------------------------------------------------
     {
-      ProfilingInfo info(LEGION_PROF_COPY); 
+#ifdef DEBUG_LEGION
+      increment_total_outstanding_requests(LEGION_PROF_COPY);
+#else
+      increment_total_outstanding_requests();
+#endif
+      ProfilingInfo info(this, LEGION_PROF_COPY); 
       // No ID here
       info.op_id = uid;
-      Realm::ProfilingRequest &req = requests.add_request((target_proc.exists())
-                        ? target_proc : Processor::get_executing_processor(),
-                        LG_LEGION_PROFILING_ID, &info, sizeof(info));
+      Realm::ProfilingRequest &req = requests.add_request(target_proc,
+                LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
       req.add_measurement<
                 Realm::ProfilingMeasurements::OperationTimeline>();
       req.add_measurement<
@@ -839,15 +1148,16 @@ namespace Legion {
                                           UniqueID uid)
     //--------------------------------------------------------------------------
     {
-      // wonchan: don't track fill operations for the moment
-      // as their requests and responses do not exactly match
-      //increment_total_outstanding_requests();
-      ProfilingInfo info(LEGION_PROF_FILL);
+#ifdef DEBUG_LEGION
+      increment_total_outstanding_requests(LEGION_PROF_FILL);
+#else
+      increment_total_outstanding_requests();
+#endif
+      ProfilingInfo info(this, LEGION_PROF_FILL);
       // No ID here
       info.op_id = uid;
-      Realm::ProfilingRequest &req = requests.add_request((target_proc.exists())
-                        ? target_proc : Processor::get_executing_processor(),
-                        LG_LEGION_PROFILING_ID, &info, sizeof(info));
+      Realm::ProfilingRequest &req = requests.add_request(target_proc,
+                LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
       req.add_measurement<
                 Realm::ProfilingMeasurements::OperationTimeline>();
       req.add_measurement<
@@ -859,26 +1169,51 @@ namespace Legion {
                                           UniqueID uid)
     //--------------------------------------------------------------------------
     {
-      ProfilingInfo info(LEGION_PROF_INST); 
+#ifdef DEBUG_LEGION
+      increment_total_outstanding_requests(LEGION_PROF_INST,
+                                           2/*different requests*/);
+#else
+      increment_total_outstanding_requests(2/*different requests*/);
+#endif
+      ProfilingInfo info(this, LEGION_PROF_INST); 
       // No ID here
       info.op_id = uid;
       // Instances use two profiling requests so that we can get MemoryUsage
       // right away - the Timeline doesn't come until we delete the instance
-      Processor p = (target_proc.exists() 
-                        ? target_proc : Processor::get_executing_processor());
-      Realm::ProfilingRequest &req1 = requests.add_request(p,
-                        LG_LEGION_PROFILING_ID, &info, sizeof(info));
+      Realm::ProfilingRequest &req1 = requests.add_request(target_proc,
+                 LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
       req1.add_measurement<
                  Realm::ProfilingMeasurements::InstanceMemoryUsage>();
-      Realm::ProfilingRequest &req2 = requests.add_request(p,
-                        LG_LEGION_PROFILING_ID, &info, sizeof(info));
+      Realm::ProfilingRequest &req2 = requests.add_request(target_proc,
+                 LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
       req2.add_measurement<
                  Realm::ProfilingMeasurements::InstanceTimeline>();
     }
 
     //--------------------------------------------------------------------------
-    void LegionProfiler::process_results(Processor p, const void *buffer,
-                                         size_t size)
+    void LegionProfiler::add_partition_request(
+                                           Realm::ProfilingRequestSet &requests,
+                                           UniqueID uid, DepPartOpKind part_op)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      increment_total_outstanding_requests(LEGION_PROF_PARTITION);
+#else
+      increment_total_outstanding_requests();
+#endif
+      ProfilingInfo info(this, LEGION_PROF_PARTITION);
+      // Pass the partition op kind as the ID
+      info.id = part_op;
+      info.op_id = uid;
+      Realm::ProfilingRequest &req = requests.add_request(target_proc,
+                  LG_LEGION_PROFILING_ID, &info, sizeof(info), LG_MIN_PRIORITY);
+      req.add_measurement<
+                  Realm::ProfilingMeasurements::OperationTimeline>();
+    }
+
+    //--------------------------------------------------------------------------
+    void LegionProfiler::handle_profiling_response(
+                                       const Realm::ProfilingResponse &response)
     //--------------------------------------------------------------------------
     {
 #ifdef LEGION_PROF_SELF_PROFILE
@@ -886,7 +1221,6 @@ namespace Legion {
 #endif
       if (thread_local_profiling_instance == NULL)
         create_thread_local_profiling_instance();
-      Realm::ProfilingResponse response(buffer, size);
 #ifdef DEBUG_LEGION
       assert(response.user_data_size() == sizeof(ProfilingInfo));
 #endif
@@ -901,24 +1235,19 @@ namespace Legion {
             assert(response.has_measurement<
                 Realm::ProfilingMeasurements::OperationProcessorUsage>());
 #endif
-            Realm::ProfilingMeasurements::OperationTimeline *timeline = 
-              response.get_measurement<
-                    Realm::ProfilingMeasurements::OperationTimeline>();
-            Realm::ProfilingMeasurements::OperationProcessorUsage *usage = 
-              response.get_measurement<
-                    Realm::ProfilingMeasurements::OperationProcessorUsage>();
-            Realm::ProfilingMeasurements::OperationEventWaits *waits = 
-              response.get_measurement<
-                    Realm::ProfilingMeasurements::OperationEventWaits>();
+            Realm::ProfilingMeasurements::OperationTimeline timeline;
+            response.get_measurement<
+                  Realm::ProfilingMeasurements::OperationTimeline>(timeline);
+            Realm::ProfilingMeasurements::OperationProcessorUsage usage;
+            const bool has_usage = response.get_measurement<
+                  Realm::ProfilingMeasurements::OperationProcessorUsage>(usage);
+            Realm::ProfilingMeasurements::OperationEventWaits waits;
+            response.get_measurement<
+                  Realm::ProfilingMeasurements::OperationEventWaits>(waits);
             // Ignore anything that was predicated false for now
-            if (usage != NULL)
+            if (has_usage)
               thread_local_profiling_instance->process_task(info->id, 
-                  info->op_id, timeline, usage, waits);
-            if (timeline != NULL)
-              delete timeline;
-            if (timeline != NULL)
-              delete usage;
-            decrement_total_outstanding_requests();
+                  info->id2, info->op_id, timeline, usage, waits);
             break;
           }
         case LEGION_PROF_META:
@@ -929,24 +1258,19 @@ namespace Legion {
             assert(response.has_measurement<
                 Realm::ProfilingMeasurements::OperationProcessorUsage>());
 #endif
-            Realm::ProfilingMeasurements::OperationTimeline *timeline = 
-              response.get_measurement<
-                    Realm::ProfilingMeasurements::OperationTimeline>();
-            Realm::ProfilingMeasurements::OperationProcessorUsage *usage = 
-              response.get_measurement<
-                    Realm::ProfilingMeasurements::OperationProcessorUsage>();
-            Realm::ProfilingMeasurements::OperationEventWaits *waits = 
-              response.get_measurement<
-                    Realm::ProfilingMeasurements::OperationEventWaits>();
+            Realm::ProfilingMeasurements::OperationTimeline timeline;
+            response.get_measurement<
+                  Realm::ProfilingMeasurements::OperationTimeline>(timeline);
+            Realm::ProfilingMeasurements::OperationProcessorUsage usage;
+            const bool has_usage = response.get_measurement<
+                  Realm::ProfilingMeasurements::OperationProcessorUsage>(usage);
+            Realm::ProfilingMeasurements::OperationEventWaits waits;
+            response.get_measurement<
+                  Realm::ProfilingMeasurements::OperationEventWaits>(waits);
             // Ignore anything that was predicated false for now
-            if (usage != NULL)
+            if (has_usage)
               thread_local_profiling_instance->process_meta(info->id, 
                   info->op_id, timeline, usage, waits);
-            if (timeline != NULL)
-              delete timeline;
-            if (usage != NULL)
-              delete usage;
-            decrement_total_outstanding_requests();
             break;
           }
         case LEGION_PROF_MESSAGE:
@@ -957,23 +1281,18 @@ namespace Legion {
             assert(response.has_measurement<
                 Realm::ProfilingMeasurements::OperationProcessorUsage>());
 #endif
-            Realm::ProfilingMeasurements::OperationTimeline *timeline = 
-              response.get_measurement<
-                    Realm::ProfilingMeasurements::OperationTimeline>();
-            Realm::ProfilingMeasurements::OperationProcessorUsage *usage = 
-              response.get_measurement<
-                    Realm::ProfilingMeasurements::OperationProcessorUsage>();
-            Realm::ProfilingMeasurements::OperationEventWaits *waits = 
-              response.get_measurement<
-                    Realm::ProfilingMeasurements::OperationEventWaits>();
-            if (usage != NULL)
+            Realm::ProfilingMeasurements::OperationTimeline timeline;
+            response.get_measurement<
+                  Realm::ProfilingMeasurements::OperationTimeline>(timeline);
+            Realm::ProfilingMeasurements::OperationProcessorUsage usage;
+            const bool has_usage = response.get_measurement<
+                  Realm::ProfilingMeasurements::OperationProcessorUsage>(usage);
+            Realm::ProfilingMeasurements::OperationEventWaits waits;
+            response.get_measurement<
+                  Realm::ProfilingMeasurements::OperationEventWaits>(waits);
+            if (has_usage)
               thread_local_profiling_instance->process_message(timeline, 
                   usage, waits);
-            if (timeline != NULL)
-              delete timeline;
-            if (usage != NULL)
-              delete usage;
-            decrement_total_outstanding_requests();
             break;
           }
         case LEGION_PROF_COPY:
@@ -984,20 +1303,16 @@ namespace Legion {
             assert(response.has_measurement<
                 Realm::ProfilingMeasurements::OperationMemoryUsage>());
 #endif
-            Realm::ProfilingMeasurements::OperationTimeline *timeline = 
-              response.get_measurement<
-                    Realm::ProfilingMeasurements::OperationTimeline>();
-            Realm::ProfilingMeasurements::OperationMemoryUsage *usage = 
-              response.get_measurement<
-                    Realm::ProfilingMeasurements::OperationMemoryUsage>();
+            Realm::ProfilingMeasurements::OperationTimeline timeline;
+            response.get_measurement<
+                  Realm::ProfilingMeasurements::OperationTimeline>(timeline);
+            Realm::ProfilingMeasurements::OperationMemoryUsage usage;
+            const bool has_usage = response.get_measurement<
+                  Realm::ProfilingMeasurements::OperationMemoryUsage>(usage);
             // Ignore anything that was predicated false for now
-            if (usage != NULL)
+            if (has_usage)
               thread_local_profiling_instance->process_copy(info->op_id,
                                                             timeline, usage);
-            if (timeline != NULL)
-              delete timeline;
-            if (usage != NULL)
-              delete usage;
             break;
           }
         case LEGION_PROF_FILL:
@@ -1008,23 +1323,16 @@ namespace Legion {
             assert(response.has_measurement<
                 Realm::ProfilingMeasurements::OperationMemoryUsage>());
 #endif
-            Realm::ProfilingMeasurements::OperationTimeline *timeline = 
-              response.get_measurement<
-                    Realm::ProfilingMeasurements::OperationTimeline>();
-            Realm::ProfilingMeasurements::OperationMemoryUsage *usage = 
-              response.get_measurement<
-                    Realm::ProfilingMeasurements::OperationMemoryUsage>();
+            Realm::ProfilingMeasurements::OperationTimeline timeline;
+            response.get_measurement<
+                  Realm::ProfilingMeasurements::OperationTimeline>(timeline);
+            Realm::ProfilingMeasurements::OperationMemoryUsage usage;
+            const bool has_usage = response.get_measurement<
+                    Realm::ProfilingMeasurements::OperationMemoryUsage>(usage);
             // Ignore anything that was predicated false for now
-            if (usage != NULL)
+            if (has_usage)
               thread_local_profiling_instance->process_fill(info->op_id,
                                                             timeline, usage);
-            if (timeline != NULL)
-              delete timeline;
-            if (usage != NULL)
-              delete usage;
-            // wonchan: don't track fill operations for the moment
-            // as their requests and responses do not exactly match
-            //decrement_total_outstanding_requests();
             break;
           }
         case LEGION_PROF_INST:
@@ -1033,24 +1341,35 @@ namespace Legion {
 	    if (response.has_measurement<
                 Realm::ProfilingMeasurements::InstanceTimeline>())
 	    {
-	      Realm::ProfilingMeasurements::InstanceTimeline *timeline = 
-                response.get_measurement<
-                      Realm::ProfilingMeasurements::InstanceTimeline>();
+	      Realm::ProfilingMeasurements::InstanceTimeline timeline;
+              response.get_measurement<
+                    Realm::ProfilingMeasurements::InstanceTimeline>(timeline);
 	      thread_local_profiling_instance->process_inst_timeline(
 								info->op_id,
 								timeline);
-	      delete timeline;
 	    }
 	    if (response.has_measurement<
                 Realm::ProfilingMeasurements::InstanceMemoryUsage>())
 	    {
-	      Realm::ProfilingMeasurements::InstanceMemoryUsage *usage = 
-                response.get_measurement<
-                      Realm::ProfilingMeasurements::InstanceMemoryUsage>();
+	      Realm::ProfilingMeasurements::InstanceMemoryUsage usage;
+              response.get_measurement<
+                    Realm::ProfilingMeasurements::InstanceMemoryUsage>(usage);
 	      thread_local_profiling_instance->process_inst_usage(info->op_id,
 								  usage);
-	      delete usage;
 	    }
+            break;
+          }
+        case LEGION_PROF_PARTITION:
+          {
+#ifdef DEBUG_LEGION
+            assert(response.has_measurement<
+                Realm::ProfilingMeasurements::OperationTimeline>());
+#endif
+            Realm::ProfilingMeasurements::OperationTimeline timeline;
+            response.get_measurement<
+                  Realm::ProfilingMeasurements::OperationTimeline>(timeline);
+            thread_local_profiling_instance->process_partition(info->op_id,
+                                        (DepPartOpKind)info->id, timeline);
             break;
           }
         default:
@@ -1058,8 +1377,14 @@ namespace Legion {
       }
 #ifdef LEGION_PROF_SELF_PROFILE
       long long t_stop = Realm::Clock::current_time_in_nanoseconds();
+      const Processor p = Realm::Processor::get_executing_processor();
       thread_local_profiling_instance->record_proftask(p, info->op_id, 
                                                        t_start, t_stop);
+#endif
+#ifdef DEBUG_LEGION
+      decrement_total_outstanding_requests(info->kind);
+#else
+      decrement_total_outstanding_requests();
 #endif
     }
 
@@ -1067,6 +1392,14 @@ namespace Legion {
     void LegionProfiler::finalize(void)
     //--------------------------------------------------------------------------
     {
+      // Remove our guard outstanding request
+#ifdef DEBUG_LEGION
+      decrement_total_outstanding_requests(LEGION_PROF_META);
+#else
+      decrement_total_outstanding_requests();
+#endif
+      if (!done_event.has_triggered())
+        done_event.wait();
       for (std::vector<LegionProfInstance*>::const_iterator it = 
             instances.begin(); it != instances.end(); it++) {
         (*it)->dump_state(serializer);
@@ -1160,6 +1493,102 @@ namespace Legion {
         create_thread_local_profiling_instance();
       thread_local_profiling_instance->record_runtime_call(current, kind, 
                                                            start, stop);
+    }
+
+#ifdef DEBUG_LEGION
+    //--------------------------------------------------------------------------
+    void LegionProfiler::increment_total_outstanding_requests(
+                                               ProfilingKind kind, unsigned cnt)
+    //--------------------------------------------------------------------------
+    {
+      AutoLock p_lock(profiler_lock);
+      total_outstanding_requests[kind] += cnt;
+    }
+
+    //--------------------------------------------------------------------------
+    void LegionProfiler::decrement_total_outstanding_requests(
+                                               ProfilingKind kind, unsigned cnt)
+    //--------------------------------------------------------------------------
+    {
+      AutoLock p_lock(profiler_lock);
+      assert(total_outstanding_requests[kind] >= cnt);
+      total_outstanding_requests[kind] -= cnt;
+      if (total_outstanding_requests[kind] > 0)
+        return;
+      for (unsigned idx = 0; idx < LEGION_PROF_LAST; idx++)
+      {
+        if (idx == kind)
+          continue;
+        if (total_outstanding_requests[idx] > 0)
+          return;
+      }
+      assert(!done_event.has_triggered());
+      Runtime::trigger_event(done_event);
+    }
+#else
+    //--------------------------------------------------------------------------
+    void LegionProfiler::increment_total_outstanding_requests(unsigned cnt)
+    //--------------------------------------------------------------------------
+    {
+      __sync_fetch_and_add(&total_outstanding_requests,cnt);
+    }
+
+    //--------------------------------------------------------------------------
+    void LegionProfiler::decrement_total_outstanding_requests(unsigned cnt)
+    //--------------------------------------------------------------------------
+    {
+      unsigned prev = __sync_fetch_and_sub(&total_outstanding_requests,cnt);
+#ifdef DEBUG_LEGION
+      assert(prev >= cnt);
+#endif
+      // If we were the last outstanding event we can trigger the event
+      if (prev == cnt)
+      {
+#ifdef DEBUG_LEGION
+        assert(!done_event.has_triggered());
+#endif
+        Runtime::trigger_event(done_event);
+      }
+    }
+#endif
+
+    //--------------------------------------------------------------------------
+    void LegionProfiler::update_footprint(size_t diff, LegionProfInstance *inst)
+    //--------------------------------------------------------------------------
+    {
+      size_t footprint = __sync_add_and_fetch(&total_memory_footprint, diff);
+      if (footprint > output_footprint_threshold)
+      {
+        // An important bit of logic here, if we're over the threshold then
+        // we want to have a little bit of a feedback loop so the more over
+        // the limit we are then the more time we give the profiler to dump
+        // out things to the output file. We'll try to make this continuous
+        // so there are no discontinuities in performance. If the threshold
+        // is zero we'll just choose an arbitrarily large scale factor to 
+        // ensure that things work properly.
+        double over_scale = output_footprint_threshold == 0 ? double(1 << 20) :
+                        double(footprint) / double(output_footprint_threshold);
+        // Let's actually make this quadratic so it's not just linear
+        if (output_footprint_threshold > 0)
+          over_scale *= over_scale;
+        if (!serializer->is_thread_safe())
+        {
+          // Need a lock to protect the serializer
+          AutoLock p_lock(profiler_lock);
+          diff = inst->dump_inter(serializer, over_scale);
+        }
+        else
+          diff = inst->dump_inter(serializer, over_scale);
+#ifdef DEBUG_LEGION
+#ifndef NDEBUG
+        footprint = 
+#endif
+#endif
+          __sync_fetch_and_sub(&total_memory_footprint, diff);
+#ifdef DEBUG_LEGION
+        assert(footprint >= diff); // check for wrap-around
+#endif
+      }
     }
 
     //--------------------------------------------------------------------------

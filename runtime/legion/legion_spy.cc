@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,9 @@
 
 
 #include "legion.h"
-#include "region_tree.h"
-#include "legion_spy.h"
-#include "runtime.h"
+#include "legion/region_tree.h"
+#include "legion/legion_spy.h"
+#include "legion/runtime.h"
 
 namespace Legion {
   namespace Internal {
@@ -90,7 +90,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       RtEvent lock_event(logger_lock.acquire(0, true/*exclusive*/));
-      lock_event.lg_wait();
+      lock_event.wait();
       va_list args;
       va_start(args, fmt);
       vsnprintf(block_buffer, 127, fmt, args);
@@ -130,7 +130,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
-      if (Runtime::logging_region_tree_state)
+      if (rt->logging_region_tree_state)
       {
         TreeStateLogger *logger = rt->get_tree_state_logger();
         assert(logger != NULL);

@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,13 +24,14 @@
 #include <deque>
 #include <vector>
 #include <limits>
-#include <cstddef>
+#include <stddef.h>
 #include <functional>
 #include <stdlib.h>
 #ifndef __MACH__
 #include <malloc.h>
 #endif
-#include "legion_template_help.h" // StaticAssert
+#include "legion/legion_config.h"
+#include "legion/legion_template_help.h" // StaticAssert
 #if __cplusplus >= 201103L
 #include <utility>
 #endif
@@ -164,26 +165,42 @@ namespace Legion {
       size_t alloc_size = cnt;
       if (!BYTES)
         alloc_size *= SIZE;
-      void *result;
+      void *result = NULL;
       if (ALIGNMENT > LEGION_MAX_ALIGNMENT)
       {
 #ifdef DEBUG_LEGION
         assert((alloc_size % ALIGNMENT) == 0);
 #endif
-      // memalign is faster than posix_memalign so use it if we have it
-#ifdef __MACH__
-#ifndef NDEBUG
+#if defined(DEBUG_LEGION) && !defined(NDEBUG)
         int error = 
+#else
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-result"
+#endif
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-result"
+#endif
 #endif
           posix_memalign(&result, ALIGNMENT, alloc_size);
+#if defined(DEBUG_LEGION) && !defined(NDEBUG)
         assert(error == 0);
 #else
-        result = memalign(ALIGNMENT, alloc_size);
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 #endif
       }
       else
         result = malloc(alloc_size);
 
+#ifdef DEBUG_LEGION
+      assert(result != NULL);
+#endif
       return result;
     }
 

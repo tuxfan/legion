@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,15 @@
 // INCLDUED FROM profiling.h - DO NOT INCLUDE THIS DIRECTLY
 
 // this is a nop, but it's for the benefit of IDEs trying to parse this file
-#include "profiling.h"
-#include "utilities.h"
-#include "serialize.h"
+#include "realm/profiling.h"
+#include "realm/serialize.h"
 
 TYPE_IS_SERIALIZABLE(Realm::ProfilingMeasurementID);
 TYPE_IS_SERIALIZABLE(Realm::ProfilingMeasurements::OperationTimeline);
 TYPE_IS_SERIALIZABLE(Realm::ProfilingMeasurements::OperationEventWaits::WaitInterval);
 TYPE_IS_SERIALIZABLE(Realm::ProfilingMeasurements::OperationMemoryUsage);
 TYPE_IS_SERIALIZABLE(Realm::ProfilingMeasurements::OperationProcessorUsage);
+TYPE_IS_SERIALIZABLE(Realm::ProfilingMeasurements::InstanceAllocResult);
 TYPE_IS_SERIALIZABLE(Realm::ProfilingMeasurements::InstanceMemoryUsage);
 TYPE_IS_SERIALIZABLE(Realm::ProfilingMeasurements::InstanceTimeline);
 template <Realm::ProfilingMeasurementID _ID>
@@ -33,7 +33,7 @@ TYPE_IS_SERIALIZABLE(Realm::ProfilingMeasurements::IPCPerfCounters);
 TYPE_IS_SERIALIZABLE(Realm::ProfilingMeasurements::TLBPerfCounters);
 TYPE_IS_SERIALIZABLE(Realm::ProfilingMeasurements::BranchPredictionPerfCounters);
 
-#include "timers.h"
+#include "realm/timers.h"
 
 namespace Realm {
 
@@ -43,6 +43,16 @@ namespace Realm {
 
     template <typename S>
     bool serdez(S& serdez, const OperationStatus& s)
+    {
+      return ((serdez & s.result) &&
+	      (serdez & s.error_code) &&
+	      (serdez & s.error_details));
+    }
+
+    TYPE_IS_SERIALIZABLE(InstanceStatus::Result);
+
+    template <typename S>
+    bool serdez(S& serdez, const InstanceStatus& s)
     {
       return ((serdez & s.result) &&
 	      (serdez & s.error_code) &&
@@ -92,7 +102,7 @@ namespace Realm {
       complete_time = Clock::current_time_in_nanoseconds();
     }
 
-    inline bool OperationTimeline::is_valid(void)
+    inline bool OperationTimeline::is_valid(void) const
     {
       return ((create_time != INVALID_TIMESTAMP) &&
 	      (ready_time != INVALID_TIMESTAMP) &&
@@ -145,6 +155,11 @@ namespace Realm {
       create_time = Clock::current_time_in_nanoseconds();
     }
 
+    inline void InstanceTimeline::record_ready_time(void)
+    {
+      ready_time = Clock::current_time_in_nanoseconds();
+    }
+
     inline void InstanceTimeline::record_delete_time(void)
     {
       delete_time = Clock::current_time_in_nanoseconds();
@@ -161,7 +176,7 @@ namespace Realm {
   ProfilingRequest &ProfilingRequest::add_measurement(void) 
   {
     // SJT: the typecast here is a NOP, but somehow it avoids weird linker errors
-    requested_measurements.insert((ProfilingMeasurementID)T::ID);
+    requested_measurements.insert(static_cast<ProfilingMeasurementID>(T::ID));
     return *this;
   }
 
@@ -213,13 +228,13 @@ namespace Realm {
   template <typename T>
   bool ProfilingMeasurementCollection::wants_measurement(void) const
   {
-    return requested_measurements.count((ProfilingMeasurementID)T::ID);
+    return requested_measurements.count(static_cast<ProfilingMeasurementID>(T::ID));
   } 
 
   template <typename T>
   void ProfilingMeasurementCollection::add_measurement(const T& data, bool send_complete_responses /*= true*/)
   {
-    std::map<ProfilingMeasurementID, std::vector<const ProfilingRequest *> >::const_iterator it = requested_measurements.find((ProfilingMeasurementID)T::ID);
+    std::map<ProfilingMeasurementID, std::vector<const ProfilingRequest *> >::const_iterator it = requested_measurements.find(static_cast<ProfilingMeasurementID>(T::ID));
     if(it == requested_measurements.end()) {
       // caller probably should have asked if we wanted this before measuring it...
       return;
@@ -229,6 +244,7 @@ namespace Realm {
     //ksmurthy: during resilience, we explicitly add OP_STATUS as bad when exception occurs, 
     //in those cases, when we eenter here, there is already a profiling measurement,
     //accounting for that, we should nto assert, and use whatever is reported there
+    assert(measurements.count(static_cast<ProfilingMeasurementID>(T::ID)) == 0);
     bool should_actually_add_measurement = false;
     if((ProfilingMeasurementID)T::ID == PMID_OP_STATUS) {
       if(measurements.count((ProfilingMeasurementID)T::ID) > 0) {
@@ -241,53 +257,58 @@ namespace Realm {
       should_actually_add_measurement = true;
     }
 
-
+    //ksmurthy
     if(should_actually_add_measurement) {
-      // serialize the data
-      Serialization::DynamicBufferSerializer dbs(128);
-      #ifndef NDEBUG
-        bool ok =
-      #endif
-        dbs << data;
-      assert(ok);
-      // measurement data is stored in a ByteArray
-      ByteArray& md = measurements[(ProfilingMeasurementID)T::ID];
-      ByteArray b = dbs.detach_bytearray(-1);  // no trimming
-      md.swap(b);  // avoids a copy
+    // serialize the data
+    Serialization::DynamicBufferSerializer dbs(128);
+#ifndef NDEBUG
+    bool ok =
+#endif
+      dbs << data;
+    assert(ok);
 
-      // update the number of remaining measurements for each profiling request that wanted this
-      //  if the count hits zero, we can either send the request immediately or mark that we want to
-      //  later
-      for(std::vector<const ProfilingRequest *>::const_iterator it2 = it->second.begin(); it2 != it->second.end(); it2++) {
-        std::map<const ProfilingRequest *, int>::iterator it3 = measurements_left.find(*it2);
-        assert(it3 != measurements_left.end());
-        it3->second--;
-        if(it3->second == 0) {
-        	if(send_complete_responses) {
-	          measurements_left.erase(it3);
-	          send_response(**it2);
-	        } else {
-	          completed_requests_present = true;
-	        }
-        }
+    // measurement data is stored in a ByteArray
+    ByteArray& md = measurements[static_cast<ProfilingMeasurementID>(T::ID)];
+    ByteArray b = dbs.detach_bytearray(-1);  // no trimming
+    md.swap(b);  // avoids a copy
+
+    // update the number of remaining measurements for each profiling request that wanted this
+    //  if the count hits zero, we can either send the request immediately or mark that we want to
+    //  later
+    for(std::vector<const ProfilingRequest *>::const_iterator it2 = it->second.begin();
+	it2 != it->second.end();
+	it2++) {
+      std::map<const ProfilingRequest *, int>::iterator it3 = measurements_left.find(*it2);
+      assert(it3 != measurements_left.end());
+      it3->second--;
+      if(it3->second == 0) {
+	if(send_complete_responses) {
+	  measurements_left.erase(it3);
+	  send_response(**it2);
+	} else {
+	  completed_requests_present = true;
+	}
       }
+    }
+
     }
 
     // while we're here, if we're allowed to send responses, see if there are any deferred ones
     if(send_complete_responses && completed_requests_present) {
       std::map<const ProfilingRequest *, int>::iterator it = measurements_left.begin();
       while(it != measurements_left.end()) {
-	      if(it->second > 0) {
-	        it++;
-	        continue;
-	      }
+	if(it->second > 0) {
+	  it++;
+	  continue;
+	}
 
-	      // make a copy of the iterator so we can increment it
-	      std::map<const ProfilingRequest *, int>::iterator old = it;
-	      it++;
-	      send_response(*(old->first));
-	      measurements_left.erase(old);
+	// make a copy of the iterator so we can increment it
+	std::map<const ProfilingRequest *, int>::iterator old = it;
+	it++;
+	send_response(*(old->first));
+	measurements_left.erase(old);
       }
+      
       completed_requests_present = false;
     }
   }
@@ -330,17 +351,17 @@ namespace Realm {
   //
 
   template <typename T>
-  bool ProfilingResponse::has_measurement(void) const
+  inline bool ProfilingResponse::has_measurement(void) const
   {
     int offset, size; // not actually used
-    return find_id((int)(T::ID), offset, size);
+    return find_id(static_cast<int>(T::ID), offset, size);
   }
 
   template <typename T>
-  T *ProfilingResponse::get_measurement(void) const
+  inline T *ProfilingResponse::get_measurement(void) const
   {
     int offset, size;
-    if(find_id((int)(T::ID), offset, size)) {
+    if(find_id(static_cast<int>(T::ID), offset, size)) {
       Serialization::FixedBufferDeserializer fbd(data + offset, size);
       T *m = new T;
 #ifndef NDEBUG
@@ -351,6 +372,17 @@ namespace Realm {
       return m;
     } else
       return 0;
+  }
+
+  template <typename T>
+  inline bool ProfilingResponse::get_measurement(T& result) const
+  {
+    int offset, size;
+    if(find_id(static_cast<int>(T::ID), offset, size)) {
+      Serialization::FixedBufferDeserializer fbd(data + offset, size);
+      return (fbd >> result);
+    } else
+      return false;
   }
 
 

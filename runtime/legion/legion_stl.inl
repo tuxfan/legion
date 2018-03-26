@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,9 @@
 
 // NEVER INCLUDE THIS FILE DIRECTLY, INCLUDE legion_stl.h INSTEAD!
 
-#include "arrays.h"
-#include "accessor.h"
-#include "legion_utilities.h"
+#include "legion/arrays.h"
+#include "legion/accessor.h"
+#include "legion/legion_utilities.h"
 
 namespace Legion {
   namespace STL {
@@ -156,11 +156,9 @@ namespace Legion {
         if ((req.privilege == NO_ACCESS) || !region.is_mapped())
           return;
         unsigned idx = 0;
-#ifndef LEGION_ISSUE_214_FIX
         LegionRuntime::Arrays::Rect<DIM> region_bounds = 
           runtime->get_index_space_domain(req.region.get_index_space()).get_rect<DIM>();
         LegionRuntime::Arrays::Rect<DIM> actual_bounds;
-#endif
         for (std::set<FieldID>::const_iterator it = req.privilege_fields.begin();
               it != req.privilege_fields.end(); it++, idx++)
         {
@@ -170,24 +168,16 @@ namespace Legion {
           if (idx != 0)
           {
             ByteOffset temp_offsets[DIM];
-#ifdef LEGION_ISSUE_214_FIX
-            ptrs[idx] = facc.template raw_rect_ptr<DIM>(temp_offsets);
-#else
             ptrs[idx] = facc.template raw_rect_ptr<DIM>(region_bounds, 
                                           actual_bounds, temp_offsets);
             assert(region_bounds == actual_bounds);
-#endif
             compare_offsets<DIM>(offsets, temp_offsets);       
           }
           else
           {
-#ifdef LEGION_ISSUE_214_FIX
-            ptrx[idx] = facc.template raw_rect_ptr<DIM>(offsets);
-#else
             ptrs[idx] = facc.template raw_rect_ptr<DIM>(region_bounds, 
                                               actual_bounds, offsets);
             assert(region_bounds == actual_bounds);
-#endif
           }
         }
       }

@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,15 +18,15 @@
 #ifndef REALM_RSRV_IMPL_H
 #define REALM_RSRV_IMPL_H
 
-#include "reservation.h"
+#include "realm/reservation.h"
 
-#include "id.h"
-#include "activemsg.h"
-#include "nodeset.h"
+#include "realm/id.h"
+#include "realm/activemsg.h"
+#include "realm/nodeset.h"
 
-//define REALM_RSRV_USE_CIRCQUEUE
+#define REALM_RSRV_USE_CIRCQUEUE
 #ifdef REALM_RSRV_USE_CIRCQUEUE
-#include "circ_queue.h"
+#include "realm/circ_queue.h"
 #endif
 
 namespace Realm {
@@ -48,6 +48,10 @@ namespace Realm {
     };
 #endif
 
+    namespace Config {
+      extern bool use_fast_reservation_fallback;
+    };
+
     class ReservationImpl {
     public:
       ReservationImpl(void);
@@ -66,7 +70,7 @@ namespace Realm {
 
       //protected:
       Reservation me;
-      unsigned owner; // which node owns the lock
+      NodeID owner; // which node owns the lock
       unsigned count; // number of locks held by local threads
       unsigned mode;  // lock mode
       bool in_use;
@@ -193,7 +197,7 @@ namespace Realm {
 
   struct LockRequestMessage {
     struct RequestArgs {
-      gasnet_node_t node;
+      NodeID node;
       Reservation lock;
       unsigned mode;
     };
@@ -204,13 +208,13 @@ namespace Realm {
 				      RequestArgs, 
 				      handle_request> Message;
 
-    static void send_request(gasnet_node_t target, gasnet_node_t req_node,
+    static void send_request(NodeID target, NodeID req_node,
 			     Reservation lock, unsigned mode);
   };
 
   struct LockReleaseMessage {
     struct RequestArgs {
-      gasnet_node_t node;
+      NodeID node;
       Reservation lock;
     };
     
@@ -220,7 +224,7 @@ namespace Realm {
 				      RequestArgs,
 				      handle_request> Message;
 
-    static void send_request(gasnet_node_t target, Reservation lock);
+    static void send_request(NodeID target, Reservation lock);
   };
 
   struct LockGrantMessage {
@@ -235,7 +239,7 @@ namespace Realm {
 				       RequestArgs,
 				       handle_request> Message;
 
-    static void send_request(gasnet_node_t target, Reservation lock,
+    static void send_request(NodeID target, Reservation lock,
 			     unsigned mode, const void *data, size_t datalen,
 			     int payload_mode);
   };
@@ -252,12 +256,12 @@ namespace Realm {
 				      RequestArgs,
 				      handle_request> Message;
 
-    static void send_request(gasnet_node_t target, Reservation lock);
+    static void send_request(NodeID target, Reservation lock);
   };
 
 }; // namespace Realm
 
-#include "rsrv_impl.inl"
+#include "realm/rsrv_impl.inl"
 
 #endif // ifndef REALM_RSRV_IMPL_H
 
