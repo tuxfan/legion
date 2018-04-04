@@ -920,6 +920,7 @@ namespace Legion {
         trigger_commit();
     }
 
+#if 0
     //--------------------------------------------------------------------------
     void Operation::commit_operation(bool do_deactivate,
                                      RtEvent wait_on /*= Event::NO_EVENT*/)
@@ -957,6 +958,50 @@ namespace Legion {
       if (do_deactivate)
         deactivate();
     }
+#endif
+    //ksmurthy------------------------------------------------------------------
+    void Operation::commit_operation(bool do_deactivate,
+                                     RtEvent wait_on /*= Event::NO_EVENT*/)
+    //--------------------------------------------------------------------------
+    {
+      if (wait_on.exists() && !wait_on.has_triggered())
+      {
+        DeferredCommitArgs args(this, do_deactivate);
+        runtime->issue_runtime_meta_task(args, 
+            LG_THROUGHPUT_DEFERRED_PRIORITY, wait_on);
+        return;
+      }
+      // Tell our parent context that we are committed
+      // Do this before actually committing to avoid race conditions
+      if (track_parent)
+        parent_ctx->register_child_commit(this);
+      // Mark that we are committed 
+      {
+        AutoLock o_lock(op_lock);
+#ifdef DEBUG_LEGION
+        assert(mapped);
+        assert(executed);
+        assert(resolved);
+        assert(completed);
+        assert(!committed);
+#endif
+      }
+     
+    }
+
+
+    //ksmurthy------------------------------------------------------------------
+    void Operation::resilient_commit_operation()
+    //--------------------------------------------------------------------------
+    {
+      committed = true;
+      // At this point we bumb the generation as we can never roll back
+      // after we have committed the operation
+      gen++;
+      // Trigger the commit event
+      Runtime::trigger_event(commit_event);
+      deactivate();
+    } 
 
     //ksmurthy
     //--------------------------------------------------------------------------
@@ -1374,7 +1419,6 @@ namespace Legion {
       Legion::Internal::SingleTask *stsk = 
             dynamic_cast<Legion::Internal::SingleTask *>(tsk);
 
-      bool need_trigger = false;
       {
         AutoLock o_lock(op_lock);
 #ifdef DEBUG_LEGION
@@ -1399,14 +1443,13 @@ namespace Legion {
               it->first->notify_regions_verified(regions, ver_gen);
           }
           if (hardened && !trigger_commit_invoked){
-            need_trigger = true;
             trigger_commit_invoked = true;
-            gen++;
+            resilient_commit_operation();
           }
         }
       }
-      if (need_trigger)
-        trigger_commit();
+      //if (need_trigger)
+      //  trigger_commit();
     }
 
 

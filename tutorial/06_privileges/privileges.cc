@@ -236,11 +236,13 @@ void daxpy_task(const Task *task,
   const FieldAccessor<WRITE_DISCARD,double,1> acc_z(regions[1], FID_Z);
 
   const double alpha = 0.08; 
-  const int random_value = 1+10*drand48();
-  if(random_value%2 == 0)
+  //const int random_value = 1+10*drand48();
+  static int hello_tracker = 0;
+  hello_tracker++;
+  if(hello_tracker == 1)
     throw std::exception();
-  printf("Running daxpy computation with alpha %.8g...%d itr\n", 
-                                  alpha, cur_itr);
+  printf("Running daxpy computation with alpha %.8g...%d itr %d tracker\n", 
+                                  alpha, cur_itr, hello_tracker);
   Rect<1> rect = runtime->get_index_space_domain(ctx,
                   task->regions[0].region.get_index_space());
   for (PointInRectIterator<1> pir(rect); pir(); pir++)

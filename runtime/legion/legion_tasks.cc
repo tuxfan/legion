@@ -4197,7 +4197,27 @@ namespace Legion {
                                 it->first, it->second, start_condition);
         }
       }
+#if 0 //MIKE_CHECK
       parent_ctx->increment_pending();
+#else
+      //I do not need to increment parent pending, we already indicate to parent
+      track_parent = false;
+      executed = false;
+      completed = false;
+      committed = false;
+      complete_received = false;
+      commit_received = false;
+      profiling_reported = Runtime::create_rt_user_event();
+
+      //how to handle the future, this is what the downstream children
+      //have to wait on
+      assert(dynamic_cast<IndividualTask *>(this)!=NULL);
+      
+      (dynamic_cast<IndividualTask *>(this))->result = 
+            Future(new FutureImpl(runtime, true/*register*/,
+                   runtime->get_available_distributed_id(), 
+                   runtime->address_space, this));
+#endif
       ApEvent task_launch_event = variant->dispatch_task(launch_processor, this,
                            execution_context, start_condition, true_guard, 
                            task_priority, profiling_requests);

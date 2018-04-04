@@ -554,6 +554,7 @@ namespace Legion {
                      (RtEvent wait_on = RtEvent::NO_RT_EVENT);
       bool some_task_failed(GenerationID gen, bool restart);
       void mark_instance_hardened(const MappingInstance &instance);
+      void resilient_commit_operation();
       //void mark_dependence_edge_hardened(unsigned int);
       //std::map<Operation *, std::set<unsigned>> hardened_edges;
       //ksmurthy

@@ -1664,7 +1664,7 @@ namespace Legion {
                   ie = output.chosen_instances[idx].end(); it != ie; ++it)
                 runtime->harden_physical_instances(ctx, idx, *it);
             }
-            if(!strcmp(task.get_task_name(),"daxpy_no")) {
+            if(!strcmp(task.get_task_name(),"check")) {
               //ok instances is a vector as needed for different fields
               //we want all these instances to survive
               //deep down in the below call, we set the physicalmanager->harden
@@ -1793,7 +1793,9 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       // Always cache task result.
-      return DEFAULT_CACHE_POLICY_ENABLE;
+      //ksmurthy return DEFAULT_CACHE_POLICY_ENABLE;
+      //for resilience trying out mapping new instances every time
+      return DEFAULT_CACHE_POLICY_DISABLE;
     }
 
     //--------------------------------------------------------------------------

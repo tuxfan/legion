@@ -751,10 +751,11 @@ namespace Legion {
       static void process_unpack_remote_mapped(Deserializer &derez);
       static void process_unpack_remote_complete(Deserializer &derez);
       static void process_unpack_remote_commit(Deserializer &derez);
+    public://ksmurthy all the more reason to move quash/ downwards
+      Future result; 
     protected: 
       void *future_store;
       size_t future_size;
-      Future result; 
       std::set<Operation*>        child_operations;
       std::vector<RegionTreePath> privilege_paths;
       std::vector<VersionInfo>    version_infos;
