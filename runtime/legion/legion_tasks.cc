@@ -3411,7 +3411,7 @@ namespace Legion {
       //ksmurthy TODO, ideally, check whether task_profiling_requests cnotains
       //op_status, and if not, then add it
       assert(task_profiling_requests.empty());
-      //ksmurthy begin for resilience, we are enabling all tasks to get OP_STATUS
+      //ksmurthy begin for resilience,we are enabling all tasks to get OP_STATUS
       task_profiling_requests.push_back(
         (ProfilingMeasurementID)Realm::PMID_OP_STATUS);
       //ksmurthy end
@@ -4229,6 +4229,22 @@ namespace Legion {
           Runtime::release_reservation(it->first);
         }
       }
+
+      {
+        //ksmurthy
+        //AutoLock somelock here so that the other tasks are not started;
+
+        for(std::map<Operation*, GenerationID>::const_iterator it = 
+          outgoing.begin(); it != outgoing.end(); it++) {
+          if(it->first != NULL) {
+            IndividualTask *parent = dynamic_cast<IndividualTask *>(it->first);
+            assert(parent != NULL);//TODO handle other types
+            parent->activate();
+          } 
+        }
+
+      }
+      
     }
 
     //------------------------ksmurthy------------------------------------------
@@ -4301,7 +4317,8 @@ namespace Legion {
             } else {
               MaterializedView *mview = static_cast<MaterializedView *>(iview);
               //ideally this should be in try catch TODO
-              LegionMap<VersionID,FieldMask,PHYSICAL_VERSION_ALLOC>::track_aligned &fields_curr = mview->current_versions;
+              LegionMap<VersionID,FieldMask,PHYSICAL_VERSION_ALLOC>::track_aligned 
+					&fields_curr = mview->current_versions;
               //FieldVersions &fields_curr = mview->current_versions;
               //mview->get_field_versions(mview->logical_node, 
               //                              false, msk, fields_curr);

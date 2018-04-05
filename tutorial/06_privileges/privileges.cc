@@ -246,7 +246,7 @@ void daxpy_task(const Task *task,
   //const int random_value = 1+10*drand48();
   static int hello_tracker2 = 0;
   hello_tracker2++;
-  if(hello_tracker2 == 5)
+  if(hello_tracker2 == 9)
     throw std::exception();
   printf("Running daxpy computation with alpha %.8g...%d itr %d tracker\n", 
                                   alpha, cur_itr, hello_tracker2);

@@ -1046,7 +1046,11 @@ namespace Legion {
     bool Operation::some_task_failed(GenerationID gen, bool restart)
     //--------------------------------------------------------------------------
     {
-      printf("you have to do something here OP+TASK+FAILED\n");
+      if(dynamic_cast<IndividualTask *>(this) != NULL) {
+        IndividualTask *stsk = dynamic_cast<IndividualTask *>(this); 
+      	printf("you have to do something here OP+TASK+FAILED :%s\n",
+									stsk->get_task_name());
+      }
       // TODO: actually handle quashing of operations
       //assert(false); //ksmurthy a child of operation should have a valid impl
       return false;
@@ -1078,8 +1082,13 @@ namespace Legion {
     void Operation::quash_operation(GenerationID gen, bool restart)
     //--------------------------------------------------------------------------
     {
-      printf("you have to do something here OP+QUASH+OPERATION\n");
-      // TODO: actually handle quashing of operations
+      if(dynamic_cast<IndividualTask *>(this) != NULL) {
+        IndividualTask *stsk = dynamic_cast<IndividualTask *>(this); 
+      	printf("you have to do something here OP+TASK+FAILED :%s\n",
+									stsk->get_task_name());
+      }
+      // TODO: actually handle quashing of operations, poison down the chain
+			// ksmurthy i.e., my outgoing
       //assert(false);
     }
 
