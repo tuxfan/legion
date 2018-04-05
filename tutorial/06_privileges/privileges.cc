@@ -50,7 +50,8 @@ void top_level_task(const Task *task,
         num_itr = atoi(command_args.argv[++i]);
     }
   }
-  printf("Running daxpy for %d elements... %d iterations\n", num_elements, num_itr);
+  printf("Running daxpy for %d elements... %d iterations\n", 
+						num_elements, num_itr);
 
   // Create our logical regions using the same schema that
   // we used in the previous example.
@@ -72,7 +73,8 @@ void top_level_task(const Task *task,
   LogicalRegion input_lr = runtime->create_logical_region(ctx, is, input_fs);
   LogicalRegion output_lr = runtime->create_logical_region(ctx, is, output_fs);
 
-  while(num_itr-- > 0) {
+  int cur_itr = 1;
+  while(cur_itr <= num_itr) {
     // Instead of using an inline mapping to initialize the fields for
     // daxpy, in this case we will launch two separate tasks for initializing
     // each of the fields in parallel.  To launch the sub-tasks for performing
@@ -96,7 +98,7 @@ void top_level_task(const Task *task,
     // Legion is crucial for the implementation of Legion's hierarchical
     // scheduling algorithm which is described in detail in our two papers.
     TaskLauncher init_launcher(INIT_FIELD_TASK_ID, 
-                      TaskArgument(&num_itr, sizeof(num_itr)));
+                      TaskArgument(&cur_itr, sizeof(cur_itr)));
     init_launcher.add_region_requirement(
         RegionRequirement(input_lr, WRITE_DISCARD, EXCLUSIVE, input_lr));
     init_launcher.add_field(0/*idx*/, FID_X);
@@ -137,7 +139,7 @@ void top_level_task(const Task *task,
     // order execution is obeyed.
     //const double alpha = 0.08; 
     TaskLauncher daxpy_launcher(DAXPY_TASK_ID, 
-                    TaskArgument(&num_itr, sizeof(num_itr)));
+                    TaskArgument(&cur_itr, sizeof(cur_itr)));
     daxpy_launcher.add_region_requirement(
         RegionRequirement(input_lr, READ_ONLY, EXCLUSIVE, input_lr));
     daxpy_launcher.add_field(0/*idx*/, FID_X);
@@ -156,7 +158,7 @@ void top_level_task(const Task *task,
     // as the daxpy task was writing the 'Z' field on output_lr and this task
     // is reading the 'Z' field of the output_lr region.
     TaskLauncher check_launcher(CHECK_TASK_ID, 
-                    TaskArgument(&num_itr, sizeof(num_itr)));
+                    TaskArgument(&cur_itr, sizeof(cur_itr)));
     check_launcher.add_region_requirement(
         RegionRequirement(input_lr, READ_ONLY, EXCLUSIVE, input_lr));
     check_launcher.add_field(0/*idx*/, FID_X);
@@ -166,7 +168,8 @@ void top_level_task(const Task *task,
     check_launcher.add_field(1/*idx*/, FID_Z);
   
     runtime->execute_task(ctx, check_launcher);
-  
+ 
+    cur_itr++; 
   } //end of iterations
 
   // Notice that we never once blocked waiting on the result of any sub-task
@@ -201,10 +204,14 @@ void init_field_task(const Task *task,
   assert(regions.size() == 1); 
   assert(task->regions.size() == 1);
   assert(task->regions[0].privilege_fields.size() == 1);
+  assert(task->arglen == sizeof(int));
+  const int cur_itr= *((const int*)task->args);
   // This is a field polymorphic function so figure out
   // which field we are responsible for initializing.
   FieldID fid = *(task->regions[0].privilege_fields.begin());
-  printf("Initializing field %d...\n", fid);
+  static int hello_tracker1 = 1;
+  printf("Initializing field %d in iteration %d version %d...\n", 
+		fid, cur_itr, hello_tracker1++);
   // Note that Legion's default mapper always map regions
   // and the Legion runtime is smart enough not to start
   // the task until all the regions contain valid data.  
@@ -237,12 +244,12 @@ void daxpy_task(const Task *task,
 
   const double alpha = 0.08; 
   //const int random_value = 1+10*drand48();
-  static int hello_tracker = 0;
-  hello_tracker++;
-  if(hello_tracker == 1)
+  static int hello_tracker2 = 0;
+  hello_tracker2++;
+  if(hello_tracker2 == 5)
     throw std::exception();
   printf("Running daxpy computation with alpha %.8g...%d itr %d tracker\n", 
-                                  alpha, cur_itr, hello_tracker);
+                                  alpha, cur_itr, hello_tracker2);
   Rect<1> rect = runtime->get_index_space_domain(ctx,
                   task->regions[0].region.get_index_space());
   for (PointInRectIterator<1> pir(rect); pir(); pir++)
@@ -262,7 +269,7 @@ void check_task(const Task *task,
   const FieldAccessor<READ_ONLY,double,1> acc_z(regions[1], FID_Z);
 
   const double alpha = 0.08; 
-  printf("Checking results... in %d itr\n", cur_itr);
+  //printf("Checking results... in %d itr\n", cur_itr);
   Rect<1> rect = runtime->get_index_space_domain(ctx,
                   task->regions[0].region.get_index_space());
   bool all_passed = true;
@@ -276,10 +283,12 @@ void check_task(const Task *task,
     if (expected != received)
       all_passed = false;
   }
+  static int hello_tracker3 = 1;
   if (all_passed)
-    printf("SUCCESS!\n");
+    printf("SUCCESS in iteration %d version %d!\n", cur_itr, hello_tracker3);
   else
-    printf("FAILURE!\n");
+    printf("FAILURE! in iteration %d version %d\n", cur_itr, hello_tracker3);
+  hello_tracker3++;
 }
 
 int main(int argc, char **argv)

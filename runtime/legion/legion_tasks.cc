@@ -4197,9 +4197,7 @@ namespace Legion {
                                 it->first, it->second, start_condition);
         }
       }
-#if 0 //MIKE_CHECK
-      parent_ctx->increment_pending();
-#else
+#if 1 //MIKE_CHECK
       //I do not need to increment parent pending, we already indicate to parent
       track_parent = false;
       executed = false;
@@ -4208,6 +4206,9 @@ namespace Legion {
       complete_received = false;
       commit_received = false;
       profiling_reported = Runtime::create_rt_user_event();
+      children_commit = false;
+      children_complete = false;
+      parent_ctx->increment_pending();
 
       //how to handle the future, this is what the downstream children
       //have to wait on
