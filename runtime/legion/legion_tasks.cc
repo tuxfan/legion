@@ -4036,8 +4036,10 @@ namespace Legion {
       request.add_measurement((Realm::ProfilingMeasurementID)(Realm::PMID_OP_STATUS));
       int previous = 
         __sync_fetch_and_add(&outstanding_profiling_requests, 1);
-      if ((previous == 1) && !profiling_reported.exists())
-        profiling_reported = Runtime::create_rt_user_event();
+      //if ((previous == 1) && !profiling_reported.exists())
+      //MIKE: even if had one, that was used to obtain the op status
+      //so we need a new one. ksmurthy
+      profiling_reported = Runtime::create_rt_user_event();
     }
     
     //------------------------ksmurthy------------------------------------------
@@ -4251,7 +4253,7 @@ namespace Legion {
     bool SingleTask::some_task_failed(GenerationID gen, bool restart)
     //--------------------------------------------------------------------------
     {
-      if(trigger_recover() && strcmp(this->get_task_name(), "daxpy")) {
+      if(trigger_recover()){// && strcmp(this->get_task_name(), "daxpy")) {
           printf("\n%s about to restart\n",this->get_task_name());
           if(true) { 
             //the below call is a skeleton of launch_call, doing the bare min

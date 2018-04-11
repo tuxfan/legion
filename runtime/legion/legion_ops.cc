@@ -986,7 +986,9 @@ namespace Legion {
         assert(!committed);
 #endif
       }
-     
+      if(hardened) {
+        resilient_commit_operation();      
+      }
     }
 
 
@@ -1433,7 +1435,9 @@ namespace Legion {
 #ifdef DEBUG_LEGION
         assert(our_gen <= gen); // better not be ahead of where we are now
 #endif
-        if ((our_gen == gen) && !trigger_commit_invoked)
+        if ((our_gen == gen) ) //ksmurthy since we are going to be an some mapping
+                               // the parent might not have executed
+                               // and hence && !trigger_commit_invoked)
         {
           for(unsigned idx = 0; idx < stsk->get_physical_instances().size(); 
                                                                     ++idx) {
