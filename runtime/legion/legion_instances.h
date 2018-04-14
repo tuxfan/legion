@@ -199,6 +199,7 @@ namespace Legion {
 
     public: //ksmurthy
       void harden_physical_instance(MapperID mapper_id, Processor p); 
+      void unharden_physical_instance(MapperID mapper_id, Processor p); 
 
       RtEvent detach_external_instance(void);
     public:

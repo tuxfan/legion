@@ -1617,7 +1617,13 @@ namespace Legion {
 	  output.chosen_instances[idx].push_back(virt_inst);
 	  continue;
 	}
+        // ksmurthy
+        // we do not want this, when we want to checkpoint, then we 
+        // want a new instance allocation, with the previous instance being
+        // checkpointed 
         // Check to see if any of the valid instances satisfy this requirement
+        bool checkpoint_task = !strcmp(task.get_task_name(),"daxpy");
+        if(!checkpoint_task)
         {
           std::vector<PhysicalInstance> valid_instances;
 
@@ -1644,7 +1650,10 @@ namespace Legion {
 
           if (missing_fields[idx].empty())
             continue;
+        } else {
+          //make a copy if a previous instance exists
         }
+
         // Otherwise make normal instances for the given region
         if (!default_create_custom_instances(ctx, task.target_proc,
                 target_memory, task.regions[idx], idx, missing_fields[idx],
@@ -1655,7 +1664,7 @@ namespace Legion {
                                       task.target_proc, target_memory);
         } else { // ksmurthy
 #if 1
-            if(!strcmp(task.get_task_name(),"init_field")) {
+            if(!strcmp(task.get_task_name(),"daxpy")) {
               //ok instances is a vector as needed for different fields
               //we want all these instances to survive
               //deep down in the below call, we set the physicalmanager->harden
@@ -1664,7 +1673,7 @@ namespace Legion {
                   ie = output.chosen_instances[idx].end(); it != ie; ++it)
                 runtime->harden_physical_instances(ctx, idx, *it);
             }
-            if(!strcmp(task.get_task_name(),"check")) {
+            if(!strcmp(task.get_task_name(),"check42init_field")) {
               //ok instances is a vector as needed for different fields
               //we want all these instances to survive
               //deep down in the below call, we set the physicalmanager->harden

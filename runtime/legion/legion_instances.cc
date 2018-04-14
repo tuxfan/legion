@@ -987,6 +987,15 @@ namespace Legion {
       memory_manager->set_garbage_collection_priority(this, mapper_id,
                                                       proc, GC_NEVER_PRIORITY);
     }
+    //ksmurthy------------------------------------------------------------------
+    void PhysicalManager::unharden_physical_instance(MapperID mapper_id,
+                                            Processor proc)
+    //--------------------------------------------------------------------------
+    {
+      memory_manager->set_garbage_collection_priority(this, mapper_id,
+                                                      proc, 0);
+    }
+
 
 
 

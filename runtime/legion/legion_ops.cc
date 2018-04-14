@@ -997,11 +997,32 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       committed = true;
+
+      {
+        //at this time, TODO we are doing it for individual task, single types
+        Legion::Internal::TaskOp *tsk = 
+              dynamic_cast<Legion::Internal::TaskOp *>(this);
+        if(tsk == NULL) return;
+        if(dynamic_cast<Legion::Internal::SingleTask *>(tsk) == NULL) return; 
+        Legion::Internal::SingleTask *stsk = 
+              dynamic_cast<Legion::Internal::SingleTask *>(tsk);
+
+        //TODO: acquire the appropriate lock
+        for(unsigned idx = 0; idx < stsk->get_physical_instances().size(); 
+                                            ++idx) {
+          Legion::Internal::PhysicalManager *mgr =  
+              stsk->get_physical_instances()[idx][0].get_manager();
+          //TODO its an instanceset, isnt it, you cannot be just using 0
+          // verify the above.
+          mgr->unharden_physical_instance(map_id, exec_proc);
+        }           
+      }
       // At this point we bumb the generation as we can never roll back
       // after we have committed the operation
       gen++;
       // Trigger the commit event
-      Runtime::trigger_event(commit_event);
+      if (!commit_event.has_triggered())
+        Runtime::trigger_event(commit_event);
       deactivate();
     } 
 
@@ -1441,9 +1462,11 @@ namespace Legion {
         {
           for(unsigned idx = 0; idx < stsk->get_physical_instances().size(); 
                                                                     ++idx) {
+            Legion::Internal::PhysicalManager *x =           
+              stsk->get_physical_instances()[idx][0].get_manager();
             for (std::set<Legion::Internal::PhysicalManager *>::const_iterator 
                 it = regions.begin(); it != regions.end(); it++) {
-            if(stsk->get_physical_instances()[idx][0].get_manager() == *it)
+            if(x == *it)
               unverified_regions.erase(idx);
             }
           }
