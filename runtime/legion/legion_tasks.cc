@@ -4073,6 +4073,9 @@ namespace Legion {
         if(pnt != NULL)
           it->first->quash_operation(gen, true); 
       }
+      //now I am going to relaunch myself.
+      //this->restart_task_resilience(); 
+      //but how to ensure that the dependencies between tasks are preserved.
 #endif
 
     }
@@ -4234,20 +4237,20 @@ namespace Legion {
         }
       }
 
-      {
-        //ksmurthy
-        //AutoLock somelock here so that the other tasks are not started;
-
-        for(std::map<Operation*, GenerationID>::const_iterator it = 
-          outgoing.begin(); it != outgoing.end(); it++) {
-          if(it->first != NULL) {
-            IndividualTask *parent = dynamic_cast<IndividualTask *>(it->first);
-            assert(parent != NULL);//TODO handle other types
-            parent->activate();
-          } 
-        }
-
-      }
+//      {
+//        //ksmurthy
+//        //AutoLock somelock here so that the other tasks are not started;
+//
+//        for(std::map<Operation*, GenerationID>::const_iterator it = 
+//          outgoing.begin(); it != outgoing.end(); it++) {
+//          if(it->first != NULL) {
+//            IndividualTask *parent = dynamic_cast<IndividualTask *>(it->first);
+//            assert(parent != NULL);//TODO handle other types
+//            parent->activate();
+//          } 
+//        }
+//
+//      }
       
     }
 
@@ -5695,12 +5698,14 @@ namespace Legion {
         pack_remote_commit(rez);
         runtime->send_individual_remote_commit(orig_proc,rez);
       }
+#if 0
       // We can release our version infos now
       for (std::vector<VersionInfo>::iterator it = version_infos.begin();
             it != version_infos.end(); it++)
       {
         it->clear();
       }
+#endif
       if (must_epoch != NULL)
         must_epoch->notify_subop_commit(this);
       commit_operation(true/*deactivate*/, profiling_reported);

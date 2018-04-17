@@ -1014,9 +1014,9 @@ namespace Legion {
               stsk->get_physical_instances()[idx][0].get_manager();
           //TODO its an instanceset, isnt it, you cannot be just using 0
           // verify the above.
-          Legion::Internal::InstanceManager *imgr = mgr->as_instance_manager(); 
-          Legion::Internal::PhysicalInstance pinst = mgr->get_instance();
-          Legion::Internal::MemoryManager *mm = mgr->memory_manager;
+          //Legion::Internal::InstanceManager *imgr = mgr->as_instance_manager(); 
+          //Legion::Internal::PhysicalInstance pinst = mgr->get_instance();
+          //Legion::Internal::MemoryManager *mm = mgr->memory_manager;
           mgr->unharden_physical_instance(stsk->map_id, stsk->current_proc);
 #if 0
           {
@@ -1031,7 +1031,19 @@ namespace Legion {
           }
 #endif
         }           
+        // releasing the version infos that were originally done inside Individual task 
+        // trigger_task_commit our version infos now
+        
+        std::vector<VersionInfo>::iterator it = 
+          const_cast<std::vector<VersionInfo>*>(stsk->get_version_infos())->begin();
+        std::vector<VersionInfo>::iterator ed = 
+          const_cast<std::vector<VersionInfo>*>(stsk->get_version_infos())->end();
+        for (;it != ed; it++)
+        {
+          it->clear();
+        }
       }
+
       // At this point we bumb the generation as we can never roll back
       // after we have committed the operation
       gen++;
