@@ -20,6 +20,8 @@
 #include "legion.h"
 using namespace Legion;
 
+#define DEBUG_RESILIENCE 1
+
 enum TaskIDs {
   TOP_LEVEL_TASK_ID,
   INIT_FIELD_TASK_ID,
@@ -209,9 +211,11 @@ void init_field_task(const Task *task,
   // This is a field polymorphic function so figure out
   // which field we are responsible for initializing.
   FieldID fid = *(task->regions[0].privilege_fields.begin());
+#ifdef DEBUG_RESILIENCE
   static int hello_tracker1 = 1;
   printf("Initializing field %d in iteration %d version %d...\n", 
 		fid, cur_itr, hello_tracker1++);
+#endif
   // Note that Legion's default mapper always map regions
   // and the Legion runtime is smart enough not to start
   // the task until all the regions contain valid data.  
@@ -244,12 +248,14 @@ void daxpy_task(const Task *task,
 
   const double alpha = 0.08; 
   //const int random_value = 1+10*drand48();
+#ifdef DEBUG_RESILIENCE
   static int hello_tracker2 = 0;
   hello_tracker2++;
-  if(hello_tracker2 == 9)
+  if(hello_tracker2 == 7)
     throw std::exception();
   printf("Running daxpy computation with alpha %.8g...%d itr %d tracker\n", 
                                   alpha, cur_itr, hello_tracker2);
+#endif
   Rect<1> rect = runtime->get_index_space_domain(ctx,
                   task->regions[0].region.get_index_space());
   for (PointInRectIterator<1> pir(rect); pir(); pir++)
@@ -283,12 +289,14 @@ void check_task(const Task *task,
     if (expected != received)
       all_passed = false;
   }
+#ifdef DEBUG_RESILIENCE
   static int hello_tracker3 = 1;
   if (all_passed)
     printf("SUCCESS in iteration %d version %d!\n", cur_itr, hello_tracker3);
   else
     printf("FAILURE! in iteration %d version %d\n", cur_itr, hello_tracker3);
   hello_tracker3++;
+#endif
 }
 
 int main(int argc, char **argv)

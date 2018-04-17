@@ -1014,7 +1014,22 @@ namespace Legion {
               stsk->get_physical_instances()[idx][0].get_manager();
           //TODO its an instanceset, isnt it, you cannot be just using 0
           // verify the above.
-          mgr->unharden_physical_instance(map_id, exec_proc);
+          Legion::Internal::InstanceManager *imgr = mgr->as_instance_manager(); 
+          Legion::Internal::PhysicalInstance pinst = mgr->get_instance();
+          Legion::Internal::MemoryManager *mm = mgr->memory_manager;
+          mgr->unharden_physical_instance(stsk->map_id, stsk->current_proc);
+#if 0
+          {
+            AutoLock m_lock(manager_lock);
+            std::map<PhysicalManager*, InstnaceInfo>::iterator finder =
+              current_instances.find(mgr);
+            std::pair<MapperID,Processor> key(mapper_id, processor);
+            if(finder != current_instances.end()) {
+              finder->second.mapper_priorities.erase(key);//TODO MIKE
+              finder->second.min_priority = 0;
+            }
+          }
+#endif
         }           
       }
       // At this point we bumb the generation as we can never roll back

@@ -4083,6 +4083,8 @@ namespace Legion {
     void SingleTask::restart_task_resilience()
     //--------------------------------------------------------------------------
     {
+      //return; //TODO REMOVE AFTER DEBUGGING
+
       //launch_task(); relaunching task
       //not worrying about virtual mapping
       //not worrying about wait_on events 
@@ -4401,9 +4403,6 @@ namespace Legion {
           //(static_cast<Legion::Internal::Operation *>(this))
           //                              ->trigger_complete();
         }
-#endif
-
-#if 0
         if(mapped && executed && resolved && !completed) {
         (static_cast<Legion::Internal::Operation *>(this))->
             complete_operation_callable_profiling_response();
@@ -4434,13 +4433,24 @@ namespace Legion {
       else
         info.task_response = false;
       mapper->invoke_task_report_profiling(this, &info);
-#ifdef DEBUG_LEGION
-      assert(outstanding_profiling_requests > 0);
-      assert(profiling_reported.exists());
-#endif
-      int remaining = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
-      if (remaining == 0)
-        Runtime::trigger_event(profiling_reported);
+
+//#ifdef DEBUG_LEGION
+//      assert(outstanding_profiling_requests > 0);
+//      assert(profiling_reported.exists());
+//#endif
+      if(outstanding_profiling_requests > 0) {
+        int remaining = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
+        if(profiling_reported.exists()) {
+          if (remaining == 0)
+            Runtime::trigger_event(profiling_reported);
+        } else {
+          printf("%s tsk has no profiling_report, indicates error\n",
+              this->get_task_name()); 
+        }
+      } else {
+        printf("%s tsk has 0 oustanding_profiling_requests, indicates error\n",
+              this->get_task_name()); 
+      }
     } 
 
     /////////////////////////////////////////////////////////////

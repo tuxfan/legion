@@ -1622,7 +1622,7 @@ namespace Legion {
         // want a new instance allocation, with the previous instance being
         // checkpointed 
         // Check to see if any of the valid instances satisfy this requirement
-        bool checkpoint_task = !strcmp(task.get_task_name(),"daxpy");
+        bool checkpoint_task = !strcmp(task.get_task_name(),"init_field");
         if(!checkpoint_task)
         {
           std::vector<PhysicalInstance> valid_instances;
@@ -1651,7 +1651,7 @@ namespace Legion {
           if (missing_fields[idx].empty())
             continue;
         } else {
-          //make a copy if a previous instance exists
+          // the runtime will make a copy if a previous instance exists
         }
 
         // Otherwise make normal instances for the given region
@@ -1664,16 +1664,7 @@ namespace Legion {
                                       task.target_proc, target_memory);
         } else { // ksmurthy
 #if 1
-            if(!strcmp(task.get_task_name(),"daxpy")) {
-              //ok instances is a vector as needed for different fields
-              //we want all these instances to survive
-              //deep down in the below call, we set the physicalmanager->harden
-              for(std::vector<PhysicalInstance>::const_iterator 
-                  it = output.chosen_instances[idx].begin(),
-                  ie = output.chosen_instances[idx].end(); it != ie; ++it)
-                runtime->harden_physical_instances(ctx, idx, *it);
-            }
-            if(!strcmp(task.get_task_name(),"check42init_field")) {
+            if(!strcmp(task.get_task_name(),"init_field")) {
               //ok instances is a vector as needed for different fields
               //we want all these instances to survive
               //deep down in the below call, we set the physicalmanager->harden
@@ -1962,7 +1953,12 @@ namespace Legion {
       // constraints for any instances of this task, then we'll
       // see if these constraints conflict with or are satisfied by
       // any of the other constraints 
+#if 0
       bool force_new_instances = false;
+#else
+      //ksmurthy: whenever we create a custom instance, it has to be a new one
+      bool force_new_instances = true;
+#endif
       LayoutConstraintID our_layout_id = 
        default_policy_select_layout_constraints(ctx, target_memory, req,
                TASK_MAPPING, needs_field_constraint_check, force_new_instances);
@@ -2149,7 +2145,13 @@ namespace Legion {
       // We always set force_new_instances to false since we are
       // deciding to optimize for minimizing memory usage instead
       // of avoiding Write-After-Read (WAR) dependences
+#if 0
       force_new_instances = false;
+#else
+      force_new_instances = true;
+      //ksmurthy creating new instances for resilience
+#endif
+
       // See if we've already made a constraint set for this layout
       std::pair<Memory::Kind,FieldSpace> constraint_key(target_memory.kind(),
                                                req.region.get_field_space());
