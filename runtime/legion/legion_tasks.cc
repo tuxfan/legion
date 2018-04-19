@@ -4043,7 +4043,7 @@ namespace Legion {
     }
     
     //------------------------ksmurthy------------------------------------------
-    void SingleTask::quash_operation(GenerationID gen, bool restart) 
+    void SingleTask::quash_operation(GenerationID gen, bool restrt, Future &ft) 
     //--------------------------------------------------------------------------
     {
      //this operation will be called from realm based on the success/failure
@@ -4067,15 +4067,45 @@ namespace Legion {
 
 #define check_child_quash
 #ifdef check_child_quash
+
+      
+//      //only the futures ? NOt the physical_instances ?
+//      for (unsigned idx = 0; idx < futures.size(); idx++)
+//      {
+//        FutureImpl *impl = futures[idx].impl; 
+//        wait_on_events.insert(impl->get_ready_event());
+//      }
+
+      futures.add(ft); 
+      assert(dynamic_cast<IndividualTask *>(this)!=NULL);
+      (dynamic_cast<IndividualTask *>(this))->result = 
+            Future(new FutureImpl(runtime, true/*register*/,
+                   runtime->get_available_distributed_id(), 
+                   runtime->address_space, this));
+
       for(std::map<Operation*, GenerationID>::const_iterator it = outgoing.begin();
           it != outgoing.end(); it++) {
         Operation *pnt = it->first;
         if(pnt != NULL)
-          it->first->quash_operation(gen, true); 
+          it->first->quash_operation(gen, false, this->result); 
       }
       //now I am going to relaunch myself.
       //this->restart_task_resilience(); 
       //but how to ensure that the dependencies between tasks are preserved.
+//    {
+//      TriggerTaskArgs trigger_args(task);
+//      rt->issue_runtime_meta_task(trigger_args, 
+//            LG_THROUGHPUT_WORK_PRIORITY, ready);
+//    }
+//    else
+//      rt->add_to_ready_queue(current, task, ready);
+//      std::set<RtEvent> existing_ready_events = //current ones;
+      RtEvent ready = RtEvent::NO_RT_EVENT;
+      //Runtime::merge_events(existing_ready_events, parent_launch);
+      Processor launch_processor = target_processors[0];
+      if (target_processors.size() > 1)
+        launch_processor = runtime->find_processor_group(target_processors);
+      rt->add_to_ready_queue(launch_processor, this, ready);
 #endif
 
     }
@@ -4217,14 +4247,6 @@ namespace Legion {
       children_complete = false;
       parent_ctx->increment_pending();
 
-      //how to handle the future, this is what the downstream children
-      //have to wait on
-      assert(dynamic_cast<IndividualTask *>(this)!=NULL);
-      
-      (dynamic_cast<IndividualTask *>(this))->result = 
-            Future(new FutureImpl(runtime, true/*register*/,
-                   runtime->get_available_distributed_id(), 
-                   runtime->address_space, this));
 #endif
       ApEvent task_launch_event = variant->dispatch_task(launch_processor, this,
                            execution_context, start_condition, true_guard, 
@@ -4261,7 +4283,15 @@ namespace Legion {
       if(trigger_recover()){// && strcmp(this->get_task_name(), "daxpy")) {
           printf("\n%s about to restart\n",this->get_task_name());
           if(true) { 
-            //the below call is a skeleton of launch_call, doing the bare min
+            // this is what the downstream children
+            //have to wait on
+            assert(dynamic_cast<IndividualTask *>(this)!=NULL);
+            (dynamic_cast<IndividualTask *>(this))->result = 
+                  Future(new FutureImpl(runtime, true/*register*/,
+                         runtime->get_available_distributed_id(), 
+                         runtime->address_space, this));
+
+            quash_operation(gen, false, this->result);
             restart_task_resilience();
          }
       } else {
@@ -4389,7 +4419,6 @@ namespace Legion {
       profiling_response_analyzed_for_resilience = true;
 
       if(check_for_response) {
-        quash_operation(gen, false);
         some_task_failed(gen, false);
         int remaining = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
         if (remaining == 0)
