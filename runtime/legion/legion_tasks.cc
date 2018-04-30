@@ -659,6 +659,7 @@ namespace Legion {
       : ExternalTask(), SpeculativeOp(rt)
     //--------------------------------------------------------------------------
     {
+      stop_mapping = false;
     }
 
     //--------------------------------------------------------------------------
@@ -4041,75 +4042,6 @@ namespace Legion {
       //so we need a new one. ksmurthy
       profiling_reported = Runtime::create_rt_user_event();
     }
-    
-    //------------------------ksmurthy------------------------------------------
-    void SingleTask::quash_operation(GenerationID gen, bool restrt, Future &ft) 
-    //--------------------------------------------------------------------------
-    {
-     //this operation will be called from realm based on the success/failure
-      //of the task
-      //this function will then determine if the recovery can take place here
-      //if it can, then it calls trigger_recover
-      //else it will call quash operation on the parent.
-
-
-      //volatile int debug_wait = 0;
-      //while(debug_wait == 0);
-
-      //check whether all the inputs to this task are at their latest versions
-      //if they are then we can re-execute this task, else go back up to the 
-      //incoming
-
-      //static int dumb_debug = true;
-      //if(!dumb_debug)
-      //  return;
-      //dumb_debug = false;
-
-#define check_child_quash
-#ifdef check_child_quash
-
-      
-//      //only the futures ? NOt the physical_instances ?
-//      for (unsigned idx = 0; idx < futures.size(); idx++)
-//      {
-//        FutureImpl *impl = futures[idx].impl; 
-//        wait_on_events.insert(impl->get_ready_event());
-//      }
-
-      futures.add(ft); 
-      assert(dynamic_cast<IndividualTask *>(this)!=NULL);
-      (dynamic_cast<IndividualTask *>(this))->result = 
-            Future(new FutureImpl(runtime, true/*register*/,
-                   runtime->get_available_distributed_id(), 
-                   runtime->address_space, this));
-
-      for(std::map<Operation*, GenerationID>::const_iterator it = outgoing.begin();
-          it != outgoing.end(); it++) {
-        Operation *pnt = it->first;
-        if(pnt != NULL)
-          it->first->quash_operation(gen, false, this->result); 
-      }
-      //now I am going to relaunch myself.
-      //this->restart_task_resilience(); 
-      //but how to ensure that the dependencies between tasks are preserved.
-//    {
-//      TriggerTaskArgs trigger_args(task);
-//      rt->issue_runtime_meta_task(trigger_args, 
-//            LG_THROUGHPUT_WORK_PRIORITY, ready);
-//    }
-//    else
-//      rt->add_to_ready_queue(current, task, ready);
-//      std::set<RtEvent> existing_ready_events = //current ones;
-      RtEvent ready = RtEvent::NO_RT_EVENT;
-      //Runtime::merge_events(existing_ready_events, parent_launch);
-      Processor launch_processor = target_processors[0];
-      if (target_processors.size() > 1)
-        launch_processor = runtime->find_processor_group(target_processors);
-      rt->add_to_ready_queue(launch_processor, this, ready);
-#endif
-
-    }
-
 
 
     //------------------------ksmurthy------------------------------------------
@@ -4273,41 +4205,90 @@ namespace Legion {
 //        }
 //
 //      }
-      
+//            assert(dynamic_cast<IndividualTask *>(this)!=NULL);
+//            (dynamic_cast<IndividualTask *>(this))->result = 
+//                  Future(new FutureImpl(runtime, true/*register*/,
+//                         runtime->get_available_distributed_id(), 
+//                         runtime->address_space, this));
     }
 
     //------------------------ksmurthy------------------------------------------
-    bool SingleTask::some_task_failed(GenerationID gen, bool restart)
+    void SingleTask::quash_operation(GenerationID gen, bool restrt) 
     //--------------------------------------------------------------------------
     {
+
+#define check_child_quash
+#ifdef check_child_quash
+      
+//      //only the futures ? NOt the physical_instances ?
+//      for (unsigned idx = 0; idx < futures.size(); idx++)
+//      {
+//        FutureImpl *impl = futures[idx].impl; 
+//        wait_on_events.insert(impl->get_ready_event());
+//      }
+
+      stop_mapping = true;
+      //futures.add(ft); 
+      assert(dynamic_cast<IndividualTask *>(this)!=NULL);
+      (dynamic_cast<IndividualTask *>(this))->result = 
+            Future(new FutureImpl(runtime, true/*register*/,
+                   runtime->get_available_distributed_id(), 
+                   runtime->address_space, this));
+
+      for(std::map<Operation*, GenerationID>::const_iterator it = outgoing.begin();
+          it != outgoing.end(); it++) {
+        Operation *pnt = it->first;
+        if(pnt != NULL)
+          it->first->quash_operation(gen, false); 
+      }
+      //now I am going to relaunch myself.
+      //this->restart_task_resilience(); 
+      //but how to ensure that the dependencies between tasks are preserved.
+//    {
+//      TriggerTaskArgs trigger_args(task);
+//      rt->issue_runtime_meta_task(trigger_args, 
+//            LG_THROUGHPUT_WORK_PRIORITY, ready);
+//    }
+//    else
+//      rt->add_to_ready_queue(current, task, ready);
+//      std::set<RtEvent> existing_ready_events = //current ones;
+      RtEvent ready = RtEvent::NO_RT_EVENT;
+      //Runtime::merge_events(existing_ready_events, parent_launch);
+      Processor launch_processor = target_processors[0];
+      if (target_processors.size() > 1)
+        launch_processor = runtime->find_processor_group(target_processors);
+      runtime->add_to_ready_queue(launch_processor, this, ready);
+#endif
+
+    }
+
+
+    //------------------------ksmurthy------------------------------------------
+    bool SingleTask::some_task_failed(GenerationID gen, bool quash)
+    //--------------------------------------------------------------------------
+    {
+
+      //first quash the down tree of tasks,
+      //second prevent mapping
+      //third collect the task pointers on the way back
+      if(quash)
+        quash_operation(gen, false);
+
+      reactivate_myself_for_resilience(gen);
+
       if(trigger_recover()){// && strcmp(this->get_task_name(), "daxpy")) {
           printf("\n%s about to restart\n",this->get_task_name());
-          if(true) { 
-            // this is what the downstream children
-            //have to wait on
-            assert(dynamic_cast<IndividualTask *>(this)!=NULL);
-            (dynamic_cast<IndividualTask *>(this))->result = 
-                  Future(new FutureImpl(runtime, true/*register*/,
-                         runtime->get_available_distributed_id(), 
-                         runtime->address_space, this));
-
-            quash_operation(gen, false, this->result);
-            restart_task_resilience();
-         }
+          restart_task_resilience();
       } else {
-#define check_restart_parent
-#ifdef check_restart_parent
-        //check whether we need to trigger recover on the parent
         for(std::map<Operation*, GenerationID>::const_iterator it = 
             incoming.begin(); it != incoming.end(); it++) {
           if(it->first != NULL) {
             SingleTask *parent = dynamic_cast<SingleTask *>(it->first);
             assert(parent != NULL);//TODO handle other types
-            parent->some_task_failed(gen, true);
+            parent->some_task_failed(gen, false);
 
           } 
         }
-#endif
       }          
       return true;
     }
@@ -5486,6 +5467,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       DETAILED_PROFILER(runtime, INDIVIDUAL_PERFORM_MAPPING_CALL);
+      
       // See if we need to do any versioning computations first
       RtEvent version_ready_event = perform_versioning_analysis();
       if (version_ready_event.exists() && !version_ready_event.has_triggered())
