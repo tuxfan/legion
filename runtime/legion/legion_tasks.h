@@ -532,11 +532,13 @@ namespace Legion {
       virtual void handle_post_mapped(RtEvent pre = RtEvent::NO_RT_EVENT) = 0;
       virtual void handle_misspeculation(void) = 0;
 //ksmurthy
-      virtual void quash_operation(GenerationID gen, bool restart); 
-      virtual bool some_task_failed(GenerationID gen, bool restart);
+      virtual void quash_operation(GenerationID gen, GenerationID restrtGen, std::set<Operation *> &restart_set); 
+      virtual bool some_task_failed(GenerationID gen, GenerationID restrtGen, bool upstream);
       virtual bool trigger_recover(void);
       virtual void restart_task_resilience();
-      virtual void setup_profiling_opstatus_monitoring_for_resilient(Realm::ProfilingRequestSet &);
+      virtual void reactivate_myself_for_resilience(GenerationID gen);
+      virtual void setup_profiling_opstatus_monitoring_for_resilient(
+                        Realm::ProfilingRequestSet &);
 //ksmurthy
     protected:
       // Boolean for each region saying if it is virtual mapped

@@ -3205,6 +3205,9 @@ namespace Legion {
       else
         return RtEvent(target.spawn(LG_TASK_ID, &args, sizeof(T), 
                                     precondition, priority));
+      //ksmurthy change the args to include the restartGenID, 
+      //and then change the schedule to check this before proceeding furhter
+      //TODO, remove this comment after implementing it.
     }
 
     //--------------------------------------------------------------------------

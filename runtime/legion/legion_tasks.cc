@@ -659,7 +659,6 @@ namespace Legion {
       : ExternalTask(), SpeculativeOp(rt)
     //--------------------------------------------------------------------------
     {
-      stop_mapping = false;
     }
 
     //--------------------------------------------------------------------------
@@ -4040,6 +4039,7 @@ namespace Legion {
       //if ((previous == 1) && !profiling_reported.exists())
       //MIKE: even if had one, that was used to obtain the op status
       //so we need a new one. ksmurthy
+      assert(previous >= 0 && previous <2);
       profiling_reported = Runtime::create_rt_user_event();
     }
 
@@ -4213,69 +4213,92 @@ namespace Legion {
     }
 
     //------------------------ksmurthy------------------------------------------
-    void SingleTask::quash_operation(GenerationID gen, bool restrt) 
+    void SingleTask::quash_operation(GenerationID gen, 
+                                     GenerationID restartGen,
+                                     std::set<Operation *> &restart_set) 
     //--------------------------------------------------------------------------
     {
 
-#define check_child_quash
-#ifdef check_child_quash
-      
-//      //only the futures ? NOt the physical_instances ?
+      if(restart_set.find(this->op) != restart_set.end())
+        return;
+
+      for(std::map<Operation*, GenerationID>::const_iterator 
+          it = outgoing.begin(); it != outgoing.end(); it++) {
+        Operation *pnt = it->first;
+        if(pnt != NULL) {
+          pnt->quash_operation(gen, restartGen, restart_set);
+        }
+      }
+
+      {
+        AutoLock o_lock(op_lock);
+        restart_set.insert(this->op);
+        restartGen++;//this has to be a compare and swap
+        mapped_event = RtEvent::create_rt_user_event();
+        for(std::map<Operation*, GenerationID>::const_iterator 
+            it = outgoing.begin(); it != outgoing.end(); it++) {
+          Operation *pnt = it->first;
+          if(pnt != NULL) {
+            pnt->mapping_tracker->add_mapping_dependence(mapped_event);  
+            //MIKE: should it be pnt->parent_ctx->
+            //update_previous_mapped_event(mapped_event);
+            //what about outstanding_mapping_references ? 
+          }
+        }
+        this->reactivate_myself_for_resilience(gen, restartGen);
+        RtEvent ready = RtEvent::NO_RT_EVENT;
+        TriggerTaskArgs trigger_args(this);
+        runtime->issue_runtime_meta_task(trigger_args, 
+              LG_THROUGHPUT_WORK_PRIORITY, ready);
+      }
 //      for (unsigned idx = 0; idx < futures.size(); idx++)
 //      {
 //        FutureImpl *impl = futures[idx].impl; 
 //        wait_on_events.insert(impl->get_ready_event());
 //      }
-
-      stop_mapping = true;
-      //futures.add(ft); 
-      assert(dynamic_cast<IndividualTask *>(this)!=NULL);
-      (dynamic_cast<IndividualTask *>(this))->result = 
-            Future(new FutureImpl(runtime, true/*register*/,
-                   runtime->get_available_distributed_id(), 
-                   runtime->address_space, this));
-
-      for(std::map<Operation*, GenerationID>::const_iterator it = outgoing.begin();
-          it != outgoing.end(); it++) {
-        Operation *pnt = it->first;
-        if(pnt != NULL)
-          it->first->quash_operation(gen, false); 
-      }
-      //now I am going to relaunch myself.
-      //this->restart_task_resilience(); 
-      //but how to ensure that the dependencies between tasks are preserved.
-//    {
-//      TriggerTaskArgs trigger_args(task);
-//      rt->issue_runtime_meta_task(trigger_args, 
-//            LG_THROUGHPUT_WORK_PRIORITY, ready);
-//    }
-//    else
+//      stop_mapping = true;
+//      futures.add(ft);
+//      assert(dynamic_cast<IndividualTask *>(this)!=NULL);
+//      (dynamic_cast<IndividualTask *>(this))->result = 
+//            Future(new FutureImpl(runtime, true/*register*/,
+//                   runtime->get_available_distributed_id(), 
+//                   runtime->address_space, this));
 //      rt->add_to_ready_queue(current, task, ready);
 //      std::set<RtEvent> existing_ready_events = //current ones;
-      RtEvent ready = RtEvent::NO_RT_EVENT;
-      //Runtime::merge_events(existing_ready_events, parent_launch);
-      Processor launch_processor = target_processors[0];
-      if (target_processors.size() > 1)
-        launch_processor = runtime->find_processor_group(target_processors);
-      runtime->add_to_ready_queue(launch_processor, this, ready);
-#endif
-
+//      RtEvent ready = RtEvent::NO_RT_EVENT;
+//      //Runtime::merge_events(existing_ready_events, parent_launch);
+//      Processor launch_processor = target_processors[0];
+//      if (target_processors.size() > 1)
+//        launch_processor = runtime->find_processor_group(target_processors);
+//      runtime->add_to_ready_queue(launch_processor, this, ready);
     }
 
-
     //------------------------ksmurthy------------------------------------------
-    bool SingleTask::some_task_failed(GenerationID gen, bool quash)
+    void SingleTask::reactivate_myself_for_resilience(GenerationID gen,
+                                          GenerationID restartGen)
     //--------------------------------------------------------------------------
     {
 
-      //first quash the down tree of tasks,
-      //second prevent mapping
-      //third collect the task pointers on the way back
-      if(quash)
-        quash_operation(gen, false);
+    }
 
-      reactivate_myself_for_resilience(gen);
+    //------------------------ksmurthy------------------------------------------
+    void SingleTask::some_task_failed(GenerationID gen, GenerationID restrtGen, 
+                                        bool upstream)
+    //--------------------------------------------------------------------------
+    {
 
+      if(!upstream) {
+        std::set<Operation *> restart_set; 
+        for(std::map<Operation*, GenerationID>::const_iterator 
+            it = outgoing.begin(); it != outgoing.end(); it++) {
+          Operation *pnt = it->first;
+          if(pnt != NULL) {
+            pnt->quash_operation(gen, restartGen, restart_set);
+          }
+        }
+      }
+
+      std::set<Operation *> upstream_restart_set;
       if(trigger_recover()){// && strcmp(this->get_task_name(), "daxpy")) {
           printf("\n%s about to restart\n",this->get_task_name());
           restart_task_resilience();
@@ -4285,12 +4308,26 @@ namespace Legion {
           if(it->first != NULL) {
             SingleTask *parent = dynamic_cast<SingleTask *>(it->first);
             assert(parent != NULL);//TODO handle other types
-            parent->some_task_failed(gen, false);
-
+            if(upstream_restart_set.find(parent->op) !=
+                upstream_restart_set.end()) { 
+              upstream_restart_set.insert(parent->op);
+              parent->some_task_failed(gen, restartGen, true);
+            } 
+            mapper_tracker->add_mapping_dependence(parent->mapped_event);
           } 
         }
+        {
+          AutoLock o_lock(op_lock);
+          restart_gen++;
+          this->mapped_event = RtEvent::create_rt_user_event(); 
+          this->reactivate_myself_for_resilience(gen, restartGen);
+          RtEvent ready = RtEvent::NO_RT_EVENT;
+          TriggerTaskArgs trigger_args(this);
+          runtime->issue_runtime_meta_task(trigger_args, 
+              LG_THROUGHPUT_WORK_PRIORITY, ready);
+        }
       }          
-      return true;
+      return ;
     }
 
     //------------------------ksmurthy------------------------------------------
@@ -4400,7 +4437,7 @@ namespace Legion {
       profiling_response_analyzed_for_resilience = true;
 
       if(check_for_response) {
-        some_task_failed(gen, false);
+        some_task_failed(gen, restartGen, false);
         int remaining = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
         if (remaining == 0)
           Runtime::trigger_event(profiling_reported);
