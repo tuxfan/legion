@@ -422,7 +422,8 @@ namespace Legion {
       void harden_operation(void);
       // Quash this task and do what is necessary to the
       // rest of the operations in the graph
-      void quash_operation(GenerationID gen, bool restart);
+      void quash_operation(GenerationID gen,
+            GenerationID resrt, std::set<Operation *> &restart_set);
     public:
       // For operations that wish to complete early they can do so
       // using this method which will allow them to immediately 
@@ -555,6 +556,7 @@ namespace Legion {
       bool some_task_failed(GenerationID gen, bool restart);
       void mark_instance_hardened(const MappingInstance &instance);
       void resilient_commit_operation();
+      void add_mapping_dependence(RtEvent &mapped_event);
       //void mark_dependence_edge_hardened(unsigned int);
       //std::map<Operation *, std::set<unsigned>> hardened_edges;
       //ksmurthy

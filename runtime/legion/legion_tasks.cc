@@ -4219,27 +4219,32 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
 
-      if(restart_set.find(this->op) != restart_set.end())
+      if(restart_set.find(static_cast<Operation *>(this)) != restart_set.end())
         return;
 
       for(std::map<Operation*, GenerationID>::const_iterator 
           it = outgoing.begin(); it != outgoing.end(); it++) {
         Operation *pnt = it->first;
         if(pnt != NULL) {
-          pnt->quash_operation(gen, restartGen, restart_set);
+          SingleTask *spnt = dynamic_cast<SingleTask *>(pnt);
+          if(spnt != NULL) 
+            spnt->quash_operation(gen, restartGen, restart_set);
+          else 
+            pnt->quash_operation(gen, restartGen, restart_set);
         }
       }
 
       {
         AutoLock o_lock(op_lock);
-        restart_set.insert(this->op);
+        restart_set.insert(static_cast<Operation *>(this));
         restartGen++;//this has to be a compare and swap
-        mapped_event = RtEvent::create_rt_user_event();
+        mapped_event = Runtime::create_rt_user_event();
         for(std::map<Operation*, GenerationID>::const_iterator 
             it = outgoing.begin(); it != outgoing.end(); it++) {
           Operation *pnt = it->first;
           if(pnt != NULL) {
-            pnt->mapping_tracker->add_mapping_dependence(mapped_event);  
+            if(mapping_dependences == NULL
+            pnt->add_mapping_dependence(mapped_event);  
             //MIKE: should it be pnt->parent_ctx->
             //update_previous_mapped_event(mapped_event);
             //what about outstanding_mapping_references ? 
@@ -4293,7 +4298,11 @@ namespace Legion {
             it = outgoing.begin(); it != outgoing.end(); it++) {
           Operation *pnt = it->first;
           if(pnt != NULL) {
-            pnt->quash_operation(gen, restartGen, restart_set);
+            SingleTask *spnt = dynamic_cast<SingleTask *>(pnt);
+            if(spnt != NULL) 
+              spnt->quash_operation(gen, restrtGen, restart_set);
+            else 
+              pnt->quash_operation(gen, restrtGen, restart_set);
           }
         }
       }
@@ -4308,18 +4317,19 @@ namespace Legion {
           if(it->first != NULL) {
             SingleTask *parent = dynamic_cast<SingleTask *>(it->first);
             assert(parent != NULL);//TODO handle other types
-            if(upstream_restart_set.find(parent->op) !=
+            if(upstream_restart_set.find(static_cast<Operation *>(parent))!=
                 upstream_restart_set.end()) { 
-              upstream_restart_set.insert(parent->op);
-              parent->some_task_failed(gen, restartGen, true);
+              upstream_restart_set.insert(static_cast<Operation *>(parent));
+              parent->some_task_failed(gen, restrtGen, true);
             } 
-            mapper_tracker->add_mapping_dependence(parent->mapped_event);
+            this->add_mapping_dependence(parent->mapped_event);
           } 
         }
         {
           AutoLock o_lock(op_lock);
-          restart_gen++;
-          this->mapped_event = RtEvent::create_rt_user_event(); 
+          //restart_gen++;
+          int restartGen = restrtGen;
+          this->mapped_event = Runtime::create_rt_user_event(); 
           this->reactivate_myself_for_resilience(gen, restartGen);
           RtEvent ready = RtEvent::NO_RT_EVENT;
           TriggerTaskArgs trigger_args(this);
@@ -4437,6 +4447,7 @@ namespace Legion {
       profiling_response_analyzed_for_resilience = true;
 
       if(check_for_response) {
+        int restartGen = 0;
         some_task_failed(gen, restartGen, false);
         int remaining = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
         if (remaining == 0)

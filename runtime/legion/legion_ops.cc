@@ -1129,7 +1129,9 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void Operation::quash_operation(GenerationID gen, bool restart)
+    void Operation::quash_operation(GenerationID gen,
+            GenerationID restartgen, std::set<Operation *> &restart_set)
+
     //--------------------------------------------------------------------------
     {
       if(dynamic_cast<IndividualTask *>(this) != NULL) {
@@ -1401,6 +1403,16 @@ namespace Legion {
       outstanding_mapping_references++;
       return true;
     }
+
+    //--------------------------------------------------------------------------
+    void Operation::add_mapping_dependence(RtEvent &mapped_rvent)
+    //--------------------------------------------------------------------------
+    {
+      AutoLock o_lock(op_lock);
+      mapping_tracker->add_mapping_dependence(mapped_event);
+      return;
+    }
+
 
     //--------------------------------------------------------------------------
     void Operation::remove_mapping_reference(GenerationID our_gen)
