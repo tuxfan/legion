@@ -4214,8 +4214,9 @@ namespace Legion {
 
     //------------------------ksmurthy------------------------------------------
     void SingleTask::quash_operation(GenerationID gen, 
-                                     GenerationID restartGen,
-                                     std::set<Operation *> &restart_set) 
+                           GenerationID restartGen,
+                           std::set<Operation *> &restart_set,
+                           std::map<Operation*,std::vector<RtEvent&>> &preconds) 
     //--------------------------------------------------------------------------
     {
 
@@ -4243,19 +4244,20 @@ namespace Legion {
             it = outgoing.begin(); it != outgoing.end(); it++) {
           Operation *pnt = it->first;
           if(pnt != NULL) {
-            if(mapping_dependences == NULL
-            pnt->add_mapping_dependence(mapped_event);  
-            //MIKE: should it be pnt->parent_ctx->
-            //update_previous_mapped_event(mapped_event);
-            //what about outstanding_mapping_references ? 
+            if(preconds.find(pnt) != preconds.end()) {
+              preconds.find(pnt)->second.push_back(mapped_event);
+            }
           }
         }
-        this->reactivate_myself_for_resilience(gen, restartGen);
-        RtEvent ready = RtEvent::NO_RT_EVENT;
-        TriggerTaskArgs trigger_args(this);
-        runtime->issue_runtime_meta_task(trigger_args, 
-              LG_THROUGHPUT_WORK_PRIORITY, ready);
       }
+
+//            if(!pnt->map_precondition.has_triggered()) {
+//              pnt->map_precondition = 
+//                Runtime::merge_events(map_precondition, mapped_event);
+//            } else {
+//              pnt->map_precondition = mapped_event; 
+//            }  
+// 
 //      for (unsigned idx = 0; idx < futures.size(); idx++)
 //      {
 //        FutureImpl *impl = futures[idx].impl; 
@@ -4280,10 +4282,13 @@ namespace Legion {
 
     //------------------------ksmurthy------------------------------------------
     void SingleTask::reactivate_myself_for_resilience(GenerationID gen,
-                                          GenerationID restartGen)
+                                          GenerationID restartGen,
+                                          RtEvent &map_precondition)
     //--------------------------------------------------------------------------
     {
-
+        TriggerTaskArgs trigger_args(this);
+        runtime->issue_runtime_meta_task(trigger_args, 
+              LG_THROUGHPUT_WORK_PRIORITY, map_precondition);
     }
 
     //------------------------ksmurthy------------------------------------------
@@ -4294,17 +4299,22 @@ namespace Legion {
 
       if(!upstream) {
         std::set<Operation *> restart_set; 
+        std::map<Operation *, std::vector<RtEvent &>> map_preconds;
+
         for(std::map<Operation*, GenerationID>::const_iterator 
             it = outgoing.begin(); it != outgoing.end(); it++) {
           Operation *pnt = it->first;
           if(pnt != NULL) {
             SingleTask *spnt = dynamic_cast<SingleTask *>(pnt);
             if(spnt != NULL) 
-              spnt->quash_operation(gen, restrtGen, restart_set);
+              spnt->quash_operation(gen, restrtGen, restart_set, map_preconds);
             else 
-              pnt->quash_operation(gen, restrtGen, restart_set);
+              pnt->quash_operation(gen, restrtGen, restart_set, map_preconds);
           }
         }
+
+        for(std::map<Operation *, std::vector<RtEvent &>>::const_iterator
+            it = map_preconds.begin(); it !=i WORKING HERE
       }
 
       std::set<Operation *> upstream_restart_set;
