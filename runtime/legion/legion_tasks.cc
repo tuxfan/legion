@@ -4214,9 +4214,9 @@ namespace Legion {
 
     //------------------------ksmurthy------------------------------------------
     void SingleTask::quash_operation(GenerationID gen, 
-                           GenerationID restartGen,
-                           std::set<Operation *> &restart_set,
-                           std::map<Operation*,std::vector<RtEvent&>> &preconds) 
+                     GenerationID restartGen,
+                     std::set<Operation *> &restart_set,
+                     std::map<Operation *,std::vector<RtEvent &> *> &preconds) 
     //--------------------------------------------------------------------------
     {
 
@@ -4229,9 +4229,9 @@ namespace Legion {
         if(pnt != NULL) {
           SingleTask *spnt = dynamic_cast<SingleTask *>(pnt);
           if(spnt != NULL) 
-            spnt->quash_operation(gen, restartGen, restart_set);
+            spnt->quash_operation(gen, restartGen, restart_set, preconds);
           else 
-            pnt->quash_operation(gen, restartGen, restart_set);
+            pnt->quash_operation(gen, restartGen, restart_set, preconds);
         }
       }
 
@@ -4245,8 +4245,11 @@ namespace Legion {
           Operation *pnt = it->first;
           if(pnt != NULL) {
             if(preconds.find(pnt) != preconds.end()) {
-              preconds.find(pnt)->second.push_back(mapped_event);
-            }
+              preconds.find(pnt)->second->push_back(mapped_event);
+            } else {
+				  preconds.find(pnt)->second = new std::vector<RtEvent &>();
+				  preconds.find(pnt)->second->push_back(mapped_event);
+				}
           }
         }
       }
@@ -4299,7 +4302,7 @@ namespace Legion {
 
       if(!upstream) {
         std::set<Operation *> restart_set; 
-        std::map<Operation *, std::vector<RtEvent &>> map_preconds;
+        std::map<Operation *, std::vector<RtEvent &> *> map_preconds;
 
         for(std::map<Operation*, GenerationID>::const_iterator 
             it = outgoing.begin(); it != outgoing.end(); it++) {
@@ -4314,7 +4317,12 @@ namespace Legion {
         }
 
         for(std::map<Operation *, std::vector<RtEvent &>>::const_iterator
-            it = map_preconds.begin(); it !=i WORKING HERE
+            it = map_preconds.begin(); it !=map_preconds.end(); it++) {
+			RtEvent precondition = Runtime::merge_events(*(it->second));
+			assert(dynamic_cast<SingleTask *>(it->first) != NULL);
+			it->first->reactivate_myself_for_resilience(gen, 
+												restrtGen, precondition); 
+		  }
       }
 
       std::set<Operation *> upstream_restart_set;
