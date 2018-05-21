@@ -4216,7 +4216,7 @@ namespace Legion {
     void SingleTask::quash_operation(GenerationID gen, 
                      GenerationID restartGen,
                      std::set<Operation *> &restart_set,
-                     std::map<Operation *,std::vector<RtEvent &> *> &preconds) 
+                     std::map<Operation *,std::set<RtEvent> > &preconds) 
     //--------------------------------------------------------------------------
     {
 
@@ -4231,7 +4231,7 @@ namespace Legion {
           if(spnt != NULL) 
             spnt->quash_operation(gen, restartGen, restart_set, preconds);
           else 
-            pnt->quash_operation(gen, restartGen, restart_set, preconds);
+            assert(0);
         }
       }
 
@@ -4243,17 +4243,24 @@ namespace Legion {
         for(std::map<Operation*, GenerationID>::const_iterator 
             it = outgoing.begin(); it != outgoing.end(); it++) {
           Operation *pnt = it->first;
-          if(pnt != NULL) {
+          SingleTask *spnt = dynamic_cast<SingleTask *>(it->first);
+          if(spnt != NULL) {
             if(preconds.find(pnt) != preconds.end()) {
-              preconds.find(pnt)->second->push_back(mapped_event);
+              preconds.find(pnt)->second.insert(mapped_event);
             } else {
-				  preconds.find(pnt)->second = new std::vector<RtEvent &>();
-				  preconds.find(pnt)->second->push_back(mapped_event);
-				}
+              preconds.insert(
+                  std::map<Operation *,std::set<RtEvent> >::value_type(
+                      pnt, std::set<RtEvent>()));
+				      preconds.find(pnt)->second.insert(mapped_event);
+				    }
+          } else {
+            //TODO: singletask having non-singletask children, hmm 
+            //ksmurthy we have to check how to restart these tasks
+            assert(0);
           }
         }
       }
-
+    }
 //            if(!pnt->map_precondition.has_triggered()) {
 //              pnt->map_precondition = 
 //                Runtime::merge_events(map_precondition, mapped_event);
@@ -4281,12 +4288,11 @@ namespace Legion {
 //      if (target_processors.size() > 1)
 //        launch_processor = runtime->find_processor_group(target_processors);
 //      runtime->add_to_ready_queue(launch_processor, this, ready);
-    }
 
     //------------------------ksmurthy------------------------------------------
     void SingleTask::reactivate_myself_for_resilience(GenerationID gen,
                                           GenerationID restartGen,
-                                          RtEvent &map_precondition)
+                                          RtEvent map_precondition)
     //--------------------------------------------------------------------------
     {
         TriggerTaskArgs trigger_args(this);
@@ -4302,27 +4308,32 @@ namespace Legion {
 
       if(!upstream) {
         std::set<Operation *> restart_set; 
-        std::map<Operation *, std::vector<RtEvent &> *> map_preconds;
+        std::map<Operation *, std::set<RtEvent> > map_preconds;
 
-        for(std::map<Operation*, GenerationID>::const_iterator 
-            it = outgoing.begin(); it != outgoing.end(); it++) {
-          Operation *pnt = it->first;
-          if(pnt != NULL) {
-            SingleTask *spnt = dynamic_cast<SingleTask *>(pnt);
-            if(spnt != NULL) 
-              spnt->quash_operation(gen, restrtGen, restart_set, map_preconds);
-            else 
-              pnt->quash_operation(gen, restrtGen, restart_set, map_preconds);
+
+        if(outgoing.size() != 0) {
+          for(std::map<Operation*, GenerationID>::const_iterator 
+              it = outgoing.begin(); it != outgoing.end(); it++) {
+            Operation *pnt = it->first;
+            if(pnt != NULL) {
+              SingleTask *spnt = dynamic_cast<SingleTask *>(pnt);
+              if(spnt != NULL) 
+                spnt->quash_operation(gen, restrtGen, restart_set, map_preconds);
+              else 
+                assert(0);
+            }
           }
         }
 
-        for(std::map<Operation *, std::vector<RtEvent &>>::const_iterator
+#if 1
+        for(std::map<Operation *, std::set<RtEvent> >::const_iterator
             it = map_preconds.begin(); it !=map_preconds.end(); it++) {
-			RtEvent precondition = Runtime::merge_events(*(it->second));
-			assert(dynamic_cast<SingleTask *>(it->first) != NULL);
-			it->first->reactivate_myself_for_resilience(gen, 
-												restrtGen, precondition); 
+			        RtEvent precondition = Runtime::merge_events(it->second);
+			        assert(dynamic_cast<SingleTask *>(it->first) != NULL);
+              (dynamic_cast<SingleTask *>(it->first))->reactivate_myself_for_resilience(gen, 
+			        									restrtGen, precondition); 
 		  }
+#endif
       }
 
       std::set<Operation *> upstream_restart_set;
@@ -4348,7 +4359,7 @@ namespace Legion {
           //restart_gen++;
           int restartGen = restrtGen;
           this->mapped_event = Runtime::create_rt_user_event(); 
-          this->reactivate_myself_for_resilience(gen, restartGen);
+          this->reactivate_myself_for_resilience(gen, restartGen, RtEvent::NO_RT_EVENT);
           RtEvent ready = RtEvent::NO_RT_EVENT;
           TriggerTaskArgs trigger_args(this);
           runtime->issue_runtime_meta_task(trigger_args, 

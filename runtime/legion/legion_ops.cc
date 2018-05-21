@@ -1130,8 +1130,9 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void Operation::quash_operation(GenerationID gen,
-            GenerationID restartgen, std::set<Operation *> &restart_set)
-
+            GenerationID restartgen, 
+						std::set<Operation *> &restart_set, std::map<Operation *,
+            std::set<RtEvent> > &preconds) 
     //--------------------------------------------------------------------------
     {
       if(dynamic_cast<IndividualTask *>(this) != NULL) {

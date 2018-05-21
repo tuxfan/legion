@@ -422,8 +422,10 @@ namespace Legion {
       void harden_operation(void);
       // Quash this task and do what is necessary to the
       // rest of the operations in the graph
-      void quash_operation(GenerationID gen,
-            GenerationID resrt, std::set<Operation *> &restart_set);
+      //ksmurthy void quash_operation(GenerationID gen,
+      //      GenerationID resrt, std::set<Operation *> &restart_set);
+      virtual void quash_operation(GenerationID gen, GenerationID restrtGen, 
+							std::set<Operation *> &restart_set, std::map<Operation *, std::set<RtEvent> > &preconds); 
     public:
       // For operations that wish to complete early they can do so
       // using this method which will allow them to immediately 

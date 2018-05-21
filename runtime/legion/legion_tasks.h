@@ -533,11 +533,12 @@ namespace Legion {
       virtual void handle_misspeculation(void) = 0;
 //ksmurthy
       virtual void quash_operation(GenerationID gen, GenerationID restrtGen, 
-							std::set<Operation *> &restart_set, std::map<Operation *, std::vector<RtEvent &>*> &preconds); 
+							std::set<Operation *> &restart_set, std::map<Operation *,
+              std::set<RtEvent> > &preconds); 
       virtual void some_task_failed(GenerationID gen, GenerationID restrtGen, bool upstream);
       virtual bool trigger_recover(void);
       virtual void restart_task_resilience();
-      virtual void reactivate_myself_for_resilience(GenerationID gen, GenerationID restartGen, RtEvent &map_precondition);
+      virtual void reactivate_myself_for_resilience(GenerationID gen, GenerationID restartGen, RtEvent map_precondition);
       virtual void setup_profiling_opstatus_monitoring_for_resilient(
                         Realm::ProfilingRequestSet &);
 //ksmurthy
