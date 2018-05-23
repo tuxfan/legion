@@ -4039,7 +4039,7 @@ namespace Legion {
       //if ((previous == 1) && !profiling_reported.exists())
       //MIKE: even if had one, that was used to obtain the op status
       //so we need a new one. ksmurthy
-      assert(previous >= 0 && previous <2);
+      //assert(previous >= 0 && previous <2);
       profiling_reported = Runtime::create_rt_user_event();
     }
 
@@ -4230,8 +4230,8 @@ namespace Legion {
           SingleTask *spnt = dynamic_cast<SingleTask *>(pnt);
           if(spnt != NULL) 
             spnt->quash_operation(gen, restartGen, restart_set, preconds);
-          else 
-            assert(0);
+          //else 
+            //assert(0);
         }
       }
 
@@ -4248,15 +4248,14 @@ namespace Legion {
             if(preconds.find(pnt) != preconds.end()) {
               preconds.find(pnt)->second.insert(mapped_event);
             } else {
-              preconds.insert(
-                  std::map<Operation *,std::set<RtEvent> >::value_type(
-                      pnt, std::set<RtEvent>()));
-				      preconds.find(pnt)->second.insert(mapped_event);
+              preconds.insert(std::map<Operation *,std::set<RtEvent> >::value_type(
+                               pnt, std::set<RtEvent>()));
+              preconds.find(pnt)->second.insert(mapped_event);
 				    }
           } else {
             //TODO: singletask having non-singletask children, hmm 
             //ksmurthy we have to check how to restart these tasks
-            assert(0);
+            //assert(0);
           }
         }
       }

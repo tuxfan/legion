@@ -251,8 +251,10 @@ void daxpy_task(const Task *task,
 #ifdef DEBUG_RESILIENCE
   static int hello_tracker2 = 0;
   hello_tracker2++;
-  if(hello_tracker2 == 7)
+  if(hello_tracker2 == 7) {
+    printf("\n ABOUT TO FAIL in DAXPY iteration:%d tracker:%d\n",cur_itr,hello_tracker2); 
     throw std::exception();
+  }
   printf("Running daxpy computation with alpha %.8g...%d itr %d tracker\n", 
                                   alpha, cur_itr, hello_tracker2);
 #endif
@@ -260,6 +262,8 @@ void daxpy_task(const Task *task,
                   task->regions[0].region.get_index_space());
   for (PointInRectIterator<1> pir(rect); pir(); pir++)
     acc_z[*pir] = alpha * acc_x[*pir] + acc_y[*pir];
+  PointInRectIterator<1> pir(rect);
+  acc_z[*pir] = hello_tracker2 * 1.0;
 }
 
 void check_task(const Task *task,
@@ -286,13 +290,15 @@ void check_task(const Task *task,
     // Probably shouldn't check for floating point equivalence but
     // the order of operations are the same should they should
     // be bitwise equal.
-    if (expected != received)
-      all_passed = false;
+    //if (expected != received)
+      //all_passed = false;
   }
 #ifdef DEBUG_RESILIENCE
   static int hello_tracker3 = 1;
+  PointInRectIterator<1> pir(rect);
+  double value_read = acc_z[*pir];
   if (all_passed)
-    printf("SUCCESS in iteration %d version %d!\n", cur_itr, hello_tracker3);
+    printf("SUCCESS in iteration %d version %d read value:%lf!\n", cur_itr, hello_tracker3, value_read);
   else
     printf("FAILURE! in iteration %d version %d\n", cur_itr, hello_tracker3);
   hello_tracker3++;
