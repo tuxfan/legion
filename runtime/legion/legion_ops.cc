@@ -38,7 +38,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     Operation::Operation(Runtime *rt)
-      : runtime(rt), gen(0), unique_op_id(0), context_index(0), 
+      : runtime(rt), gen(0), restartGen(0), unique_op_id(0), context_index(0), 
         outstanding_mapping_references(0), hardened(false), parent_ctx(NULL), 
         mapping_tracker(NULL), commit_tracker(NULL)
     //--------------------------------------------------------------------------
@@ -11014,7 +11014,8 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       task->set_target_proc(current_proc);
-      task->trigger_mapping();
+      //ksmurthy
+      task->trigger_mapping(task->get_restart_generation());
     }
 
     //--------------------------------------------------------------------------

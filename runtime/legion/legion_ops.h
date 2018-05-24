@@ -248,6 +248,7 @@ namespace Legion {
       void deactivate_operation(void);
     public:
       inline GenerationID get_generation(void) const { return gen; }
+      inline GenerationID get_restart_generation(void) const { return restartGen; }
       inline RtEvent get_mapped_event(void) const { return mapped_event; }
       inline RtEvent get_resolved_event(void) const { return resolved_event; }
       inline ApEvent get_completion_event(void) const {return completion_event;}
@@ -565,6 +566,8 @@ namespace Legion {
     protected:
       mutable LocalLock op_lock;
       GenerationID gen;
+      //ksmurthy
+      GenerationID restartGen;
       UniqueID unique_op_id;
       // The issue index of this operation in the context
       unsigned context_index;

@@ -145,9 +145,13 @@ namespace Legion {
         static const LgTaskID TASK_ID = LG_TRIGGER_TASK_ID;
       public:
         TriggerTaskArgs(TaskOp *t)
-          : LgTaskArgs<TriggerTaskArgs>(t->get_unique_op_id()), op(t) { }
+          : LgTaskArgs<TriggerTaskArgs>(t->get_unique_op_id()), op(t),  
+            restartGen(t->get_restart_generation())
+          { }
       public:
         TaskOp *const op;
+        //ksmurthy
+        GenerationID restartGen; 
       };
       struct DeferDistributeArgs : public LgTaskArgs<DeferDistributeArgs> {
       public:
@@ -515,7 +519,7 @@ namespace Legion {
                                        RemoteTask *dst) = 0;
     public:
       // Override these methods from operation class
-      virtual void trigger_mapping(void); 
+      virtual void trigger_mapping(GenerationID restartGen);//ksmurthy 
     protected:
       virtual void trigger_task_complete(void) = 0;
       virtual void trigger_task_commit(void) = 0;

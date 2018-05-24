@@ -19951,7 +19951,11 @@ namespace Legion {
             // Key off of args here instead of data
             const TaskOp::TriggerTaskArgs *trigger_args = 
                           (const TaskOp::TriggerTaskArgs*)args;
-            trigger_args->op->trigger_mapping(); 
+            SingleTask *stsk = dynamic_cast<SingleTask *>(trigger_args->op);
+            if(stsk != NULL) 
+              stsk->trigger_mapping(trigger_args->restartGen); 
+            else
+              trigger_args->op->trigger_mapping(); 
             break;
           }
         case LG_DEFER_MAPPER_SCHEDULER_TASK_ID:

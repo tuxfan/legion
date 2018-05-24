@@ -2568,10 +2568,17 @@ namespace Legion {
     } 
 
     //--------------------------------------------------------------------------
-    void SingleTask::trigger_mapping(void)
+    void SingleTask::trigger_mapping(GenerationID restartGen)
     //--------------------------------------------------------------------------
     {
       DETAILED_PROFILER(runtime, TRIGGER_SINGLE_CALL);
+
+      //ksmurthy
+      if(this->restartGen != restartGen) {
+        std::cout<<"hei ho, " << this->get_task_name() << std::endl;
+        return; 
+      }
+
       if (is_remote())
       {
         if (distribute_task())
@@ -4308,7 +4315,6 @@ namespace Legion {
       if(!upstream) {
         std::set<Operation *> restart_set; 
         std::map<Operation *, std::set<RtEvent> > map_preconds;
-
 
         if(outgoing.size() != 0) {
           for(std::map<Operation*, GenerationID>::const_iterator 
