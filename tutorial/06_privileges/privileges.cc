@@ -251,7 +251,7 @@ void daxpy_task(const Task *task,
 #ifdef DEBUG_RESILIENCE
   static int hello_tracker2 = 0;
   hello_tracker2++;
-  if(hello_tracker2 == 7) {
+  if(hello_tracker2 == 9) {
     printf("\n ABOUT TO FAIL in DAXPY iteration:%d tracker:%d\n",cur_itr,hello_tracker2); 
     throw std::exception();
   }

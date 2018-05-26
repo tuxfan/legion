@@ -1093,7 +1093,7 @@ namespace Legion {
 
     //ksmurthy
     //--------------------------------------------------------------------------
-    bool Operation::some_task_failed(GenerationID gen, bool restart)
+    bool Operation::some_task_failed(GenerationID gen, bool upstream)
     //--------------------------------------------------------------------------
     {
       if(dynamic_cast<IndividualTask *>(this) != NULL) {

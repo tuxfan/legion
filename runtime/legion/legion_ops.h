@@ -425,8 +425,8 @@ namespace Legion {
       // rest of the operations in the graph
       //ksmurthy void quash_operation(GenerationID gen,
       //      GenerationID resrt, std::set<Operation *> &restart_set);
-      virtual void quash_operation(GenerationID gen, GenerationID restrtGen, 
-							std::set<Operation *> &restart_set, std::map<Operation *, std::set<RtEvent> > &preconds); 
+      virtual void quash_operation(GenerationID gen, std::set<Operation *> &restart_set,
+                std::map<Operation *, std::set<RtEvent> > &preconds); 
     public:
       // For operations that wish to complete early they can do so
       // using this method which will allow them to immediately 
@@ -556,12 +556,10 @@ namespace Legion {
       bool profiling_response_analyzed_for_resilience;
       void complete_operation_callable_profiling_response
                      (RtEvent wait_on = RtEvent::NO_RT_EVENT);
-      bool some_task_failed(GenerationID gen, bool restart);
+      bool some_task_failed(GenerationID gen, bool upstream);
       void mark_instance_hardened(const MappingInstance &instance);
       void resilient_commit_operation();
       void add_mapping_dependence(RtEvent &mapped_event);
-      //void mark_dependence_edge_hardened(unsigned int);
-      //std::map<Operation *, std::set<unsigned>> hardened_edges;
       //ksmurthy
     protected:
       mutable LocalLock op_lock;

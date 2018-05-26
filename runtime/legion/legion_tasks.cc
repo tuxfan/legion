@@ -2577,6 +2577,8 @@ namespace Legion {
       if(this->restartGen != restartGen) {
         std::cout<<"hei ho, " << this->get_task_name() << std::endl;
         return; 
+      } else {
+        std::cout<<"this is the restart gen"<<this->restartGen<<std::endl;
       }
 
       if (is_remote())
@@ -4050,7 +4052,7 @@ namespace Legion {
       profiling_reported = Runtime::create_rt_user_event();
     }
 
-
+#if 0
     //------------------------ksmurthy------------------------------------------
     void SingleTask::restart_task_resilience()
     //--------------------------------------------------------------------------
@@ -4197,56 +4199,46 @@ namespace Legion {
           Runtime::release_reservation(it->first);
         }
       }
-
-//      {
-//        //ksmurthy
-//        //AutoLock somelock here so that the other tasks are not started;
-//
-//        for(std::map<Operation*, GenerationID>::const_iterator it = 
-//          outgoing.begin(); it != outgoing.end(); it++) {
-//          if(it->first != NULL) {
-//            IndividualTask *parent = dynamic_cast<IndividualTask *>(it->first);
-//            assert(parent != NULL);//TODO handle other types
-//            parent->activate();
-//          } 
-//        }
-//
-//      }
-//            assert(dynamic_cast<IndividualTask *>(this)!=NULL);
-//            (dynamic_cast<IndividualTask *>(this))->result = 
-//                  Future(new FutureImpl(runtime, true/*register*/,
-//                         runtime->get_available_distributed_id(), 
-//                         runtime->address_space, this));
     }
+//            if(!pnt->map_precondition.has_triggered()) {
+//              pnt->map_precondition = 
+//                Runtime::merge_events(map_precondition, mapped_event);
+//            } else {
+//              pnt->map_precondition = mapped_event; 
+//            }  
+//      stop_mapping = true;
+//      Processor launch_processor = target_processors[0];
+//      if (target_processors.size() > 1)
+//        launch_processor = runtime->find_processor_group(target_processors);
+//      runtime->add_to_ready_queue(launch_processor, this, ready);
+#endif 
+
 
     //------------------------ksmurthy------------------------------------------
     void SingleTask::quash_operation(GenerationID gen, 
-                     GenerationID restartGen,
                      std::set<Operation *> &restart_set,
                      std::map<Operation *,std::set<RtEvent> > &preconds) 
     //--------------------------------------------------------------------------
     {
-
       if(restart_set.find(static_cast<Operation *>(this)) != restart_set.end())
         return;
-
+      restart_set.insert(static_cast<Operation *>(this));
       for(std::map<Operation*, GenerationID>::const_iterator 
           it = outgoing.begin(); it != outgoing.end(); it++) {
         Operation *pnt = it->first;
         if(pnt != NULL) {
           SingleTask *spnt = dynamic_cast<SingleTask *>(pnt);
           if(spnt != NULL) 
-            spnt->quash_operation(gen, restartGen, restart_set, preconds);
-          //else 
-            //assert(0);
+            spnt->quash_operation(gen, restart_set, preconds);
         }
       }
-
       {
         AutoLock o_lock(op_lock);
-        restart_set.insert(static_cast<Operation *>(this));
-        restartGen++;//this has to be a compare and swap
-        mapped_event = Runtime::create_rt_user_event();
+        restartGen++;
+        if(this->mapped_event != NULL) { 
+          Runtime::trigger_event(this->mapped_event);
+        }
+        this->mapped_event = Runtime::create_rt_user_event();
         for(std::map<Operation*, GenerationID>::const_iterator 
             it = outgoing.begin(); it != outgoing.end(); it++) {
           Operation *pnt = it->first;
@@ -4255,67 +4247,23 @@ namespace Legion {
             if(preconds.find(pnt) != preconds.end()) {
               preconds.find(pnt)->second.insert(mapped_event);
             } else {
-              preconds.insert(std::map<Operation *,std::set<RtEvent> >::value_type(
-                               pnt, std::set<RtEvent>()));
+              preconds.insert(std::map<Operation*,std::set<RtEvent> >::
+                    value_type(pnt, std::set<RtEvent>()));
               preconds.find(pnt)->second.insert(mapped_event);
 				    }
-          } else {
-            //TODO: singletask having non-singletask children, hmm 
-            //ksmurthy we have to check how to restart these tasks
-            //assert(0);
           }
         }
       }
     }
-//            if(!pnt->map_precondition.has_triggered()) {
-//              pnt->map_precondition = 
-//                Runtime::merge_events(map_precondition, mapped_event);
-//            } else {
-//              pnt->map_precondition = mapped_event; 
-//            }  
-// 
-//      for (unsigned idx = 0; idx < futures.size(); idx++)
-//      {
-//        FutureImpl *impl = futures[idx].impl; 
-//        wait_on_events.insert(impl->get_ready_event());
-//      }
-//      stop_mapping = true;
-//      futures.add(ft);
-//      assert(dynamic_cast<IndividualTask *>(this)!=NULL);
-//      (dynamic_cast<IndividualTask *>(this))->result = 
-//            Future(new FutureImpl(runtime, true/*register*/,
-//                   runtime->get_available_distributed_id(), 
-//                   runtime->address_space, this));
-//      rt->add_to_ready_queue(current, task, ready);
-//      std::set<RtEvent> existing_ready_events = //current ones;
-//      RtEvent ready = RtEvent::NO_RT_EVENT;
-//      //Runtime::merge_events(existing_ready_events, parent_launch);
-//      Processor launch_processor = target_processors[0];
-//      if (target_processors.size() > 1)
-//        launch_processor = runtime->find_processor_group(target_processors);
-//      runtime->add_to_ready_queue(launch_processor, this, ready);
 
     //------------------------ksmurthy------------------------------------------
-    void SingleTask::reactivate_myself_for_resilience(GenerationID gen,
-                                          GenerationID restartGen,
-                                          RtEvent map_precondition)
-    //--------------------------------------------------------------------------
-    {
-        TriggerTaskArgs trigger_args(this);
-        runtime->issue_runtime_meta_task(trigger_args, 
-              LG_THROUGHPUT_WORK_PRIORITY, map_precondition);
-    }
-
-    //------------------------ksmurthy------------------------------------------
-    void SingleTask::some_task_failed(GenerationID gen, GenerationID restrtGen, 
-                                        bool upstream)
+    void SingleTask::some_task_failed(GenerationID gen, bool upstream)
     //--------------------------------------------------------------------------
     {
 
       if(!upstream) {
         std::set<Operation *> restart_set; 
         std::map<Operation *, std::set<RtEvent> > map_preconds;
-
         if(outgoing.size() != 0) {
           for(std::map<Operation*, GenerationID>::const_iterator 
               it = outgoing.begin(); it != outgoing.end(); it++) {
@@ -4323,53 +4271,50 @@ namespace Legion {
             if(pnt != NULL) {
               SingleTask *spnt = dynamic_cast<SingleTask *>(pnt);
               if(spnt != NULL) 
-                spnt->quash_operation(gen, restrtGen, restart_set, map_preconds);
-              else 
-                assert(0);
+                spnt->quash_operation(gen, restart_set, map_preconds);
             }
           }
         }
-
-#if 1
         for(std::map<Operation *, std::set<RtEvent> >::const_iterator
-            it = map_preconds.begin(); it !=map_preconds.end(); it++) {
-			        RtEvent precondition = Runtime::merge_events(it->second);
-			        assert(dynamic_cast<SingleTask *>(it->first) != NULL);
-              (dynamic_cast<SingleTask *>(it->first))->reactivate_myself_for_resilience(gen, 
-			        									restrtGen, precondition); 
-		  }
-#endif
+          it = map_preconds.begin(); it !=map_preconds.end(); it++) {
+			    RtEvent precondition = Runtime::merge_events(it->second);
+          SingleTask *stsk = dynamic_cast<SingleTask *>(it->first);
+          assert(stsk != NULL);
+          TriggerTaskArgs trigger_args(stsk);
+          runtime->issue_runtime_meta_task(trigger_args, 
+                LG_THROUGHPUT_WORK_PRIORITY, map_precondition);
+		    }
       }
 
-      std::set<Operation *> upstream_restart_set;
-      if(trigger_recover()){// && strcmp(this->get_task_name(), "daxpy")) {
-          printf("\n%s about to restart\n",this->get_task_name());
-          restart_task_resilience();
-      } else {
+      RtEvent precondition = RtEvent::NO_RT_EVENT;
+      std::map<SingleTask *, RtEvent> upstream_set;
+      if(!trigger_recover()){
         for(std::map<Operation*, GenerationID>::const_iterator it = 
-            incoming.begin(); it != incoming.end(); it++) {
-          if(it->first != NULL) {
-            SingleTask *parent = dynamic_cast<SingleTask *>(it->first);
-            assert(parent != NULL);//TODO handle other types
-            if(upstream_restart_set.find(static_cast<Operation *>(parent))!=
-                upstream_restart_set.end()) { 
-              upstream_restart_set.insert(static_cast<Operation *>(parent));
-              parent->some_task_failed(gen, restrtGen, true);
-            } 
-            this->add_mapping_dependence(parent->mapped_event);
-          } 
+          incoming.begin(); it != incoming.end(); it++) {
+          assert(it->first != NULL);
+          SingleTask *parent = dynamic_cast<SingleTask *>(it->first);
+          assert(parent != NULL);//TODO handle other types
+          if(upstream_set.find(parent)==upstream_set.end()) { 
+            parent->some_task_failed(gen, true);
+            precondition = Runtime::merge_events(precondition, 
+                              upstream_set.find(parent));
+          }
         }
-        {
-          AutoLock o_lock(op_lock);
-          //restart_gen++;
-          int restartGen = restrtGen;
-          this->mapped_event = Runtime::create_rt_user_event(); 
-          this->reactivate_myself_for_resilience(gen, restartGen, RtEvent::NO_RT_EVENT);
-          RtEvent ready = RtEvent::NO_RT_EVENT;
-          TriggerTaskArgs trigger_args(this);
-          runtime->issue_runtime_meta_task(trigger_args, 
-              LG_THROUGHPUT_WORK_PRIORITY, ready);
+      }
+
+      {
+        AutoLock o_lock(op_lock);
+        restartGen++;
+        if(this->mapped_event != NULL) { 
+          Runtime::trigger_event(this->mapped_event);
         }
+        this->mapped_event = Runtime::create_rt_user_event(); 
+        upstream_set.insert(std::map<SingleTask*,RtEvent>::value_type(
+                this, this->mapped_event));
+        std::map<Operation *, upstream_restart_set.find(this);
+        TriggerTaskArgs trigger_args(this);
+        runtime->issue_runtime_meta_task(trigger_args, 
+            LG_THROUGHPUT_WORK_PRIORITY, precondition);
       }          
       return ;
     }
@@ -4481,8 +4426,7 @@ namespace Legion {
       profiling_response_analyzed_for_resilience = true;
 
       if(check_for_response) {
-        int restartGen = 0;
-        some_task_failed(gen, restartGen, false);
+        some_task_failed(this->gen, this->restartGen, false);
         int remaining = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
         if (remaining == 0)
           Runtime::trigger_event(profiling_reported);
