@@ -543,6 +543,7 @@ namespace Legion {
       virtual bool trigger_recover(void);
       virtual void setup_profiling_opstatus_monitoring_for_resilient(
                         Realm::ProfilingRequestSet &);
+      virtual void restart_task_resilience();
 //ksmurthy
     protected:
       // Boolean for each region saying if it is virtual mapped

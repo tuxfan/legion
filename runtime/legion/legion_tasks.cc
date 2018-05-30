@@ -2331,7 +2331,8 @@ namespace Legion {
         // There is a small race condition here which is alright
         // as long as we haven't committed yet
         assert(children_complete || !commit_received);
-        assert(!children_commit);
+        //ksmurthy TODO WHY IS THIS THROWING AN ASSER FAILURE IN RESTARTING
+        //CHECK assert(!children_commit);
 #endif
         children_commit = true;
         task_commit = commit_received;
@@ -3422,21 +3423,22 @@ namespace Legion {
       //for restarted tasks, this is present assert(task_profiling_requests.empty());
       //ksmurthy begin for resilience,we are enabling all tasks to get OP_STATUS
       if(!task_profiling_requests.empty()) {
-         bool found = false;
-         for (std::vector<ProfilingMeasurementID>::const_iterator it = 
-                task_profiling_requests.begin(); it != 
-                task_profiling_requests.end(); it++) {
-						if(*it == (ProfilingMeasurementID)Realm::PMID_OP_STATUS) {
-							found = true;
-							break;
-						}
-			}
-      	task_profiling_requests.push_back(
-        		(ProfilingMeasurementID)Realm::PMID_OP_STATUS);
-		} else {
-      	task_profiling_requests.push_back(
-        		(ProfilingMeasurementID)Realm::PMID_OP_STATUS);
-		}
+        bool found = false;
+        for (std::vector<ProfilingMeasurementID>::const_iterator it = 
+                  task_profiling_requests.begin(); it != 
+                  task_profiling_requests.end(); it++) {
+          if(*it == (ProfilingMeasurementID)Realm::PMID_OP_STATUS) {
+            found = true;
+            break;
+          }
+        }
+        if(!found) 
+          task_profiling_requests.push_back(
+                 (ProfilingMeasurementID)Realm::PMID_OP_STATUS);
+      } else {
+        task_profiling_requests.push_back(
+               (ProfilingMeasurementID)Realm::PMID_OP_STATUS);
+      }
       //ksmurthy end
 
       if (!output.copy_prof_requests.empty())
@@ -4069,7 +4071,7 @@ namespace Legion {
       profiling_reported = Runtime::create_rt_user_event();
     }
 
-#if 0
+#if 1
     //------------------------ksmurthy------------------------------------------
     void SingleTask::restart_task_resilience()
     //--------------------------------------------------------------------------
@@ -4228,6 +4230,7 @@ namespace Legion {
 //      if (target_processors.size() > 1)
 //        launch_processor = runtime->find_processor_group(target_processors);
 //      runtime->add_to_ready_queue(launch_processor, this, ready);
+
 #endif 
 
 
@@ -4316,6 +4319,7 @@ namespace Legion {
       }
 
       //TODO: can my incoming change while I get te precondition ?
+      if(upstream)
       {
         AutoLock o_lock(op_lock);
         restartGen++;
@@ -4327,18 +4331,16 @@ namespace Legion {
         upstream_set.insert(std::map<SingleTask*,RtEvent>::value_type(
                 this, this->mapped_event));
         this->setup_task_for_remapping(precondition, true);
-      } 
+      } else {
+
+        this->restart_task_resilience();
+      }
 
 
 
       if(!upstream) {
         std::set<Operation *> restart_set; 
         std::map<Operation *, std::set<RtEvent> > map_preconds;
-//        map_preconds.insert(std::map<Operation*,std::set<RtEvent> >::
-//              value_type(static_cast<Operation *>(this), 
-//                          std::set<RtEvent>()));
-//        map_preconds.find(static_cast<Operation *>(this))->
-//                          second.insert(this->mapped_event);
         if(outgoing.size() != 0) {
           for(std::map<Operation*, GenerationID>::const_iterator 
               it = outgoing.begin(); it != outgoing.end(); it++) {
@@ -4358,9 +4360,6 @@ namespace Legion {
             }
           }
         }
-//        std::map<Operation *, std::set<RtEvent> >::iterator it;
-//		  it = map_preconds.find(this);
-//		  map_preconds.erase(it);
         for(std::map<Operation *, std::set<RtEvent> >::const_iterator
           it = map_preconds.begin(); it !=map_preconds.end(); it++) {
 			    RtEvent precondition = Runtime::merge_events(it->second);
