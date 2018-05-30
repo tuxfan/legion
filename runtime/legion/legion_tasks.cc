@@ -3902,9 +3902,12 @@ namespace Legion {
       // avoid the race.
       bool perform_chaining_optimization = false; 
       ApUserEvent chain_complete_event;
+#if 0 //ksmurthy this was causing an assertion failure during a 
+      //restart of a task. need to examine this later
       if (variant->is_leaf() && !has_virtual_instances() &&
           can_early_complete(chain_complete_event))
         perform_chaining_optimization = true;
+#endif
       // Note there is a potential scary race condition to be aware of here: 
       // once we launch this task it's possible for this task to run and 
       // clean up before we finish the execution of this function thereby
@@ -4043,8 +4046,8 @@ namespace Legion {
           runtime->find_utility_group(), LG_LEGION_PROFILING_ID, 
           &proxy_this, sizeof(proxy_this));
       request.add_measurement((Realm::ProfilingMeasurementID)(Realm::PMID_OP_STATUS));
-      int previous = 
-        __sync_fetch_and_add(&outstanding_profiling_requests, 1);
+      //int previous = 
+      __sync_fetch_and_add(&outstanding_profiling_requests, 1);
       //if ((previous == 1) && !profiling_reported.exists())
       //MIKE: even if had one, that was used to obtain the op status
       //so we need a new one. ksmurthy
@@ -4235,8 +4238,9 @@ namespace Legion {
       {
         AutoLock o_lock(op_lock);
         restartGen++;
-        if(this->mapped_event != NULL) { 
-          Runtime::trigger_event(this->mapped_event);
+        if(this->mapped_event != RtEvent::NO_RT_EVENT) { 
+          if(!this->mapped_event.has_triggered())
+            Runtime::trigger_event(this->mapped_event);
         }
         this->mapped_event = Runtime::create_rt_user_event();
         for(std::map<Operation*, GenerationID>::const_iterator 
@@ -4257,13 +4261,70 @@ namespace Legion {
     }
 
     //------------------------ksmurthy------------------------------------------
+    void SingleTask::setup_task_for_remapping(RtEvent &precondition, bool lcked)
+    //--------------------------------------------------------------------------
+    {
+      if(!lcked) {
+        AutoLock o_lock(op_lock);
+        mapped = false;
+        map_applied_conditions.clear();
+        mapped_preconditions.clear();
+      } else {
+        mapped = false;
+        map_applied_conditions.clear();
+        mapped_preconditions.clear();
+      }
+        
+      TriggerTaskArgs trigger_args(this);
+      runtime->issue_runtime_meta_task(trigger_args, 
+            LG_THROUGHPUT_WORK_PRIORITY, precondition);
+    }
+
+    //------------------------ksmurthy------------------------------------------
     void SingleTask::some_task_failed(GenerationID gen, bool upstream)
     //--------------------------------------------------------------------------
     {
 
+      RtEvent precondition = RtEvent::NO_RT_EVENT;
+      std::map<SingleTask *, RtEvent> upstream_set;
+      if(!trigger_recover()){
+        for(std::map<Operation*, GenerationID>::const_iterator it = 
+          incoming.begin(); it != incoming.end(); it++) {
+          assert(it->first != NULL);
+          SingleTask *parent = dynamic_cast<SingleTask *>(it->first);
+          assert(parent != NULL);//TODO handle other types
+          if(upstream_set.find(parent)==upstream_set.end()) { 
+            parent->some_task_failed(gen, true);
+            precondition = Runtime::merge_events(precondition, 
+                              upstream_set.find(parent)->second);
+          }
+        }
+      }
+
+      //TODO: can my incoming change while I get te precondition ?
+      {
+        AutoLock o_lock(op_lock);
+        restartGen++;
+        if(this->mapped_event != RtEvent::NO_RT_EVENT) { 
+          if(!this->mapped_event.has_triggered())
+            Runtime::trigger_event(this->mapped_event);
+        }
+        this->mapped_event = Runtime::create_rt_user_event(); 
+        upstream_set.insert(std::map<SingleTask*,RtEvent>::value_type(
+                this, this->mapped_event));
+        this->setup_task_for_remapping(precondition, true);
+      } 
+
+
+
       if(!upstream) {
         std::set<Operation *> restart_set; 
         std::map<Operation *, std::set<RtEvent> > map_preconds;
+        map_preconds.insert(std::map<Operation*,std::set<RtEvent> >::
+              value_type(static_cast<Operation *>(this), 
+                          std::set<RtEvent>()));
+        map_preconds.find(static_cast<Operation *>(this))->
+                          second.insert(this->mapped_event);
         if(outgoing.size() != 0) {
           for(std::map<Operation*, GenerationID>::const_iterator 
               it = outgoing.begin(); it != outgoing.end(); it++) {
@@ -4280,42 +4341,11 @@ namespace Legion {
 			    RtEvent precondition = Runtime::merge_events(it->second);
           SingleTask *stsk = dynamic_cast<SingleTask *>(it->first);
           assert(stsk != NULL);
-          TriggerTaskArgs trigger_args(stsk);
-          runtime->issue_runtime_meta_task(trigger_args, 
-                LG_THROUGHPUT_WORK_PRIORITY, map_precondition);
+          stsk->setup_task_for_remapping(precondition, false);
 		    }
       }
 
-      RtEvent precondition = RtEvent::NO_RT_EVENT;
-      std::map<SingleTask *, RtEvent> upstream_set;
-      if(!trigger_recover()){
-        for(std::map<Operation*, GenerationID>::const_iterator it = 
-          incoming.begin(); it != incoming.end(); it++) {
-          assert(it->first != NULL);
-          SingleTask *parent = dynamic_cast<SingleTask *>(it->first);
-          assert(parent != NULL);//TODO handle other types
-          if(upstream_set.find(parent)==upstream_set.end()) { 
-            parent->some_task_failed(gen, true);
-            precondition = Runtime::merge_events(precondition, 
-                              upstream_set.find(parent));
-          }
-        }
-      }
-
-      {
-        AutoLock o_lock(op_lock);
-        restartGen++;
-        if(this->mapped_event != NULL) { 
-          Runtime::trigger_event(this->mapped_event);
-        }
-        this->mapped_event = Runtime::create_rt_user_event(); 
-        upstream_set.insert(std::map<SingleTask*,RtEvent>::value_type(
-                this, this->mapped_event));
-        std::map<Operation *, upstream_restart_set.find(this);
-        TriggerTaskArgs trigger_args(this);
-        runtime->issue_runtime_meta_task(trigger_args, 
-            LG_THROUGHPUT_WORK_PRIORITY, precondition);
-      }          
+         
       return ;
     }
 
@@ -4426,10 +4456,11 @@ namespace Legion {
       profiling_response_analyzed_for_resilience = true;
 
       if(check_for_response) {
-        some_task_failed(this->gen, this->restartGen, false);
+        some_task_failed(this->gen, false);
         int remaining = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
         if (remaining == 0)
           Runtime::trigger_event(profiling_reported);
+        task_profiling_requests.clear();
         return; //EARLY BACKOUT FOR FAILED TASKS
       } else { 
 #if 0
