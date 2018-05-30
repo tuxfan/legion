@@ -3419,10 +3419,24 @@ namespace Legion {
       }
       //ksmurthy TODO, ideally, check whether task_profiling_requests cnotains
       //op_status, and if not, then add it
-      assert(task_profiling_requests.empty());
+      //for restarted tasks, this is present assert(task_profiling_requests.empty());
       //ksmurthy begin for resilience,we are enabling all tasks to get OP_STATUS
-      task_profiling_requests.push_back(
-        (ProfilingMeasurementID)Realm::PMID_OP_STATUS);
+      if(!task_profiling_requests.empty()) {
+         bool found = false;
+         for (std::vector<ProfilingMeasurementID>::const_iterator it = 
+                task_profiling_requests.begin(); it != 
+                task_profiling_requests.end(); it++) {
+						if(*it == (ProfilingMeasurementID)Realm::PMID_OP_STATUS) {
+							found = true;
+							break;
+						}
+			}
+      	task_profiling_requests.push_back(
+        		(ProfilingMeasurementID)Realm::PMID_OP_STATUS);
+		} else {
+      	task_profiling_requests.push_back(
+        		(ProfilingMeasurementID)Realm::PMID_OP_STATUS);
+		}
       //ksmurthy end
 
       if (!output.copy_prof_requests.empty())
@@ -4254,7 +4268,7 @@ namespace Legion {
               preconds.insert(std::map<Operation*,std::set<RtEvent> >::
                     value_type(pnt, std::set<RtEvent>()));
               preconds.find(pnt)->second.insert(mapped_event);
-				    }
+				}
           }
         }
       }
@@ -4268,11 +4282,11 @@ namespace Legion {
         AutoLock o_lock(op_lock);
         mapped = false;
         map_applied_conditions.clear();
-        mapped_preconditions.clear();
+        //mapped_preconditions.clear();
       } else {
         mapped = false;
         map_applied_conditions.clear();
-        mapped_preconditions.clear();
+        //mapped_preconditions.clear();
       }
         
       TriggerTaskArgs trigger_args(this);
@@ -4320,32 +4334,41 @@ namespace Legion {
       if(!upstream) {
         std::set<Operation *> restart_set; 
         std::map<Operation *, std::set<RtEvent> > map_preconds;
-        map_preconds.insert(std::map<Operation*,std::set<RtEvent> >::
-              value_type(static_cast<Operation *>(this), 
-                          std::set<RtEvent>()));
-        map_preconds.find(static_cast<Operation *>(this))->
-                          second.insert(this->mapped_event);
+//        map_preconds.insert(std::map<Operation*,std::set<RtEvent> >::
+//              value_type(static_cast<Operation *>(this), 
+//                          std::set<RtEvent>()));
+//        map_preconds.find(static_cast<Operation *>(this))->
+//                          second.insert(this->mapped_event);
         if(outgoing.size() != 0) {
           for(std::map<Operation*, GenerationID>::const_iterator 
               it = outgoing.begin(); it != outgoing.end(); it++) {
             Operation *pnt = it->first;
             if(pnt != NULL) {
               SingleTask *spnt = dynamic_cast<SingleTask *>(pnt);
-              if(spnt != NULL) 
+              if(spnt != NULL) { 
                 spnt->quash_operation(gen, restart_set, map_preconds);
+                if(map_preconds.find(pnt) != map_preconds.end()) {
+                  map_preconds.find(pnt)->second.insert(mapped_event);
+                } else {
+                  map_preconds.insert(std::map<Operation*,std::set<RtEvent> >::
+                        value_type(pnt, std::set<RtEvent>()));
+                  map_preconds.find(pnt)->second.insert(mapped_event);
+    				 }
+				  }
             }
           }
         }
+//        std::map<Operation *, std::set<RtEvent> >::iterator it;
+//		  it = map_preconds.find(this);
+//		  map_preconds.erase(it);
         for(std::map<Operation *, std::set<RtEvent> >::const_iterator
           it = map_preconds.begin(); it !=map_preconds.end(); it++) {
 			    RtEvent precondition = Runtime::merge_events(it->second);
-          SingleTask *stsk = dynamic_cast<SingleTask *>(it->first);
-          assert(stsk != NULL);
-          stsk->setup_task_for_remapping(precondition, false);
+          	 SingleTask *stsk = dynamic_cast<SingleTask *>(it->first);
+          	 assert(stsk != NULL);
+          	 stsk->setup_task_for_remapping(precondition, false);
 		    }
       }
-
-         
       return ;
     }
 
