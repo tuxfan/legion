@@ -27,6 +27,7 @@ enum TaskIDs {
   INIT_FIELD_TASK_ID,
   DAXPY_TASK_ID,
   CHECK_TASK_ID,
+  FINALIZE_TASK_ID,
 };
 
 enum FieldIDs {
@@ -102,7 +103,8 @@ void top_level_task(const Task *task,
     TaskLauncher init_launcher(INIT_FIELD_TASK_ID, 
                       TaskArgument(&cur_itr, sizeof(cur_itr)));
     init_launcher.add_region_requirement(
-        RegionRequirement(input_lr, WRITE_DISCARD, EXCLUSIVE, input_lr));
+        //RegionRequirement(input_lr, WRITE_DISCARD, EXCLUSIVE, input_lr));
+        RegionRequirement(input_lr, READ_WRITE, EXCLUSIVE, input_lr));
     init_launcher.add_field(0/*idx*/, FID_X);
     // Note that when we launch this task we don't record the future.
     // This is because we're going to let Legion be responsible for 
@@ -143,11 +145,13 @@ void top_level_task(const Task *task,
     TaskLauncher daxpy_launcher(DAXPY_TASK_ID, 
                     TaskArgument(&cur_itr, sizeof(cur_itr)));
     daxpy_launcher.add_region_requirement(
-        RegionRequirement(input_lr, READ_ONLY, EXCLUSIVE, input_lr));
+        //RegionRequirement(input_lr, READ_ONLY, EXCLUSIVE, input_lr));
+        RegionRequirement(input_lr, READ_WRITE, EXCLUSIVE, input_lr));
     daxpy_launcher.add_field(0/*idx*/, FID_X);
     daxpy_launcher.add_field(0/*idx*/, FID_Y);
     daxpy_launcher.add_region_requirement(
-        RegionRequirement(output_lr, WRITE_DISCARD, EXCLUSIVE, output_lr));
+        //RegionRequirement(output_lr, WRITE_DISCARD, EXCLUSIVE, output_lr));
+        RegionRequirement(output_lr, READ_WRITE, EXCLUSIVE, output_lr));
     daxpy_launcher.add_field(1/*idx*/, FID_Z);
   
     runtime->execute_task(ctx, daxpy_launcher);
@@ -162,11 +166,13 @@ void top_level_task(const Task *task,
     TaskLauncher check_launcher(CHECK_TASK_ID, 
                     TaskArgument(&cur_itr, sizeof(cur_itr)));
     check_launcher.add_region_requirement(
-        RegionRequirement(input_lr, READ_ONLY, EXCLUSIVE, input_lr));
+        //RegionRequirement(input_lr, READ_ONLY, EXCLUSIVE, input_lr));
+        RegionRequirement(input_lr, READ_WRITE, EXCLUSIVE, input_lr));
     check_launcher.add_field(0/*idx*/, FID_X);
     check_launcher.add_field(0/*idx*/, FID_Y);
     check_launcher.add_region_requirement(
-        RegionRequirement(output_lr, READ_ONLY, EXCLUSIVE, output_lr));
+        //RegionRequirement(output_lr, READ_ONLY, EXCLUSIVE, output_lr));
+        RegionRequirement(output_lr, READ_WRITE, EXCLUSIVE, output_lr));
     check_launcher.add_field(1/*idx*/, FID_Z);
   
     runtime->execute_task(ctx, check_launcher);
@@ -174,6 +180,19 @@ void top_level_task(const Task *task,
     cur_itr++; 
   } //end of iterations
 
+
+    TaskLauncher finalize_launcher(FINALIZE_TASK_ID, 
+                    TaskArgument(&cur_itr, sizeof(cur_itr)));
+    finalize_launcher.add_region_requirement(
+        RegionRequirement(input_lr, READ_WRITE, EXCLUSIVE, input_lr));
+    finalize_launcher.add_field(0/*idx*/, FID_X);
+    finalize_launcher.add_field(0/*idx*/, FID_Y);
+    finalize_launcher.add_region_requirement(
+        RegionRequirement(output_lr, READ_WRITE, EXCLUSIVE, output_lr));
+    finalize_launcher.add_field(1/*idx*/, FID_Z);
+  
+    runtime->execute_task(ctx, finalize_launcher);
+ 
   // Notice that we never once blocked waiting on the result of any sub-task
   // in the execution of the top-level task.  We don't even block before
   // destroying any of our resources.  This works because Legion understands
@@ -248,10 +267,11 @@ void daxpy_task(const Task *task,
 
   const double alpha = 0.08; 
   //const int random_value = 1+10*drand48();
+  printf("BEGIN Running daxpy computation \n"); 
 #ifdef DEBUG_RESILIENCE
   static int hello_tracker2 = 0;
   hello_tracker2++;
-  if(hello_tracker2 == 9) {
+  if(hello_tracker2 == 1) {
     printf("\n ABOUT TO FAIL in DAXPY iteration:%d tracker:%d\n",cur_itr,hello_tracker2); 
     throw std::exception();
   }
@@ -283,6 +303,7 @@ void check_task(const Task *task,
   Rect<1> rect = runtime->get_index_space_domain(ctx,
                   task->regions[0].region.get_index_space());
   bool all_passed = true;
+  bool compare = true;
   for (PointInRectIterator<1> pir(rect); pir(); pir++)
   {
     double expected = alpha * acc_x[*pir] + acc_y[*pir];
@@ -290,19 +311,27 @@ void check_task(const Task *task,
     // Probably shouldn't check for floating point equivalence but
     // the order of operations are the same should they should
     // be bitwise equal.
-    //if (expected != received)
-      //all_passed = false;
+    if (expected != received)
+      compare = false;
   }
 #ifdef DEBUG_RESILIENCE
   static int hello_tracker3 = 1;
   PointInRectIterator<1> pir(rect);
   double value_read = acc_z[*pir];
   if (all_passed)
-    printf("SUCCESS in iteration %d version %d read value:%lf!\n", cur_itr, hello_tracker3, value_read);
+    printf("SUCCESS in iteration %d version %d read value:%lf %d!\n", cur_itr,
+hello_tracker3, value_read, compare);
   else
     printf("FAILURE! in iteration %d version %d\n", cur_itr, hello_tracker3);
   hello_tracker3++;
 #endif
+}
+
+void finalize_task(const Task *task,
+                const std::vector<PhysicalRegion> &regions,
+                Context ctx, Runtime *runtime)
+{
+  printf("\n\nFINALIZE\n\n\n");
 }
 
 int main(int argc, char **argv)
@@ -334,6 +363,13 @@ int main(int argc, char **argv)
     registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
     registrar.set_leaf();
     Runtime::preregister_task_variant<check_task>(registrar, "check");
+  }
+
+  {
+    TaskVariantRegistrar registrar(FINALIZE_TASK_ID, "finalize");
+    registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
+    registrar.set_leaf();
+    Runtime::preregister_task_variant<finalize_task>(registrar, "finalize");
   }
 
   return Runtime::start(argc, argv);
