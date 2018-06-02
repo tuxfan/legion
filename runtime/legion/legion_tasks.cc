@@ -2569,13 +2569,13 @@ namespace Legion {
     } 
 
     //--------------------------------------------------------------------------
-    void SingleTask::trigger_mapping(GenerationID restartGen)
+    void SingleTask::trigger_mapping(GenerationID restart)
     //--------------------------------------------------------------------------
     {
       DETAILED_PROFILER(runtime, TRIGGER_SINGLE_CALL);
 
       //ksmurthy
-      if(this->restartGen != restartGen) {
+      if(this->restartGen != restart) {
         std::cout<<"hei ho, " << this->get_task_name() << std::endl;
         return; 
       } else {
@@ -2592,7 +2592,7 @@ namespace Legion {
             // Remote and origin mapped means
             // we were already mapped so we can
             // just launch the task
-            launch_task();
+            launch_task(restart);
           }
           else
           {
@@ -2601,7 +2601,7 @@ namespace Legion {
             if (done_mapping.exists() && !done_mapping.has_triggered())
               defer_launch_task(done_mapping);
             else
-              launch_task();
+              launch_task(restart);
           }
         }
         // otherwise it was sent away
@@ -2653,7 +2653,7 @@ namespace Legion {
               if (done_mapping.exists() && !done_mapping.has_triggered())
                 defer_launch_task(done_mapping);
               else
-                launch_task();
+                launch_task(restart);
             }
           }
         }
@@ -3743,10 +3743,19 @@ namespace Legion {
     } 
 
     //--------------------------------------------------------------------------
-    void SingleTask::launch_task(void)
+    void SingleTask::launch_task(GenerationID restartGen) //ksmurthy
     //--------------------------------------------------------------------------
     {
       DETAILED_PROFILER(runtime, LAUNCH_TASK_CALL);
+
+      if(this->restartGen != restartGen) {
+        std::cout<<"hei ho in launch_task, " << this->get_task_name() << std::endl;
+        return; 
+      } else {
+        std::cout<<"this is the restart gen:" << this->restartGen << 
+                   "in launch for" << this->get_task_name() << std::endl;
+      }
+
 #ifdef DEBUG_LEGION
       assert(regions.size() == physical_instances.size());
       assert(regions.size() == no_access_regions.size());
@@ -4835,7 +4844,7 @@ namespace Legion {
           if (is_sliced())
           {
             if (is_origin_mapped())
-              launch_task();
+              launch_task(this->get_restart_generation());
             else
               map_and_launch();
           }
@@ -7536,7 +7545,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void IndexTask::launch_task(void)
+    void IndexTask::launch_task(GenerationID restartGen)
     //--------------------------------------------------------------------------
     {
       // should never be called
@@ -8451,7 +8460,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void SliceTask::launch_task(void)
+    void SliceTask::launch_task(GenerationID restartGen)
     //--------------------------------------------------------------------------
     {
       DETAILED_PROFILER(runtime, SLICE_LAUNCH_CALL);
@@ -8459,8 +8468,8 @@ namespace Legion {
       assert(!points.empty());
 #endif
       // Launch all of our child points
-      for (unsigned idx = 0; idx < points.size(); idx++)
-        points[idx]->launch_task();
+      for (unsigned idx = 0; idx < points.size(); idx++) 
+        points[idx]->launch_task(points[idx]->get_restart_generation());
     }
 
     //--------------------------------------------------------------------------
@@ -8525,7 +8534,7 @@ namespace Legion {
         if (map_event.exists() && !map_event.has_triggered())
           next_point->defer_launch_task(map_event);
         else
-          next_point->launch_task();
+          next_point->launch_task(next_point->get_restart_generation());
       }
     }
 

@@ -2090,9 +2090,11 @@ namespace Legion {
         static const LgTaskID TASK_ID = LG_MUST_LAUNCH_ID;
       public:
         MustEpochLauncherArgs(MustEpochOp *owner)
-          : LgTaskArgs<MustEpochLauncherArgs>(owner->get_unique_op_id()) { }
+          : LgTaskArgs<MustEpochLauncherArgs>(owner->get_unique_op_id()),
+            restartGen(owner->get_restart_generation()) { }
       public:
         TaskOp *task;
+        GenerationID restartGen;
       };
     public:
       MustEpochDistributor(MustEpochOp *owner);

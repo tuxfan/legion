@@ -20309,7 +20309,8 @@ namespace Legion {
           {
             const TaskOp::DeferLaunchArgs *largs = 
               (const TaskOp::DeferLaunchArgs*)args;
-            largs->proxy_this->launch_task();
+            //ksmurthy
+            largs->proxy_this->launch_task(largs->restartGen);
             break;
           }
         case LG_DEFER_MAP_AND_LAUNCH_TASK_ID:

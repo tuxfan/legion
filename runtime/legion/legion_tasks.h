@@ -180,9 +180,12 @@ namespace Legion {
       public:
         DeferLaunchArgs(TaskOp *op)
           : LgTaskArgs<DeferLaunchArgs>(op->get_unique_op_id()), 
-            proxy_this(op) { }
+            proxy_this(op), 
+            restartGen(op->get_restart_generation()) { }
       public:
         TaskOp *const proxy_this;
+        //ksmurthy
+        GenerationID restartGen; 
       };
       struct DeferredFutureSetArgs : public LgTaskArgs<DeferredFutureSetArgs> {
       public:
@@ -295,7 +298,7 @@ namespace Legion {
       virtual void early_map_task(void) = 0;
       virtual bool distribute_task(void) = 0;
       virtual RtEvent perform_mapping(MustEpochOp *owner = NULL) = 0;
-      virtual void launch_task(void) = 0;
+      virtual void launch_task(GenerationID restartGen) = 0;
       virtual bool is_stealable(void) const = 0;
       virtual bool has_restrictions(unsigned idx, LogicalRegion handle) = 0;
     public:
@@ -503,7 +506,7 @@ namespace Legion {
       virtual bool is_top_level_task(void) const { return false; }
     public:
       virtual void resolve_false(bool speculated, bool launched) = 0;
-      virtual void launch_task(void);
+      virtual void launch_task(GenerationID restartGen);
       virtual void early_map_task(void) = 0;
       virtual bool distribute_task(void) = 0;
       virtual RtEvent perform_must_epoch_version_analysis(MustEpochOp *own) = 0;
@@ -610,7 +613,7 @@ namespace Legion {
       virtual void early_map_task(void) = 0;
       virtual bool distribute_task(void) = 0;
       virtual RtEvent perform_mapping(MustEpochOp *owner = NULL) = 0;
-      virtual void launch_task(void) = 0;
+      virtual void launch_task(GenerationID restartGen) = 0;
       virtual bool is_stealable(void) const = 0;
       virtual bool has_restrictions(unsigned idx, LogicalRegion handle) = 0;
       virtual void map_and_launch(void) = 0;
@@ -923,7 +926,7 @@ namespace Legion {
       virtual void early_map_task(void);
       virtual bool distribute_task(void);
       virtual RtEvent perform_mapping(MustEpochOp *owner = NULL);
-      virtual void launch_task(void);
+      virtual void launch_task(GenerationID restartGen);
       virtual bool is_stealable(void) const;
       virtual bool has_restrictions(unsigned idx, LogicalRegion handle);
       virtual void map_and_launch(void);
@@ -1040,7 +1043,7 @@ namespace Legion {
       virtual void early_map_task(void);
       virtual bool distribute_task(void);
       virtual RtEvent perform_mapping(MustEpochOp *owner = NULL);
-      virtual void launch_task(void);
+      virtual void launch_task(GenerationID restartGen);
       virtual bool is_stealable(void) const;
       virtual bool has_restrictions(unsigned idx, LogicalRegion handle);
       virtual void map_and_launch(void);

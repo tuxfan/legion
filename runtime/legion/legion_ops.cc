@@ -11258,7 +11258,7 @@ namespace Legion {
     {
       const MustEpochLauncherArgs *launch_args = 
         (const MustEpochLauncherArgs *)args;
-      launch_args->task->launch_task();
+      launch_args->task->launch_task(launch_args->restartGen);
     }
 
     /////////////////////////////////////////////////////////////
