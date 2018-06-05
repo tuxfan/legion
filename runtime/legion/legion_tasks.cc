@@ -2373,6 +2373,7 @@ namespace Legion {
       : TaskOp(rt)
     //--------------------------------------------------------------------------
     {
+		cached_start_condition_for_poisoning = ApEvent::NO_AP_EVENT;
     }
     
     //--------------------------------------------------------------------------
@@ -2398,6 +2399,7 @@ namespace Legion {
       inner_cached = false;
       has_virtual_instances_result = false;
       has_virtual_instances_cached = false;
+		cached_start_condition_for_poisoning = ApEvent::NO_AP_EVENT;
     }
 
     //--------------------------------------------------------------------------
@@ -2418,6 +2420,7 @@ namespace Legion {
 #ifdef DEBUG_LEGION
       premapped_instances.clear();
 #endif
+		cached_start_condition_for_poisoning = ApEvent::NO_AP_EVENT;
     }
 
     //--------------------------------------------------------------------------
@@ -3998,6 +4001,8 @@ namespace Legion {
             LegionSpy::log_future_use(unique_op_id, impl->get_ready_event());
         }
       }
+      //ksmurthy
+      cached_start_condition_for_poisoning = start_condition;
       ApEvent task_launch_event = variant->dispatch_task(launch_processor, this,
                                  execution_context, start_condition, true_guard,
                                  task_priority, profiling_requests);
@@ -4262,8 +4267,14 @@ namespace Legion {
         }
       }
       {
+        const char *tasks_cone_of_restart = "cancelled since its a cone-task";
         AutoLock o_lock(op_lock);
         restartGen++;
+        if(this->cached_start_condition_for_poisoning != ApEvent::NO_AP_EVENT) {
+			this->cached_start_condition_for_poisoning.cancel_operation(
+						tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
+        	//Runtime::poison_event(this->cached_start_condition_for_poisoning);
+		  }
         if(this->mapped_event != RtEvent::NO_RT_EVENT) { 
           if(!this->mapped_event.has_triggered())
             Runtime::trigger_event(this->mapped_event);
@@ -4330,8 +4341,16 @@ namespace Legion {
       //TODO: can my incoming change while I get te precondition ?
       if(upstream)
       {
+        const char *tasks_cone_of_restart = "cancelled since its a cone-task";
         AutoLock o_lock(op_lock);
         restartGen++;
+
+        if(this->cached_start_condition_for_poisoning != ApEvent::NO_AP_EVENT) {
+			this->cached_start_condition_for_poisoning.cancel_operation(
+						tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
+        	//Runtime::poison_event(this->cached_start_condition_for_poisoning);
+		  }
+
         if(this->mapped_event != RtEvent::NO_RT_EVENT) { 
           if(!this->mapped_event.has_triggered())
             Runtime::trigger_event(this->mapped_event);

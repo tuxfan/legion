@@ -547,6 +547,8 @@ namespace Legion {
       virtual void setup_profiling_opstatus_monitoring_for_resilient(
                         Realm::ProfilingRequestSet &);
       virtual void restart_task_resilience();
+    protected:
+		ApEvent cached_start_condition_for_poisoning;
 //ksmurthy
     protected:
       // Boolean for each region saying if it is virtual mapped
