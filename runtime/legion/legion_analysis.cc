@@ -5223,7 +5223,7 @@ namespace Legion {
       assert(!!mask);
 #endif
       normal_close_mask |= mask;
-      if (projection)
+      if (projection && !disjoint_close)
         closed_projections |= mask;
       if (disjoint_close)
       {
@@ -10410,7 +10410,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void InstanceRef::pack_reference(Serializer &rez, AddressSpaceID target)
+    void InstanceRef::pack_reference(Serializer &rez) const
     //--------------------------------------------------------------------------
     {
       rez.serialize(valid_fields);
@@ -10422,7 +10422,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void InstanceRef::unpack_reference(Runtime *runtime, TaskOp *task, 
+    void InstanceRef::unpack_reference(Runtime *runtime,
                                        Deserializer &derez, RtEvent &ready)
     //--------------------------------------------------------------------------
     {
@@ -10854,8 +10854,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void InstanceSet::pack_references(Serializer &rez,
-                                      AddressSpaceID target) const
+    void InstanceSet::pack_references(Serializer &rez) const
     //--------------------------------------------------------------------------
     {
       if (single)
@@ -10866,19 +10865,19 @@ namespace Legion {
           return;
         }
         rez.serialize<size_t>(1);
-        refs.single->pack_reference(rez, target);
+        refs.single->pack_reference(rez);
       }
       else
       {
         rez.serialize<size_t>(refs.multi->vector.size());
         for (unsigned idx = 0; idx < refs.multi->vector.size(); idx++)
-          refs.multi->vector[idx].pack_reference(rez, target);
+          refs.multi->vector[idx].pack_reference(rez);
       }
     }
 
     //--------------------------------------------------------------------------
-    void InstanceSet::unpack_references(Runtime *runtime, TaskOp *task,
-                           Deserializer &derez, std::set<RtEvent> &ready_events)
+    void InstanceSet::unpack_references(Runtime *runtime, Deserializer &derez, 
+                                        std::set<RtEvent> &ready_events)
     //--------------------------------------------------------------------------
     {
       size_t num_refs;
@@ -10916,7 +10915,7 @@ namespace Legion {
           refs.single->add_reference();
         }
         RtEvent ready;
-        refs.single->unpack_reference(runtime, task, derez, ready);
+        refs.single->unpack_reference(runtime, derez, ready);
         if (ready.exists())
           ready_events.insert(ready);
       }
@@ -10938,7 +10937,7 @@ namespace Legion {
         for (unsigned idx = 0; idx < num_refs; idx++)
         {
           RtEvent ready;
-          refs.multi->vector[idx].unpack_reference(runtime, task, derez, ready);
+          refs.multi->vector[idx].unpack_reference(runtime, derez, ready);
           if (ready.exists())
             ready_events.insert(ready);
         }

@@ -426,6 +426,9 @@ namespace Realm {
       metadata.inst_offset = (size_t)-1;
       metadata.ready_event = Event::NO_EVENT;
       metadata.layout = 0;
+      
+      // Initialize this in case the user asks for profiling information
+      timeline.instance = _me;
     }
 
     RegionInstanceImpl::~RegionInstanceImpl(void)
@@ -458,6 +461,9 @@ namespace Realm {
 	  
 	  // send any remaining incomplete profiling responses
 	  measurements.send_responses(requests);
+
+          // clear the measurments after we send the response
+          measurements.clear();
 
 	  // poison the completion event, if it exists
 	  Event ready_event = Event::NO_EVENT;
