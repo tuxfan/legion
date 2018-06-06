@@ -2373,7 +2373,7 @@ namespace Legion {
       : TaskOp(rt)
     //--------------------------------------------------------------------------
     {
-		cached_start_condition_for_poisoning = ApEvent::NO_AP_EVENT;
+    cached_start_condition_for_poisoning = ApEvent::NO_AP_EVENT;
     }
     
     //--------------------------------------------------------------------------
@@ -2399,7 +2399,7 @@ namespace Legion {
       inner_cached = false;
       has_virtual_instances_result = false;
       has_virtual_instances_cached = false;
-		cached_start_condition_for_poisoning = ApEvent::NO_AP_EVENT;
+    cached_start_condition_for_poisoning = ApEvent::NO_AP_EVENT;
     }
 
     //--------------------------------------------------------------------------
@@ -2420,7 +2420,7 @@ namespace Legion {
 #ifdef DEBUG_LEGION
       premapped_instances.clear();
 #endif
-		cached_start_condition_for_poisoning = ApEvent::NO_AP_EVENT;
+    cached_start_condition_for_poisoning = ApEvent::NO_AP_EVENT;
     }
 
     //--------------------------------------------------------------------------
@@ -2577,8 +2577,13 @@ namespace Legion {
     {
       DETAILED_PROFILER(runtime, TRIGGER_SINGLE_CALL);
 
+      bool continue_with_mapping = false;
       //ksmurthy
-      if(this->restartGen != restart) {
+      {
+        AutoLock o_lock(op_lock);
+        continue_with_mapping = (this->restartGen == restart);
+      }
+      if(!continue_with_mapping) {
         std::cout<<"hei ho, " << this->get_task_name() << std::endl;
         return; 
       } else {
@@ -3008,7 +3013,7 @@ namespace Legion {
             if(!runtime->retrieve_semantic_information(
                 regions[idx].region.get_field_space(), *it, NAME_SEMANTIC_TAG,
                 name, name_size, true/*can fail*/, false))
-	          name = "(no name)";
+            name = "(no name)";
               log_run.error("Missing instance for field %s (FieldID: %d)",
                           static_cast<const char*>(name), *it);
           }
@@ -3746,13 +3751,20 @@ namespace Legion {
     } 
 
     //--------------------------------------------------------------------------
-    void SingleTask::launch_task(GenerationID restartGen) //ksmurthy
+    void SingleTask::launch_task(GenerationID restart) //ksmurthy
     //--------------------------------------------------------------------------
     {
       DETAILED_PROFILER(runtime, LAUNCH_TASK_CALL);
 
-      if(this->restartGen != restartGen) {
-        std::cout<<"hei ho in launch_task, " << this->get_task_name() << std::endl;
+      bool continue_with_launch = false;
+      //ksmurthy
+      {
+        AutoLock o_lock(op_lock);
+        continue_with_launch = (this->restartGen == restart);
+      }
+      if(!continue_with_launch) {
+        std::cout<<"hei ho in launch_task, " << this->get_task_name() 
+                                                      << std::endl;
         return; 
       } else {
         std::cout<<"this is the restart gen:" << this->restartGen << 
@@ -3809,7 +3821,7 @@ namespace Legion {
       }
       for (unsigned idx = 0; idx < wait_barriers.size(); idx++)
       {
-	ApEvent e = 
+        ApEvent e = 
           Runtime::get_previous_phase(wait_barriers[idx].phase_barrier);
         wait_on_events.insert(e);
       }
@@ -4075,7 +4087,8 @@ namespace Legion {
       Realm::ProfilingRequest &request = profiling_requests.add_request(
           runtime->find_utility_group(), LG_LEGION_PROFILING_ID, 
           &proxy_this, sizeof(proxy_this));
-      request.add_measurement((Realm::ProfilingMeasurementID)(Realm::PMID_OP_STATUS));
+      request.add_measurement(
+                    (Realm::ProfilingMeasurementID)(Realm::PMID_OP_STATUS));
       //int previous = 
       __sync_fetch_and_add(&outstanding_profiling_requests, 1);
       //if ((previous == 1) && !profiling_reported.exists())
@@ -4096,7 +4109,8 @@ namespace Legion {
       //not worrying about virtual mapping
       //not worrying about wait_on events 
 
-      VariantImpl *variant =runtime->find_variant_impl(task_id, selected_variant);
+      VariantImpl *variant = 
+            runtime->find_variant_impl(task_id, selected_variant);
 
       //STEP 2 equivalent setting up the task's context
       //TODO do we have to handle the above case
@@ -4111,7 +4125,8 @@ namespace Legion {
 
           //should I close the previous context and open a new one
           {
-            if ((execution_context != NULL) && execution_context->has_restrictions())
+            if ((execution_context != NULL) &&
+                            execution_context->has_restrictions())
               execution_context->release_restrictions();
             if (!is_remote())
             {
@@ -4199,11 +4214,11 @@ namespace Legion {
       setup_profiling_opstatus_monitoring_for_resilient(profiling_requests);
       ApEvent start_condition = ApEvent::NO_AP_EVENT;
 
-      assert(regions.size() == execution_context->get_physical_regions().size());
+      assert(regions.size()==execution_context->get_physical_regions().size());
 
       if (!atomic_locks.empty()) {
-        for (std::map<Reservation,bool>::const_iterator it =atomic_locks.begin(); 
-		        it != atomic_locks.end(); it++) {
+        for (std::map<Reservation,bool>::const_iterator it=atomic_locks.begin();
+            it != atomic_locks.end(); it++) {
           start_condition = Runtime::acquire_ap_reservation(
                                 it->first, it->second, start_condition);
         }
@@ -4228,7 +4243,7 @@ namespace Legion {
       assert(task_launch_event != ApEvent::NO_AP_EVENT);
       if (!atomic_locks.empty()) {
         for (std::map<Reservation,bool>::const_iterator it =atomic_locks.begin(); 
-		          it != atomic_locks.end(); it++) {
+              it != atomic_locks.end(); it++) {
           Runtime::release_reservation(it->first);
         }
       }
@@ -4258,7 +4273,7 @@ namespace Legion {
         return;
       restart_set.insert(static_cast<Operation *>(this));
       for(std::map<Operation*, GenerationID>::const_iterator 
-          it = outgoing.begin(); it != outgoing.end(); it++) {
+      it = outgoing.begin(); it != outgoing.end(); it++) {
         Operation *pnt = it->first;
         if(pnt != NULL) {
           SingleTask *spnt = dynamic_cast<SingleTask *>(pnt);
@@ -4271,17 +4286,17 @@ namespace Legion {
         AutoLock o_lock(op_lock);
         restartGen++;
         if(this->cached_start_condition_for_poisoning != ApEvent::NO_AP_EVENT) {
-			this->cached_start_condition_for_poisoning.cancel_operation(
-						tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
-        	//Runtime::poison_event(this->cached_start_condition_for_poisoning);
-		  }
+          this->cached_start_condition_for_poisoning.cancel_operation(
+                  tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
+          //Runtime::poison_event(this->cached_start_condition_for_poisoning);
+        }
         if(this->mapped_event != RtEvent::NO_RT_EVENT) { 
           if(!this->mapped_event.has_triggered())
             Runtime::trigger_event(this->mapped_event);
         }
         this->mapped_event = Runtime::create_rt_user_event();
         for(std::map<Operation*, GenerationID>::const_iterator 
-            it = outgoing.begin(); it != outgoing.end(); it++) {
+        it = outgoing.begin(); it != outgoing.end(); it++) {
           Operation *pnt = it->first;
           SingleTask *spnt = dynamic_cast<SingleTask *>(it->first);
           if(spnt != NULL) {
@@ -4289,9 +4304,9 @@ namespace Legion {
               preconds.find(pnt)->second.insert(mapped_event);
             } else {
               preconds.insert(std::map<Operation*,std::set<RtEvent> >::
-                    value_type(pnt, std::set<RtEvent>()));
+                                      value_type(pnt, std::set<RtEvent>()));
               preconds.find(pnt)->second.insert(mapped_event);
-				}
+            }
           }
         }
       }
@@ -4326,14 +4341,14 @@ namespace Legion {
       std::map<SingleTask *, RtEvent> upstream_set;
       if(!trigger_recover()){
         for(std::map<Operation*, GenerationID>::const_iterator it = 
-          incoming.begin(); it != incoming.end(); it++) {
+        incoming.begin(); it != incoming.end(); it++) {
           assert(it->first != NULL);
           SingleTask *parent = dynamic_cast<SingleTask *>(it->first);
           assert(parent != NULL);//TODO handle other types
           if(upstream_set.find(parent)==upstream_set.end()) { 
             parent->some_task_failed(gen, true);
             precondition = Runtime::merge_events(precondition, 
-                              upstream_set.find(parent)->second);
+             upstream_set.find(parent)->second);
           }
         }
       }
@@ -4344,34 +4359,29 @@ namespace Legion {
         const char *tasks_cone_of_restart = "cancelled since its a cone-task";
         AutoLock o_lock(op_lock);
         restartGen++;
-
         if(this->cached_start_condition_for_poisoning != ApEvent::NO_AP_EVENT) {
-			this->cached_start_condition_for_poisoning.cancel_operation(
-						tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
-        	//Runtime::poison_event(this->cached_start_condition_for_poisoning);
-		  }
-
+          this->cached_start_condition_for_poisoning.cancel_operation(
+                    tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
+          //Runtime::poison_event(this->cached_start_condition_for_poisoning);
+        }
         if(this->mapped_event != RtEvent::NO_RT_EVENT) { 
           if(!this->mapped_event.has_triggered())
             Runtime::trigger_event(this->mapped_event);
         }
         this->mapped_event = Runtime::create_rt_user_event(); 
         upstream_set.insert(std::map<SingleTask*,RtEvent>::value_type(
-                this, this->mapped_event));
+                           this, this->mapped_event));
         this->setup_task_for_remapping(precondition, true);
       } else {
-
         this->restart_task_resilience();
       }
-
-
 
       if(!upstream) {
         std::set<Operation *> restart_set; 
         std::map<Operation *, std::set<RtEvent> > map_preconds;
         if(outgoing.size() != 0) {
           for(std::map<Operation*, GenerationID>::const_iterator 
-              it = outgoing.begin(); it != outgoing.end(); it++) {
+            it = outgoing.begin(); it != outgoing.end(); it++) {
             Operation *pnt = it->first;
             if(pnt != NULL) {
               SingleTask *spnt = dynamic_cast<SingleTask *>(pnt);
@@ -4381,20 +4391,20 @@ namespace Legion {
                   map_preconds.find(pnt)->second.insert(mapped_event);
                 } else {
                   map_preconds.insert(std::map<Operation*,std::set<RtEvent> >::
-                        value_type(pnt, std::set<RtEvent>()));
+                                value_type(pnt, std::set<RtEvent>()));
                   map_preconds.find(pnt)->second.insert(mapped_event);
-    				 }
-				  }
+                }
+              }
             }
           }
         }
         for(std::map<Operation *, std::set<RtEvent> >::const_iterator
-          it = map_preconds.begin(); it !=map_preconds.end(); it++) {
-			    RtEvent precondition = Runtime::merge_events(it->second);
-          	 SingleTask *stsk = dynamic_cast<SingleTask *>(it->first);
-          	 assert(stsk != NULL);
-          	 stsk->setup_task_for_remapping(precondition, false);
-		    }
+              it = map_preconds.begin(); it !=map_preconds.end(); it++) {
+          RtEvent precondition = Runtime::merge_events(it->second);
+          SingleTask *stsk = dynamic_cast<SingleTask *>(it->first);
+          assert(stsk != NULL);
+          stsk->setup_task_for_remapping(precondition, false);
+        }
       }
       return ;
     }
@@ -4418,7 +4428,8 @@ namespace Legion {
       }
 
       if(is_leaf()) 
-        return recover_here;//because a leaf can always be re-executed TODO MIKE CHECK
+        return recover_here;
+      //because a leaf can always be re-executed TODO MIKE CHECK
 
       const std::vector<VersionInfo>* prefail_version_info=get_version_infos();
       for(unsigned idx = 0; idx < all_physical_instances.size(); ++idx) {
@@ -4441,8 +4452,9 @@ namespace Legion {
             } else {
               MaterializedView *mview = static_cast<MaterializedView *>(iview);
               //ideally this should be in try catch TODO
-              LegionMap<VersionID,FieldMask,PHYSICAL_VERSION_ALLOC>::track_aligned 
-					&fields_curr = mview->current_versions;
+              LegionMap<VersionID,FieldMask,
+                  PHYSICAL_VERSION_ALLOC>::track_aligned 
+                                        &fields_curr = mview->current_versions;
               //FieldVersions &fields_curr = mview->current_versions;
               //mview->get_field_versions(mview->logical_node, 
               //                              false, msk, fields_curr);
@@ -4469,12 +4481,12 @@ namespace Legion {
         } else {
           recover_here = false;
           #if 0
-            for(unsigned idy = 0; 
-            idy < all_physical_instances[idx].refs.multi->vector.size(); ++idy) {
+          for(unsigned idy = 0; 
+           idy < all_physical_instances[idx].refs.multi->vector.size(); ++idy) {
               InstanceRef *iref = 
                   all_physical_instances[idx].refs.multi->vector[idy];
               version_info->get_field_versions(iview->logical_node, 
-                                                      false, msk, needed_fields);
+                  false, msk, needed_fields);
             }
           #endif
         } 
@@ -4494,21 +4506,22 @@ namespace Legion {
 
       //ksmurthy: let us examine the response to check for TerminatedEarly via
       //OperationStatus
-      bool check_for_response = 
-        response.has_measurement<Realm::ProfilingMeasurements::OperationStatus>();
+      bool check_for_response = response.has_measurement<
+                            Realm::ProfilingMeasurements::OperationStatus>();
       if(check_for_response) {
-       Realm::ProfilingMeasurements::OperationStatus *opstatus = 
-       response.get_measurement<Realm::ProfilingMeasurements::OperationStatus>(); 
+       Realm::ProfilingMeasurements::OperationStatus *
+                  opstatus = response.get_measurement<
+                              Realm::ProfilingMeasurements::OperationStatus>(); 
        check_for_response = (opstatus!=NULL) && (opstatus->result == 
-                Realm::ProfilingMeasurements::OperationStatus::TERMINATED_EARLY);
+             Realm::ProfilingMeasurements::OperationStatus::TERMINATED_EARLY);
       }
 
       profiling_response_analyzed_for_resilience = true;
 
       if(check_for_response) {
         some_task_failed(this->gen, false);
-        int remaining = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
-        if (remaining == 0)
+        int remain = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
+        if (remain == 0)
           Runtime::trigger_event(profiling_reported);
         task_profiling_requests.clear();
         return; //EARLY BACKOUT FOR FAILED TASKS
@@ -4528,7 +4541,6 @@ namespace Legion {
             complete_operation_callable_profiling_response();
         }
 #endif
-
       }
         
       if (mapper == NULL)
@@ -4559,9 +4571,9 @@ namespace Legion {
 //      assert(profiling_reported.exists());
 //#endif
       if(outstanding_profiling_requests > 0) {
-        int remaining = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
+        int remain = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
         if(profiling_reported.exists()) {
-          if (remaining == 0)
+          if (remain == 0)
             Runtime::trigger_event(profiling_reported);
         } else {
           printf("%s tsk has no profiling_report, indicates error\n",
@@ -4703,11 +4715,11 @@ namespace Legion {
         if ((d == Domain::NO_DOMAIN) && slice.domain_is.exists())
           runtime->forest->find_launch_space_domain(slice.domain_is, d);
         bool empty = false;
-	size_t volume = d.get_volume();
-	if (volume == 0)
-	  empty = true;
-	else
-	  total_points += volume;
+  size_t volume = d.get_volume();
+  if (volume == 0)
+    empty = true;
+  else
+    total_points += volume;
         if (empty)
           REPORT_LEGION_ERROR(ERROR_INVALID_MAPPER_OUTPUT,
                         "Invalid mapper output from invocation of 'slice_task' "
@@ -7707,7 +7719,7 @@ namespace Legion {
       }
       for (unsigned idx = 0; idx < wait_barriers.size(); idx++)
       {
-	ApEvent e = 
+  ApEvent e = 
           Runtime::get_previous_phase(wait_barriers[idx].phase_barrier);
         wait_on_events.insert(e);
       }
