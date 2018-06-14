@@ -1,5 +1,5 @@
 #------------------------------------------------------------------------------#
-# Copyright 2017 Kitware, Inc.
+# Copyright 2018 Kitware, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
 
 # Realm runtime
 list(APPEND REALM_SRC
-  lowlevel_config.h
+  realm/realm_c.h
   realm/transfer/lowlevel_disk.cc
   realm/transfer/channel.h                 realm/transfer/channel.cc
   realm/transfer/channel_disk.h            realm/transfer/channel_disk.cc
@@ -43,7 +43,6 @@ list(APPEND REALM_SRC
   realm/deppart/setops.h                   realm/deppart/setops.cc
   realm/deppart/sparsity_impl.h            realm/deppart/sparsity_impl.cc
   realm/deppart/sparsity_impl.inl
-  lowlevel.h
   realm/event_impl.h        realm/event_impl.cc
   realm/event_impl.inl
   realm/faults.h            realm/faults.cc
@@ -115,10 +114,8 @@ if (Legion_USE_Python)
 endif()
 
 list(APPEND REALM_SRC
+  realm.h
   realm/activemsg.h realm/activemsg.cc
-  accessor.h
-  arrays.h
-  atomics.h
   realm/bytearray.h
   realm/bytearray.inl
   realm/circ_queue.h
@@ -148,9 +145,9 @@ list(APPEND REALM_SRC
   realm/profiling.h        realm/profiling.cc
   realm/profiling.inl
   realm/realm_config.h
-  realm/realm.h
   realm/redop.h
   realm/reservation.h
+  realm/reservation.inl
   realm/runtime.h
   realm/sampling.h
   realm/sampling.inl
@@ -163,9 +160,10 @@ list(APPEND REALM_SRC
 find_package(Threads REQUIRED)
 add_library(RealmRuntime ${REALM_SRC})
 target_compile_definitions(RealmRuntime PUBLIC REALM_USE_CMAKE)
-target_link_libraries(RealmRuntime
-  PRIVATE ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT}
-)
+if(Legion_USE_LIBDL)
+  target_link_libraries(RealmRuntime PRIVATE ${CMAKE_DL_LIBS})
+endif()
+target_link_libraries(RealmRuntime PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 if(UNIX AND NOT APPLE)
   target_link_libraries(RealmRuntime PRIVATE rt)
 endif()
@@ -197,6 +195,7 @@ endif()
 
 if(Legion_USE_Python)
   target_compile_definitions(RealmRuntime PRIVATE REALM_PYTHON_LIB="${PYTHON_LIBRARIES}")
+  target_compile_definitions(RealmRuntime PRIVATE REALM_PYTHON_VERSION_MAJOR=${PYTHON_VERSION_MAJOR})
 endif()
 
 set_target_properties(RealmRuntime PROPERTIES OUTPUT_NAME realm)
@@ -204,18 +203,14 @@ set_target_properties(RealmRuntime PROPERTIES OUTPUT_NAME realm)
 target_include_directories(RealmRuntime
   INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/legion>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/realm>
     $<INSTALL_INTERFACE:include>
-    $<INSTALL_INTERFACE:include/legion>
-    $<INSTALL_INTERFACE:include/realm>
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} legion realm
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 
   # Include paths for generated header files.
   INTERFACE
-    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/runtime/realm>
+    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/runtime>
   PRIVATE
-    ${PROJECT_BINARY_DIR}/runtime/realm
+    ${PROJECT_BINARY_DIR}/runtime
 )
 
 install(TARGETS RealmRuntime EXPORT LegionTargets
@@ -236,6 +231,9 @@ list(APPEND MAPPER_SRC
 
 # Legion runtime
 list(APPEND LEGION_SRC
+  legion.h
+  legion/accessor.h
+  legion/arrays.h
   legion/field_tree.h
   legion/garbage_collection.h             legion/garbage_collection.cc
   legion/interval_tree.h                 
@@ -246,8 +244,10 @@ list(APPEND LEGION_SRC
   legion/legion_constraint.h              legion/legion_constraint.cc
   legion/legion_context.h                 legion/legion_context.cc
   legion/legion_c_util.h                 
-  legion/legion.h                         legion/legion.cc
+  legion/legion.cc
   legion/legion.inl                      
+  legion/legion_domain.h
+  legion/legion_domain.inl
   legion/legion_instances.h               legion/legion_instances.cc
   legion/legion_mapping.h                 legion/legion_mapping.cc
   legion/legion_ops.h                     legion/legion_ops.cc
@@ -276,25 +276,20 @@ set_target_properties(LegionRuntime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(LegionRuntime PROPERTIES OUTPUT_NAME legion)
 set_target_properties(LegionRuntime PROPERTIES SOVERSION ${SOVERSION})
 target_compile_definitions(LegionRuntime PUBLIC LEGION_USE_CMAKE)
-target_compile_definitions(LegionRuntime PRIVATE ASSUME_UNALLOCABLE)
 
 target_include_directories(LegionRuntime
   INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/legion>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/realm>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mappers>
-    $<INSTALL_INTERFACE:include/legion>
-    $<INSTALL_INTERFACE:include/realm>
+    $<INSTALL_INTERFACE:include>
     $<INSTALL_INTERFACE:include/mappers>
-  PRIVATE legion realm mappers
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 
   # Include paths for generated header files.
   INTERFACE
-    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/runtime/legion>
-    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/runtime/realm>
+    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/runtime>
   PRIVATE
-    ${PROJECT_BINARY_DIR}/runtime/legion
-    ${PROJECT_BINARY_DIR}/runtime/realm
+    ${PROJECT_BINARY_DIR}/runtime
 )
 
 install(TARGETS LegionRuntime EXPORT LegionTargets

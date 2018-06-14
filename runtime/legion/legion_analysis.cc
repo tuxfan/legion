@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,17 +14,17 @@
  */
 
 #include "legion.h"
-#include "runtime.h"
-#include "legion_ops.h"
-#include "legion_tasks.h"
-#include "region_tree.h"
-#include "legion_spy.h"
-#include "legion_trace.h"
-#include "legion_profiling.h"
-#include "legion_instances.h"
-#include "legion_views.h"
-#include "legion_analysis.h"
-#include "legion_context.h"
+#include "legion/runtime.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_tasks.h"
+#include "legion/region_tree.h"
+#include "legion/legion_spy.h"
+#include "legion/legion_trace.h"
+#include "legion/legion_profiling.h"
+#include "legion/legion_instances.h"
+#include "legion/legion_views.h"
+#include "legion/legion_analysis.h"
+#include "legion/legion_context.h"
 
 namespace Legion {
   namespace Internal {
@@ -158,8 +158,8 @@ namespace Legion {
     /////////////////////////////////////////////////////////////
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
-    VersioningSet<REF_KIND,LOCAL>::VersioningSet(void)
+    template<ReferenceSource REF_KIND>
+    VersioningSet<REF_KIND>::VersioningSet(void)
       : single(true)
     //--------------------------------------------------------------------------
     {
@@ -167,8 +167,8 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
-    VersioningSet<REF_KIND,LOCAL>::VersioningSet(const VersioningSet &rhs)
+    template<ReferenceSource REF_KIND>
+    VersioningSet<REF_KIND>::VersioningSet(const VersioningSet &rhs)
       : single(true) 
     //--------------------------------------------------------------------------
     {
@@ -181,16 +181,16 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
-    VersioningSet<REF_KIND,LOCAL>::~VersioningSet(void)
+    template<ReferenceSource REF_KIND>
+    VersioningSet<REF_KIND>::~VersioningSet(void)
     //--------------------------------------------------------------------------
     {
       clear(); 
     }
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
-    VersioningSet<REF_KIND,LOCAL>& VersioningSet<REF_KIND,LOCAL>::operator=(
+    template<ReferenceSource REF_KIND>
+    VersioningSet<REF_KIND>& VersioningSet<REF_KIND>::operator=(
                                                        const VersioningSet &rhs)
     //--------------------------------------------------------------------------
     {
@@ -199,8 +199,8 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
-    const FieldMask& VersioningSet<REF_KIND,LOCAL>::operator[](
+    template<ReferenceSource REF_KIND>
+    const FieldMask& VersioningSet<REF_KIND>::operator[](
                                                       VersionState *state) const
     //--------------------------------------------------------------------------
     {
@@ -223,14 +223,15 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
-    void VersioningSet<REF_KIND,LOCAL>::insert(VersionState *state, 
+    template<ReferenceSource REF_KIND>
+    bool VersioningSet<REF_KIND>::insert(VersionState *state, 
                                const FieldMask &mask, ReferenceMutator *mutator)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
       assert(!!mask);
 #endif
+      bool result = true;
       if (single)
       {
         if (versions.single_version == NULL)
@@ -238,21 +239,12 @@ namespace Legion {
           versions.single_version = state;
           valid_fields = mask;
           if (REF_KIND != LAST_SOURCE_REF)
-          {
-#ifdef DEBUG_LEGION
-            //assert(mutator != NULL);
-#endif
-            // If we're not local and this is the owner we
-            // have to send a remote update 
-            if (!LOCAL && !state->is_owner())
-              state->send_remote_valid_update(state->owner_space, mutator,
-                                              1/*count*/, true/*add*/);
             state->add_base_valid_ref(REF_KIND, mutator);
-          }
         }
         else if (versions.single_version == state)
         {
           valid_fields |= mask;
+          result = false;
         }
         else
         {
@@ -265,15 +257,7 @@ namespace Legion {
           single = false;
           valid_fields |= mask;
           if (REF_KIND != LAST_SOURCE_REF)
-          {
-#ifdef DEBUG_LEGION
-            //assert(mutator != NULL);
-#endif
-            if (!LOCAL && !state->is_owner())
-              state->send_remote_valid_update(state->owner_space, mutator,
-                                              1/*count*/, true/*add*/);
             state->add_base_valid_ref(REF_KIND, mutator);
-          }
         }
       }
       else
@@ -287,27 +271,23 @@ namespace Legion {
         {
           (*versions.multi_versions)[state] = mask;
           if (REF_KIND != LAST_SOURCE_REF)
-          {
-#ifdef DEBUG_LEGION
-            //assert(mutator != NULL);
-#endif
-            if (!LOCAL && !state->is_owner())
-              state->send_remote_valid_update(state->owner_space, mutator,
-                                              1/*count*/, true/*add*/);
             state->add_base_valid_ref(REF_KIND, mutator);
-          }
         }
         else
+        {
           finder->second |= mask;
+          result = false;
+        }
         valid_fields |= mask;
       }
+      return result;
     }
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
-    RtEvent VersioningSet<REF_KIND,LOCAL>::insert(VersionState *state,
-                                                  const FieldMask &mask, 
-                                                  Runtime *runtime, RtEvent pre)
+    template<ReferenceSource REF_KIND>
+    RtEvent VersioningSet<REF_KIND>::insert(VersionState *state,
+                                            const FieldMask &mask, 
+                                            Runtime *runtime, RtEvent pre)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
@@ -321,11 +301,20 @@ namespace Legion {
           valid_fields = mask;
           if (REF_KIND != LAST_SOURCE_REF)
           {
-            VersioningSetRefArgs args;
-            args.state = state;
-            args.kind = REF_KIND;
-            return runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                                    NULL, pre);
+            if (pre.exists() && !pre.has_triggered())
+            {
+              VersioningSetRefArgs args;
+              args.state = state;
+              args.kind = REF_KIND;
+              return runtime->issue_runtime_meta_task(args, 
+                      LG_LATENCY_WORK_PRIORITY, pre);
+            }
+            else
+            {
+              LocalReferenceMutator mutator;
+              state->add_base_valid_ref(REF_KIND, &mutator);
+              return mutator.get_done_event();
+            }
           }
         }
         else if (versions.single_version == state)
@@ -344,11 +333,20 @@ namespace Legion {
           valid_fields |= mask;
           if (REF_KIND != LAST_SOURCE_REF)
           {
-            VersioningSetRefArgs args;
-            args.state = state;
-            args.kind = REF_KIND;
-            return runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                                    NULL, pre);
+            if (pre.exists() && !pre.has_triggered())
+            {
+              VersioningSetRefArgs args;
+              args.state = state;
+              args.kind = REF_KIND;
+              return runtime->issue_runtime_meta_task(args, 
+                      LG_LATENCY_WORK_PRIORITY, pre);
+            }
+            else
+            {
+              LocalReferenceMutator mutator;
+              state->add_base_valid_ref(REF_KIND, &mutator);
+              return mutator.get_done_event();
+            }
           }
         }
       }
@@ -364,23 +362,34 @@ namespace Legion {
           (*versions.multi_versions)[state] = mask;
           if (REF_KIND != LAST_SOURCE_REF)
           {
-            VersioningSetRefArgs args;
-            args.state = state;
-            args.kind = REF_KIND;
-            return runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                                    NULL, pre);
+            if (pre.exists() && !pre.has_triggered())
+            {
+              VersioningSetRefArgs args;
+              args.state = state;
+              args.kind = REF_KIND;
+              return runtime->issue_runtime_meta_task(args, 
+                      LG_LATENCY_WORK_PRIORITY, pre);
+            }
+            else
+            {
+              LocalReferenceMutator mutator;
+              state->add_base_valid_ref(REF_KIND, &mutator);
+              return mutator.get_done_event();
+            }
           }
         }
         else
           finder->second |= mask;
         valid_fields |= mask;
       }
+      if (pre.exists())
+        return pre;
       return RtEvent::NO_RT_EVENT;
     }
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
-    void VersioningSet<REF_KIND,LOCAL>::erase(VersionState *to_erase) 
+    template<ReferenceSource REF_KIND>
+    void VersioningSet<REF_KIND>::erase(VersionState *to_erase) 
     //--------------------------------------------------------------------------
     {
       if (single)
@@ -411,32 +420,21 @@ namespace Legion {
           single = true;
         }
       }
-      if (REF_KIND != LAST_SOURCE_REF)
-      {
-        if (!LOCAL && !to_erase->is_owner())
-          to_erase->send_remote_valid_update(to_erase->owner_space, 
-              NULL/*mutator*/, 1/*count*/, false/*add*/);
-        if (to_erase->remove_base_valid_ref(REF_KIND))
-          delete to_erase; 
-      }
+      if ((REF_KIND != LAST_SOURCE_REF) &&
+          to_erase->remove_base_valid_ref(REF_KIND))
+        delete to_erase; 
     }
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
-    void VersioningSet<REF_KIND,LOCAL>::clear(void)
+    template<ReferenceSource REF_KIND>
+    void VersioningSet<REF_KIND>::clear(void)
     //--------------------------------------------------------------------------
     {
       if (single)
       {
-        if ((REF_KIND != LAST_SOURCE_REF) && (versions.single_version != NULL))
-        {
-          if (!LOCAL && !versions.single_version->is_owner())
-            versions.single_version->send_remote_valid_update(
-                versions.single_version->owner_space, 
-                NULL/*mutator*/, 1/*count*/, false/*add*/);
-          if (versions.single_version->remove_base_valid_ref(REF_KIND))
-            delete versions.single_version;
-        }
+        if ((REF_KIND != LAST_SOURCE_REF) && (versions.single_version != NULL) 
+            && versions.single_version->remove_base_valid_ref(REF_KIND))
+          delete versions.single_version;
         versions.single_version = NULL;
       }
       else
@@ -450,9 +448,6 @@ namespace Legion {
                 versions.multi_versions->begin(); it != 
                 versions.multi_versions->end(); it++)
           {
-            if (!LOCAL && !it->first->is_owner())
-              it->first->send_remote_valid_update(it->first->owner_space,
-                  NULL/*mutator*/, 1/*count*/, false/*add*/);
             if (it->first->remove_base_valid_ref(REF_KIND))
               delete it->first;
           }
@@ -465,8 +460,8 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
-    size_t VersioningSet<REF_KIND,LOCAL>::size(void) const
+    template<ReferenceSource REF_KIND>
+    size_t VersioningSet<REF_KIND>::size(void) const
     //--------------------------------------------------------------------------
     {
       if (single)
@@ -481,9 +476,9 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
+    template<ReferenceSource REF_KIND>
     std::pair<VersionState*,FieldMask>* 
-                VersioningSet<REF_KIND,LOCAL>::next(VersionState *current) const
+                      VersioningSet<REF_KIND>::next(VersionState *current) const
     //--------------------------------------------------------------------------
     {
       if (single)
@@ -510,8 +505,8 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
-    void VersioningSet<REF_KIND,LOCAL>::move(VersioningSet &other)
+    template<ReferenceSource REF_KIND>
+    void VersioningSet<REF_KIND>::move(VersioningSet &other)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
@@ -535,9 +530,9 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
-    typename VersioningSet<REF_KIND,LOCAL>::iterator 
-                                VersioningSet<REF_KIND,LOCAL>::begin(void) const
+    template<ReferenceSource REF_KIND>
+    typename VersioningSet<REF_KIND>::iterator 
+                                      VersioningSet<REF_KIND>::begin(void) const
     //--------------------------------------------------------------------------
     {
       // Scariness!
@@ -548,7 +543,7 @@ namespace Legion {
           return end();
         return iterator(this, 
             reinterpret_cast<std::pair<VersionState*,FieldMask>*>(
-              const_cast<VersioningSet<REF_KIND,LOCAL>*>(this)), 
+              const_cast<VersioningSet<REF_KIND>*>(this)), 
                                                     true/*single*/);
       }
       else
@@ -558,11 +553,10 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL> 
-      template<ReferenceSource ARG_KIND, bool ARG_LOCAL>
-    void VersioningSet<REF_KIND,LOCAL>::reduce(const FieldMask &merge_mask, 
-                             VersioningSet<ARG_KIND,ARG_LOCAL> &new_states,
-                             ReferenceMutator *mutator)
+    template<ReferenceSource REF_KIND> template<ReferenceSource ARG_KIND>
+    void VersioningSet<REF_KIND>::reduce(const FieldMask &merge_mask, 
+                                         VersioningSet<ARG_KIND> &new_states,
+                                         ReferenceMutator *mutator)
     //--------------------------------------------------------------------------
     {
       // If you are looking for the magical reduce function that allows
@@ -573,7 +567,7 @@ namespace Legion {
       new_states.sanity_check();
 #endif
       std::vector<VersionState*> to_erase_new;
-      for (typename VersioningSet<ARG_KIND,ARG_LOCAL>::iterator nit = 
+      for (typename VersioningSet<ARG_KIND>::iterator nit = 
             new_states.begin(); nit != new_states.end(); nit++)
       {
         LegionMap<VersionState*,FieldMask>::aligned to_add; 
@@ -588,7 +582,7 @@ namespace Legion {
         if (!nit->second)
           to_erase_new.push_back(nit->first);
         // Iterate over our states and see which ones interfere
-        for (typename VersioningSet<REF_KIND,LOCAL>::iterator it = begin();
+        for (typename VersioningSet<REF_KIND>::iterator it = begin();
               it != end(); it++)
         {
           FieldMask local_overlap = it->second & overlap;
@@ -645,8 +639,8 @@ namespace Legion {
 
 #ifdef DEBUG_LEGION
     //--------------------------------------------------------------------------
-    template<ReferenceSource REF_KIND, bool LOCAL>
-    void VersioningSet<REF_KIND,LOCAL>::sanity_check(void) const
+    template<ReferenceSource REF_KIND>
+    void VersioningSet<REF_KIND>::sanity_check(void) const
     //--------------------------------------------------------------------------
     {
       // Each field should exist exactly once
@@ -978,7 +972,7 @@ namespace Legion {
 #endif
       const FieldMask &split_mask = split_masks[depth];
       const FieldVersions &local_versions = field_versions[depth];
-      if (!split_prev || !!split_mask)
+      if (!split_prev || !split_mask)
       {
         // If we don't care about the split previous mask then we can
         // just copy over what we need
@@ -1401,8 +1395,8 @@ namespace Legion {
         {
           DeferRestrictedManagerArgs args;
           args.manager = manager;
-          ready = runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                                   NULL, ready);
+          ready = runtime->issue_runtime_meta_task(args, 
+              LG_LATENCY_DEFERRED_PRIORITY, ready);
           ready_events.insert(ready);
         }
         else
@@ -1628,7 +1622,7 @@ namespace Legion {
         else if (!!remaining_fields)
           (*it)->remove_acquisition(op, node, remaining_fields);
         if (!remaining_fields)
-          return;
+          break;
       }
       if (!to_delete.empty())
       {
@@ -1875,7 +1869,7 @@ namespace Legion {
         else if (!!remaining_fields)
           (*it)->remove_restriction(op, node, remaining_fields);
         if (!remaining_fields)
-          return;
+          break;
       }
       if (!to_delete.empty())
       {
@@ -3431,7 +3425,7 @@ namespace Legion {
       assert(!!mask);
 #endif
       normal_close_mask |= mask;
-      if (projection)
+      if (projection && !disjoint_close)
         closed_projections |= mask;
       if (disjoint_close)
       {
@@ -3552,7 +3546,7 @@ namespace Legion {
                                 READ_WRITE, EXCLUSIVE, trace_info.req.parent);
       if (!!normal_close_mask)
       {
-        normal_close_op = creator->runtime->get_available_inter_close_op(false);
+        normal_close_op = creator->runtime->get_available_inter_close_op();
         normal_close_gen = normal_close_op->get_generation();
         // Compute the set of fields that we need
         root_node->column_source->get_field_set(normal_close_mask,
@@ -3590,7 +3584,7 @@ namespace Legion {
       if (!!read_only_close_mask)
       {
         read_only_close_op = 
-          creator->runtime->get_available_read_close_op(false);
+          creator->runtime->get_available_read_close_op();
         read_only_close_gen = read_only_close_op->get_generation();
         req.privilege_fields.clear();
         root_node->column_source->get_field_set(read_only_close_mask,
@@ -3605,7 +3599,7 @@ namespace Legion {
       if (!!flush_only_close_mask)
       {
         flush_only_close_op =
-          creator->runtime->get_available_inter_close_op(false);
+          creator->runtime->get_available_inter_close_op();
         flush_only_close_gen = flush_only_close_op->get_generation();
         req.privilege_fields.clear();
         // Compute the set of fields that we need
@@ -3966,7 +3960,12 @@ namespace Legion {
       // Finally record any valid above views
       for (LegionMap<LogicalView*,FieldMask>::aligned::const_iterator it = 
             valid_above.begin(); it != valid_above.end(); it++)
+      {
         composite_view->record_valid_view(it->first, it->second);
+        // We also have to record these as dirty fields to make 
+        // sure that we issue copies from them if necessary
+        composite_view->record_dirty_fields(it->second);
+      }
     }
 
     //--------------------------------------------------------------------------
@@ -4185,7 +4184,6 @@ namespace Legion {
         current_context(NULL), is_owner(false)
     //--------------------------------------------------------------------------
     {
-      manager_lock = Reservation::create_reservation();
     }
 
     //--------------------------------------------------------------------------
@@ -4201,8 +4199,6 @@ namespace Legion {
     VersionManager::~VersionManager(void)
     //--------------------------------------------------------------------------
     {
-      manager_lock.destroy_reservation();
-      manager_lock = Reservation::NO_RESERVATION;
     }
 
     //--------------------------------------------------------------------------
@@ -4222,6 +4218,7 @@ namespace Legion {
       is_owner = false;
       current_context = NULL;
       remote_valid_fields.clear();
+      pending_remote_advance_summary.clear();
       pending_remote_advances.clear();
       remote_valid.clear();
       previous_opens.clear();
@@ -4313,21 +4310,20 @@ namespace Legion {
         // See if we are the owner
         if (!is_owner)
         {
-          FieldMask request_mask = version_mask - remote_valid_fields;
-          // Handle the case where we have stale data from advances
-          if (!!pending_remote_advances)
-            request_mask |= (pending_remote_advances & version_mask);
-          if (!!request_mask)
+          const FieldMask request_mask = version_mask - remote_valid_fields;
+          // Also handle the case where we have stale data from advances
+          if (!!request_mask ||
+              !(version_mask * pending_remote_advance_summary))
           {
             // Release the lock before sending the message
-            Runtime::release_reservation(manager_lock);
-            RtEvent wait_on = send_remote_version_request(request_mask,
+            m_lock.release();
+            // Always pass in the full mask as the call will recompute
+            // the request_mask in case we lose a race
+            RtEvent wait_on = send_remote_version_request(version_mask,
                                                           ready_events);
+            wait_on.wait();
             // Only retake the reservation, when we are ready
-            RtEvent lock_reacquired = Runtime::acquire_rt_reservation(
-                            manager_lock, false/*exclusive*/, wait_on);
-            // Might as well wait since we just sent a message
-            lock_reacquired.lg_wait();
+            m_lock.reacquire();
 #ifdef DEBUG_LEGION
             // When we wake up everything should be good
             assert(!(version_mask - remote_valid_fields));
@@ -4376,21 +4372,20 @@ namespace Legion {
         // See if we are the owner
         if (!is_owner)
         {
-          FieldMask request_mask = version_mask - remote_valid_fields;
-          // Handle the case where we have stale data from advances
-          if (!!pending_remote_advances)
-            request_mask |= (pending_remote_advances & version_mask);
-          if (!!request_mask)
+          const FieldMask request_mask = version_mask - remote_valid_fields;
+          // Also handle the case where we have stale data from advances
+          if (!!request_mask ||
+              !(version_mask * pending_remote_advance_summary))
           {
             // Release the lock before sending the message
-            Runtime::release_reservation(manager_lock);
-            RtEvent wait_on = send_remote_version_request(request_mask,
+            m_lock.release();
+            // Always pass in the full mask as the call will recompute
+            // the request_mask in case we lose a race
+            RtEvent wait_on = send_remote_version_request(version_mask,
                                                           ready_events);
             // Only retake the reservation, when we are ready
-            RtEvent lock_reacquired = Runtime::acquire_rt_reservation(
-                            manager_lock, false/*exclusive*/, wait_on);
-            // Might as well wait since we just sent a message
-            lock_reacquired.lg_wait();
+            wait_on.wait();
+            m_lock.reacquire();
 #ifdef DEBUG_LEGION
             // When we wake up everything should be good
             assert(!(version_mask - remote_valid_fields));
@@ -4463,7 +4458,7 @@ namespace Legion {
             rez.serialize(wait_on);
           }
           runtime->send_version_manager_unversioned_request(owner_space, rez);
-          wait_on.lg_wait();
+          wait_on.wait();
         }
         else
         {
@@ -4507,21 +4502,20 @@ namespace Legion {
       // See if we are the owner
       if (!is_owner)
       {
-        FieldMask request_mask = version_mask - remote_valid_fields;
-        // Handle the case where we have stale data from advances
-        if (!!pending_remote_advances)
-          request_mask |= (pending_remote_advances & version_mask);
-        if (!!request_mask)
+        const FieldMask request_mask = version_mask - remote_valid_fields;
+        // Also handle the case where we have stale data from advances
+        if (!!request_mask ||
+            !(version_mask * pending_remote_advance_summary))
         {
           // Release the lock before sending the message
-          Runtime::release_reservation(manager_lock);
-          RtEvent wait_on = send_remote_version_request(request_mask,
+          m_lock.release();
+          // Always pass in the full mask as the call will recompute
+          // the request_mask in case we lose a race
+          RtEvent wait_on = send_remote_version_request(version_mask,
                                                         ready_events);
           // Retake the lock only once we're ready to
-          RtEvent lock_reacquired = Runtime::acquire_rt_reservation(
-                          manager_lock, false/*exclusive*/, wait_on);
-          // Might as well wait since we're sending a remote message
-          lock_reacquired.lg_wait();
+          wait_on.wait();
+          m_lock.reacquire();
 #ifdef DEBUG_LEGION
           // When we wake up everything should be good
           assert(!(version_mask - remote_valid_fields));
@@ -4569,21 +4563,20 @@ namespace Legion {
       // See if we are the owner
       if (!is_owner)
       {
-        FieldMask request_mask = version_mask - remote_valid_fields;
-        // Handle the case where we have stale data from advances
-        if (!!pending_remote_advances)
-          request_mask |= (pending_remote_advances & version_mask);
-        if (!!request_mask)
+        const FieldMask request_mask = version_mask - remote_valid_fields;
+        // Also handle the case where we have stale data from advances
+        if (!!request_mask ||
+            !(version_mask * pending_remote_advance_summary))
         {
           // Release the lock before sending the message
-          Runtime::release_reservation(manager_lock);
-          RtEvent wait_on = send_remote_version_request(request_mask,
+          m_lock.release();
+          // Always pass in the full mask as the call will recompute
+          // the request_mask in case we lose a race
+          RtEvent wait_on = send_remote_version_request(version_mask,
                                                         ready_events); 
           // Retake the lock only once we're ready to
-          RtEvent lock_reacquired = Runtime::acquire_rt_reservation(
-                          manager_lock, false/*exclusive*/, wait_on);
-          // Might as well wait since we're sending a remote message
-          lock_reacquired.lg_wait();
+          wait_on.wait();
+          m_lock.reacquire();
 #ifdef DEBUG_LEGION
           // When we wake up everything should be good
           assert(!(version_mask - remote_valid_fields));
@@ -4633,21 +4626,20 @@ namespace Legion {
       // See if we are the owner
       if (!is_owner)
       {
-        FieldMask request_mask = version_mask - remote_valid_fields;
-        // Handle the case where we have stale data from advances
-        if (!!pending_remote_advances)
-          request_mask |= (pending_remote_advances & version_mask);
-        if (!!request_mask)
+        const FieldMask request_mask = version_mask - remote_valid_fields;
+        // Also handle the case where we have stale data from advances
+        if (!!request_mask ||
+            !(version_mask * pending_remote_advance_summary))
         {
           // Release the lock before sending the message
-          Runtime::release_reservation(manager_lock);
-          RtEvent wait_on = send_remote_version_request(request_mask,
+          m_lock.release();
+          // Always pass in the full mask as the call will recompute
+          // the request_mask in case we lose a race
+          RtEvent wait_on = send_remote_version_request(version_mask,
                                                         ready_events); 
           // Retake the lock only once we're ready to
-          RtEvent lock_reacquired = Runtime::acquire_rt_reservation(
-                          manager_lock, false/*exclusive*/, wait_on);
-          // Might as well wait since we're sending a remote message
-          lock_reacquired.lg_wait();
+          wait_on.wait();
+          m_lock.reacquire();
 #ifdef DEBUG_LEGION
           // When we wake up everything should be good
           assert(!(version_mask - remote_valid_fields));
@@ -4864,21 +4856,20 @@ namespace Legion {
       // See if we are the owner
       if (!is_owner)
       {
-        FieldMask request_mask = version_mask - remote_valid_fields;
-        // Handle the case where we have stale data from advances
-        if (!!pending_remote_advances)
-          request_mask |= (pending_remote_advances & version_mask);
-        if (!!request_mask)
+        const FieldMask request_mask = version_mask - remote_valid_fields;
+        // Also handle the case where we have stale data from advances
+        if (!!request_mask ||
+            !(version_mask * pending_remote_advance_summary))
         {
           // Release the lock before sending the message
-          Runtime::release_reservation(manager_lock);
-          RtEvent wait_on = send_remote_version_request(request_mask,
+          m_lock.release();
+          // Always pass in the full mask as the call will recompute
+          // the request_mask in case we lose a race
+          RtEvent wait_on = send_remote_version_request(version_mask,
                                                         ready_events); 
           // Retake the lock only once we're ready to
-          RtEvent lock_reacquired = Runtime::acquire_rt_reservation(
-                          manager_lock, false/*exclusive*/, wait_on);
-          // Might as well wait since we're sending a remote message
-          lock_reacquired.lg_wait();
+          wait_on.wait();
+          m_lock.reacquire();
 #ifdef DEBUG_LEGION
           // When we wake up everything should be good
           assert(!(version_mask - remote_valid_fields));
@@ -4942,17 +4933,44 @@ namespace Legion {
       if (!is_owner)
       {
         // First send back the message to the owner to do the advance there
+        // This also guarantees that we are serialized with respect to 
+        // all previous advances since the virtual channel is in order
+        // which means we have implicit dependences on all previous 
+        // advances issued from this node
         RtEvent advanced = send_remote_advance(mask, update_parent_state,
                                                logical_context_uid,
                                                dedup_opens, open_epoch, 
                                                dedup_advances, advance_epoch,
                                                dirty_previous, proj_info);
-        applied_events.insert(advanced); 
-        // Then record that we have an advance in flight, we can do 
-        // this afterwards as we know the advance will always come before
-        // any valid requests for a given task's region requirements
-        AutoLock m_lock(manager_lock);
-        pending_remote_advances |= mask;
+        // Now retake the lock and see if we need to save this
+        // in the list of pending remote advances
+        // We can do this afterwards as we know the advance will always
+        // come before any valid requests for a given region requirement
+        {
+          AutoLock m_lock(manager_lock);
+          const FieldMask valid_overlap = mask & remote_valid_fields;
+          if (!valid_overlap)
+          {
+            // if we have no overlap then there is no need to store
+            // this i the set of pending remote_advances
+            applied_events.insert(advanced);
+            return;
+          }
+          // Otherwise save it in the pending remote advance summary
+          // and keep going so we can launch off a task to reclaim it
+          pending_remote_advances[advanced] = valid_overlap; 
+          pending_remote_advance_summary |= valid_overlap;
+        }
+        // Launch off a meta-task to reclaim the advanced field
+        PendingAdvanceArgs args;
+        args.proxy_this = this;
+        args.to_reclaim = advanced;
+        RtEvent done = 
+          runtime->issue_runtime_meta_task(args, LG_LATENCY_WORK_PRIORITY,
+                                           advanced);
+        // Add this event to the set of applied preconditions
+        // in order to avoid cleanup races
+        applied_events.insert(done);
         return;
       }
       // If we are deduplicating advances, do that now
@@ -5394,8 +5412,8 @@ namespace Legion {
                 args.target = it->first;
                 args.capture_mask = new FieldMask(overlap);
                 RtEvent done = 
-                  runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                                   NULL, precondition);
+                  runtime->issue_runtime_meta_task(args, 
+                      LG_LATENCY_WORK_PRIORITY, precondition);
                 applied_events.insert(done);
                 state_overlap -= overlap;
                 if (!state_overlap)
@@ -5434,6 +5452,29 @@ namespace Legion {
         parent_manager.update_child_versions(physical_context, color, 
                                              new_states, applied_events);
       }
+    }
+
+    //--------------------------------------------------------------------------
+    void VersionManager::reclaim_pending_advance(RtEvent done_event)
+    //--------------------------------------------------------------------------
+    {
+#ifdef DEBUG_LEGION
+      assert(!is_owner);
+#endif
+      AutoLock m_lock(manager_lock);
+      LegionMap<RtEvent,FieldMask>::aligned::iterator finder = 
+        pending_remote_advances.find(done_event);
+      // Might already have been pruned by an invalidate
+      if (finder == pending_remote_advances.end())
+        return;
+      // Otherwise remote it and rebuild the summary mask
+      pending_remote_advances.erase(finder);
+      FieldMask new_summary;
+      for (LegionMap<RtEvent,FieldMask>::aligned::const_iterator it = 
+            pending_remote_advances.begin(); it != 
+            pending_remote_advances.end(); it++)
+        new_summary |= it->second;
+      pending_remote_advance_summary = new_summary;
     }
 
     //--------------------------------------------------------------------------
@@ -5580,6 +5621,14 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    /*static*/ void VersionManager::process_pending_advance(const void *args)
+    //--------------------------------------------------------------------------
+    {
+      const PendingAdvanceArgs *pargs = (const PendingAdvanceArgs*)args;
+      pargs->proxy_this->reclaim_pending_advance(pargs->to_reclaim);
+    }
+
+    //--------------------------------------------------------------------------
     void VersionManager::update_child_versions(InnerContext *context,
                                               const LegionColor child_color,
                                               VersioningSet<> &new_states,
@@ -5601,23 +5650,21 @@ namespace Legion {
       // If we are not the owner, see if we need to issue any requests
       if (!is_owner)
       {
-        FieldMask request_mask = 
+        const FieldMask request_mask = 
           new_states.get_valid_mask() - remote_valid_fields;
-        // Handle the case where we have stale data from advances
-        if (!!pending_remote_advances)
-          request_mask |= (pending_remote_advances & 
-                            new_states.get_valid_mask());
-        if (!!request_mask)
+        // Also handle the case where we have stale data from advances
+        if (!!request_mask ||
+            !(new_states.get_valid_mask() * pending_remote_advance_summary))
         {
           // Release the lock before sending the message
-          Runtime::release_reservation(manager_lock);
+          m_lock.release();
+          // Always pass in the full mask as the call will recompute
+          // the request_mask in case we lose a race
           RtEvent wait_on = send_remote_version_request(
               new_states.get_valid_mask(), applied_events);
           // Retake the lock only once we're ready to
-          RtEvent lock_reacquired = Runtime::acquire_rt_reservation(
-                          manager_lock, false/*exclusive*/, wait_on);
-          // Might as well wait since we're sending a remote message
-          lock_reacquired.lg_wait();
+          wait_on.wait();
+          m_lock.reacquire();
 #ifdef DEBUG_LEGION
           // When we wake up everything should be good
           assert(!(new_states.get_valid_mask() - remote_valid_fields));
@@ -5661,8 +5708,27 @@ namespace Legion {
 #endif
       // This invalidates our local fields
       remote_valid_fields -= invalid_mask;
-      // We can also remove this from the remote advances
-      pending_remote_advances -= invalid_mask;
+      // Remove any pending remote advances that we have since
+      // we no longer care about them now that we are no longer valid
+      if (!(pending_remote_advance_summary * invalid_mask))
+      {
+        std::vector<RtEvent> to_delete;
+        for (LegionMap<RtEvent,FieldMask>::aligned::iterator it = 
+              pending_remote_advances.begin(); it != 
+              pending_remote_advances.end(); it++)
+        {
+          it->second -= invalid_mask;
+          if (!it->second)
+            to_delete.push_back(it->first);
+        }
+        if (!to_delete.empty())
+        {
+          for (std::vector<RtEvent>::const_iterator it = 
+                to_delete.begin(); it != to_delete.end(); it++)
+            pending_remote_advances.erase(*it);
+        }
+        pending_remote_advance_summary -= invalid_mask;
+      }
       filter_version_info(invalid_mask, current_version_infos);
       filter_version_info(invalid_mask, previous_version_infos);
 #ifdef DEBUG_LEGION
@@ -5672,13 +5738,12 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     /*static*/ void VersionManager::filter_version_info(const FieldMask &mask,
-             LegionMap<VersionID,
-                       VersioningSet<VERSION_MANAGER_REF> >::aligned &to_filter)
+                       LegionMap<VersionID,ManagerVersions>::aligned &to_filter)
     //--------------------------------------------------------------------------
     {
       std::vector<VersionID> to_delete;
-      for (LegionMap<VersionID,VersioningSet<VERSION_MANAGER_REF> >::aligned::
-            iterator vit = to_filter.begin(); vit != to_filter.end(); vit++)
+      for (LegionMap<VersionID,ManagerVersions>::aligned::iterator vit = 
+            to_filter.begin(); vit != to_filter.end(); vit++)
       {
         FieldMask overlap = vit->second.get_valid_mask() & mask;
         if (!overlap)
@@ -5688,8 +5753,8 @@ namespace Legion {
         else
         {
           std::vector<VersionState*> to_remove;
-          for (VersioningSet<VERSION_MANAGER_REF>::iterator it = 
-                vit->second.begin(); it != vit->second.end(); it++)
+          for (ManagerVersions::iterator it = vit->second.begin(); 
+                it != vit->second.end(); it++)
           {
             it->second -= overlap;
             if (!it->second)
@@ -5757,7 +5822,7 @@ namespace Legion {
     VersionState* VersionManager::create_new_version_state(VersionID vid)
     //--------------------------------------------------------------------------
     {
-      DistributedID did = runtime->get_available_distributed_id(false);
+      DistributedID did = runtime->get_available_distributed_id();
       return new VersionState(vid, runtime, did, 
           runtime->address_space, node, true/*register now*/);
     }
@@ -5969,6 +6034,23 @@ namespace Legion {
       {
         // First check to see what if any outstanding requests we have
         AutoLock m_lock(manager_lock);
+        // First recheck to see if we lost any races with responses
+        // already coming back to us since we computed our request mask
+        if (!!pending_remote_advance_summary)
+        {
+          const FieldMask overlap = 
+            request_mask & pending_remote_advance_summary;
+          // Always remove the fields that are now valid
+          request_mask -= remote_valid_fields;
+          // If we had any overlap fields we have to add them back in
+          if (!!overlap)
+            request_mask |= overlap;
+        }
+        else // No remote advances so remove any fields now valid
+          request_mask -= remote_valid_fields;
+        // If we lost races with responses then we might already be done
+        if (!request_mask)
+          return RtEvent::NO_RT_EVENT;
         for (LegionMap<RtUserEvent,FieldMask>::aligned::const_iterator it =
               outstanding_requests.begin(); it != 
               outstanding_requests.end(); it++)
@@ -6077,13 +6159,17 @@ namespace Legion {
                                        const FieldMask &request_mask)
     //--------------------------------------------------------------------------
     {
-      // Do most of this in ready only mode
+      // Do most of this in read only mode
+#ifdef DEBUG_LEGION
+      FieldMask send_mask = request_mask;
+#endif
       {
         AutoLock m_lock(manager_lock,1,false/*exclusive*/);
 #ifdef DEBUG_LEGION
         sanity_check();
-#endif
+#else
         FieldMask send_mask = request_mask;
+#endif
         // We only need to send it if we know that it is not valid anymore
         LegionMap<AddressSpaceID,FieldMask>::aligned::const_iterator
           finder = remote_valid.find(target);
@@ -6106,26 +6192,30 @@ namespace Legion {
       // Need exclusive access at the end to update the remote information
       AutoLock m_lock(manager_lock);
       remote_valid_fields |= request_mask;
+#ifdef DEBUG_LEGION
+      // Sanity check that no invalidations were sent while
+      // we weren't holding the lock
+      if (remote_valid.find(target) != remote_valid.end())
+        assert(send_mask == (request_mask - remote_valid[target]));
+#endif
       remote_valid[target] |= request_mask;
     }
 
     //--------------------------------------------------------------------------
     /*static*/ void VersionManager::find_send_infos(
-                   LegionMap<VersionID,
-                             VersioningSet<VERSION_MANAGER_REF> >::aligned& 
-            version_infos, const FieldMask &request_mask, 
-          LegionMap<VersionState*,FieldMask>::aligned& send_infos)
+                   LegionMap<VersionID,ManagerVersions>::aligned &version_infos,
+                        const FieldMask &request_mask, 
+                        LegionMap<VersionState*,FieldMask>::aligned& send_infos)
     //--------------------------------------------------------------------------
     {
-      for (LegionMap<VersionID,VersioningSet<VERSION_MANAGER_REF> >::aligned::
-            const_iterator vit = version_infos.begin(); 
-            vit != version_infos.end(); vit++)
+      for (LegionMap<VersionID,ManagerVersions>::aligned::const_iterator vit = 
+            version_infos.begin(); vit != version_infos.end(); vit++)
       {
         FieldMask overlap = vit->second.get_valid_mask() & request_mask;
         if (!overlap)
           continue;
-        for (VersioningSet<VERSION_MANAGER_REF>::iterator it = 
-              vit->second.begin(); it != vit->second.end(); it++)
+        for (ManagerVersions::iterator it = vit->second.begin(); 
+              it != vit->second.end(); it++)
         {
           FieldMask state_overlap = it->second & overlap;
           if (!state_overlap)
@@ -6146,6 +6236,14 @@ namespace Legion {
       {
         rez.serialize(it->first->did);
         rez.serialize(it->second);
+        // Always add a remote valid reference in case we get invalidated
+        // by an advance before this message is received on the remote node
+#ifdef DEBUG_LEGION
+        assert(it->first->is_owner());
+#endif
+        // This reference will be removed by the remote side after
+        // it has registered the new version state
+        it->first->add_base_valid_ref(REMOTE_DID_REF);
       }
     }
 
@@ -6165,20 +6263,22 @@ namespace Legion {
       if (!preconditions.empty())
       {
         RtEvent wait_on = Runtime::merge_events(preconditions);
-        wait_on.lg_wait();
+        wait_on.wait();
       }
+#ifdef DEBUG_LEGION
+      assert(applied_events != NULL);
+#endif
+      WrapperReferenceMutator mutator(*applied_events);
       // Take our lock and apply our updates
       {
         AutoLock m_lock(manager_lock);
 #ifdef DEBUG_LEGION
         sanity_check();
 #endif
-        merge_send_infos(current_version_infos, current_update);
-        merge_send_infos(previous_version_infos, previous_update);
+        merge_send_infos(current_version_infos, current_update, &mutator);
+        merge_send_infos(previous_version_infos, previous_update, &mutator);
         // Update the remote valid fields
         remote_valid_fields |= update_mask;
-        // Any update that we get also filters the remote_valid_fields
-        pending_remote_advances -= update_mask;
         // Remove our outstanding request
 #ifdef DEBUG_LEGION
         assert(outstanding_requests.find(done) != outstanding_requests.end());
@@ -6186,6 +6286,17 @@ namespace Legion {
 #endif
         outstanding_requests.erase(done);
       }
+      // Remove the extra valid references that we added for the movement
+      // of these version state objects, but no need to track the effects
+      // these can be fire and forget
+      for (LegionMap<VersionState*,FieldMask>::aligned::const_iterator it = 
+            current_update.begin(); it != current_update.end(); it++)
+        it->first->send_remote_valid_update(it->first->owner_space,
+                                            NULL, 1/*count*/, false/*add*/);
+      for (LegionMap<VersionState*,FieldMask>::aligned::const_iterator it = 
+            previous_update.begin(); it != previous_update.end(); it++)
+        it->first->send_remote_valid_update(it->first->owner_space,
+                                            NULL, 1/*count*/, false/*add*/);
       // Now we can trigger our done event
       Runtime::trigger_event(done);
     }
@@ -6214,14 +6325,20 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     /*static*/ void VersionManager::merge_send_infos(
-        LegionMap<VersionID,
-                  VersioningSet<VERSION_MANAGER_REF> >::aligned& target_infos,
-        const LegionMap<VersionState*,FieldMask>::aligned &source_infos)
+                LegionMap<VersionID,ManagerVersions>::aligned &target_infos,
+                const LegionMap<VersionState*,FieldMask>::aligned &source_infos,
+                      ReferenceMutator *mutator)
     //--------------------------------------------------------------------------
     {
       for (LegionMap<VersionState*,FieldMask>::aligned::const_iterator
             it = source_infos.begin(); it != source_infos.end(); it++)
-        target_infos[it->first->version_number].insert(it->first, it->second);
+      {
+#ifdef DEBUG_LEGION
+        assert(!it->first->is_owner());
+#endif
+        target_infos[it->first->version_number].insert(it->first, 
+                                            it->second, mutator);
+      }
     }
 
     //--------------------------------------------------------------------------
@@ -6307,17 +6424,20 @@ namespace Legion {
     VersionState::VersionState(VersionID vid, Runtime *rt, DistributedID id,
                                AddressSpaceID own_sp, 
                                RegionTreeNode *node, bool register_now)
-      : DistributedCollectable(rt, id, own_sp, register_now), 
-        version_number(vid), logical_node(node), 
-        state_lock(Reservation::create_reservation())
+      : DistributedCollectable(rt, 
+          LEGION_DISTRIBUTED_HELP_ENCODE(id, VERSION_STATE_DC), 
+          own_sp, register_now),
+        version_number(vid), logical_node(node)
 #ifdef DEBUG_LEGION
         , currently_active(true), currently_valid(true)
 #endif
     //--------------------------------------------------------------------------
     {
-      // If we are not the owner, add a valid reference
+      // If we're not the owner then add a remove gc ref that will
+      // be removed by the owner once no copy of this version state
+      // is valid anywhere in the system
       if (!is_owner())
-        add_base_valid_ref(REMOTE_DID_REF);
+        add_base_gc_ref(REMOTE_DID_REF);
 #ifdef LEGION_GC
       log_garbage.info("GC Version State %lld %d", 
           LEGION_DISTRIBUTED_ID_FILTER(did), local_space);
@@ -6339,18 +6459,10 @@ namespace Legion {
     VersionState::~VersionState(void)
     //--------------------------------------------------------------------------
     {
-      if (is_owner() && registered_with_runtime)
-        unregister_with_runtime(REFERENCE_VIRTUAL_CHANNEL);
-      state_lock.destroy_reservation();
-      state_lock = Reservation::NO_RESERVATION;
 #ifdef DEBUG_LEGION
       if (is_owner())
         assert(!currently_valid);
 #endif 
-#ifdef LEGION_GC
-      log_garbage.info("GC Deletion %lld %d", 
-          LEGION_DISTRIBUTED_ID_FILTER(did), local_space);
-#endif
     }
 
     //--------------------------------------------------------------------------
@@ -6734,43 +6846,32 @@ namespace Legion {
     void VersionState::notify_active(ReferenceMutator *mutator)
     //--------------------------------------------------------------------------
     {
-      // Do nothing 
+      // This is a little weird, but we track validity in active
+      // for VersionStates so that we can use the valid references
+      // to track if any copy of a VersionState is valid anywhere
+      // The owner then holds gc references to all remote version
+      // state and can remove them when no copy of the version 
+      // state is valid anywhere else
+#ifdef DEBUG_LEGION
+      // This should be monotonic on all instances of the version state
+      assert(currently_valid);
+#endif
     }
 
     //--------------------------------------------------------------------------
     void VersionState::notify_inactive(ReferenceMutator *mutator)
     //--------------------------------------------------------------------------
     {
-      // Do nothing 
-    }
-
-    //--------------------------------------------------------------------------
-    void VersionState::notify_valid(ReferenceMutator *mutator)
-    //--------------------------------------------------------------------------
-    {
-      // Views have their valid references added when they are inserted 
 #ifdef DEBUG_LEGION
-      assert(currently_valid); // should be monotonic
-#endif
-    }
-
-    //--------------------------------------------------------------------------
-    void VersionState::notify_invalid(ReferenceMutator *mutator)
-    //--------------------------------------------------------------------------
-    {
-      AutoLock s_lock(state_lock,1,false/*exclusive*/);
-#ifdef DEBUG_LEGION
-      // Should be monotonic
       assert(currently_valid);
       currently_valid = false;
 #endif
-      // When we are no longer valid, remove all valid references to version
-      // state objects on remote nodes. 
-      // No need to hold the lock since no one else should be accessing us
-      if (is_owner() && !remote_instances.empty())
+      // If we're the owner remove the gc references that are held by 
+      // each remote copy of the version state object, see the constructor
+      // of the VersionState to see where this was added
+      if (is_owner() && has_remote_instances())
       {
-        // If we're the owner, remove our valid references on remote nodes
-        UpdateReferenceFunctor<VALID_REF_KIND,false/*add*/> functor(this, NULL);
+        UpdateReferenceFunctor<GC_REF_KIND,false/*add*/> functor(this, mutator);
         map_over_remote_instances(functor);
       }
       // We can clear out our open children since we don't need them anymore
@@ -6788,6 +6889,25 @@ namespace Legion {
         if (it->first->remove_nested_valid_ref(did, mutator))
           delete it->first;
       }
+    }
+
+    //--------------------------------------------------------------------------
+    void VersionState::notify_valid(ReferenceMutator *mutator)
+    //--------------------------------------------------------------------------
+    {
+      // If we are not the owner, then we have to tell the owner we're valid
+      if (!is_owner())
+        send_remote_valid_update(owner_space, mutator, 1/*count*/, true/*add*/);
+    }
+
+    //--------------------------------------------------------------------------
+    void VersionState::notify_invalid(ReferenceMutator *mutator)
+    //--------------------------------------------------------------------------
+    {
+      // When we are no longer valid we have to send a reference back
+      // to our owner to indicate that we are no longer valid
+      if (!is_owner())
+        send_remote_valid_update(owner_space, mutator, 1/*count*/,false/*add*/);
     }
 
     //--------------------------------------------------------------------------
@@ -7247,8 +7367,8 @@ namespace Legion {
       // There is imprecision in our tracking of which nodes have valid
       // meta-data for different fields (i.e. we don't track it at all
       // currently), therefore we may get requests for updates that we
-      runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                       NULL/*op*/, precondition);
+      runtime->issue_runtime_meta_task(args, LG_LATENCY_DEFERRED_PRIORITY,
+                                       precondition);
     }
 
     //--------------------------------------------------------------------------
@@ -7257,6 +7377,9 @@ namespace Legion {
     {
 #ifdef DEBUG_LEGION
       assert(is_owner());
+      assert(currently_valid); // Must be currently valid
+      // We should have had a request for this already
+      assert(!has_remote_instance(target));
 #endif
       Serializer rez;
       {
@@ -7342,6 +7465,9 @@ namespace Legion {
     {
       DETAILED_PROFILER(logical_node->context->runtime,
                         VERSION_STATE_HANDLE_REQUEST_CALL);
+#ifdef DEBUG_LEGION
+      assert(currently_valid);
+#endif
       // If we are the not the owner, the same thing happens no matter what
       if (!is_owner())
       {
@@ -7607,16 +7733,9 @@ namespace Legion {
                   args.child_color = child;
                   // Takes ownership for deallocation
                   args.children = deferred_children;
-                  args.state_lock = state_lock;
-                  // Take the lock on behalf of the this task
-                  // Kind of scary asking for the lock we currently
-                  // hold but such is the world of deferred execution
-                  RtEvent actual_pre = 
-                    Runtime::acquire_rt_reservation(state_lock, 
-                        true/*exclusive*/, precondition);
                   // Need resource priority since we asked for the lock
                   RtEvent done = runtime->issue_runtime_meta_task(args, 
-                              LG_RESOURCE_PRIORITY, NULL, actual_pre);
+                          LG_LATENCY_WORK_PRIORITY, precondition);
                   preconditions.insert(done);
                 }
                 else // We can run it now
@@ -7677,14 +7796,9 @@ namespace Legion {
                   args.child_color = child;
                   // Takes ownership for deallocation
                   args.children = reduce_children;
-                  args.state_lock = state_lock;
-                  // Ask for the reservation on behalf of the task
-                  RtEvent actual_pre = 
-                    Runtime::acquire_rt_reservation(state_lock,
-                        true/*exclusive*/, precondition);
                   // Need resource priority since we asked for the lock
                   RtEvent done = runtime->issue_runtime_meta_task(args,
-                      LG_RESOURCE_PRIORITY, NULL, actual_pre);
+                          LG_LATENCY_WORK_PRIORITY, precondition);
                   preconditions.insert(done);
                 }
                 else // We can run it now
@@ -7733,7 +7847,7 @@ namespace Legion {
               args.context = context;
               std::pair<RtEvent,FieldMask> &entry = pending_instances[manager];
               entry.first = runtime->issue_runtime_meta_task(args,
-                                             LG_LATENCY_PRIORITY, NULL, ready);
+                                       LG_LATENCY_WORK_PRIORITY, ready);
               derez.deserialize(entry.second);
               preconditions.insert(entry.first);
             }
@@ -7878,8 +7992,8 @@ namespace Legion {
           }
           args.view = it->first;
           preconditions.insert(
-              runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                               NULL, it->second));
+              runtime->issue_runtime_meta_task(args, LG_LATENCY_WORK_PRIORITY,
+                                               it->second));
         }
       }
       if (!preconditions.empty())
@@ -7905,15 +8019,13 @@ namespace Legion {
       // Lock was acquired by the caller
       reduce_args->proxy_this->reduce_open_children(reduce_args->child_color,
           update_mask, *reduce_args->children, done_events, 
-          false/*need lock*/, false/*local update*/);
+          true/*need lock*/, false/*local update*/);
       delete reduce_args->children;
-      // Release the lock before waiting
-      Runtime::release_reservation(reduce_args->state_lock);
       // Wait for all the effects to be applied
       if (!done_events.empty())
       {
         RtEvent done = Runtime::merge_events(done_events);
-        done.lg_wait();
+        done.wait();
       }
     }
 
@@ -7925,8 +8037,8 @@ namespace Legion {
       RemoveVersionStateRefArgs args;
       args.proxy_this = this;
       args.ref_kind = ref_kind;
-      runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                       NULL, done_event);
+      runtime->issue_runtime_meta_task(args, LG_LATENCY_WORK_PRIORITY,
+                                       done_event);
     }
 
     //--------------------------------------------------------------------------
@@ -8500,7 +8612,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void InstanceRef::pack_reference(Serializer &rez, AddressSpaceID target)
+    void InstanceRef::pack_reference(Serializer &rez) const
     //--------------------------------------------------------------------------
     {
       rez.serialize(valid_fields);
@@ -8512,7 +8624,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void InstanceRef::unpack_reference(Runtime *runtime, TaskOp *task, 
+    void InstanceRef::unpack_reference(Runtime *runtime,
                                        Deserializer &derez, RtEvent &ready)
     //--------------------------------------------------------------------------
     {
@@ -8944,8 +9056,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void InstanceSet::pack_references(Serializer &rez,
-                                      AddressSpaceID target) const
+    void InstanceSet::pack_references(Serializer &rez) const
     //--------------------------------------------------------------------------
     {
       if (single)
@@ -8956,19 +9067,19 @@ namespace Legion {
           return;
         }
         rez.serialize<size_t>(1);
-        refs.single->pack_reference(rez, target);
+        refs.single->pack_reference(rez);
       }
       else
       {
         rez.serialize<size_t>(refs.multi->vector.size());
         for (unsigned idx = 0; idx < refs.multi->vector.size(); idx++)
-          refs.multi->vector[idx].pack_reference(rez, target);
+          refs.multi->vector[idx].pack_reference(rez);
       }
     }
 
     //--------------------------------------------------------------------------
-    void InstanceSet::unpack_references(Runtime *runtime, TaskOp *task,
-                           Deserializer &derez, std::set<RtEvent> &ready_events)
+    void InstanceSet::unpack_references(Runtime *runtime, Deserializer &derez, 
+                                        std::set<RtEvent> &ready_events)
     //--------------------------------------------------------------------------
     {
       size_t num_refs;
@@ -9006,7 +9117,7 @@ namespace Legion {
           refs.single->add_reference();
         }
         RtEvent ready;
-        refs.single->unpack_reference(runtime, task, derez, ready);
+        refs.single->unpack_reference(runtime, derez, ready);
         if (ready.exists())
           ready_events.insert(ready);
       }
@@ -9028,7 +9139,7 @@ namespace Legion {
         for (unsigned idx = 0; idx < num_refs; idx++)
         {
           RtEvent ready;
-          refs.multi->vector[idx].unpack_reference(runtime, task, derez, ready);
+          refs.multi->vector[idx].unpack_reference(runtime, derez, ready);
           if (ready.exists())
             ready_events.insert(ready);
         }

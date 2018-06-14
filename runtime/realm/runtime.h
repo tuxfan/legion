@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,9 @@
 #ifndef REALM_RUNTIME_H
 #define REALM_RUNTIME_H
 
-#include "processor.h"
-#include "redop.h"
-#include "custom_serdez.h"
-
-#include "lowlevel_config.h"
+#include "realm/processor.h"
+#include "realm/redop.h"
+#include "realm/custom_serdez.h"
 
 namespace Realm {
 
@@ -39,6 +37,23 @@ namespace Realm {
 
       static Runtime get_runtime(void);
 
+      // performs any network initialization and, critically, makes sure
+      //  *argc and *argv contain the application's real command line
+      //  (instead of e.g. mpi spawner information)
+      bool network_init(int *argc, char ***argv);
+
+      // configures the runtime from the provided command line - after this 
+      //  call it is possible to create user events/reservations/etc, 
+      //  perform registrations and query the machine model, but not spawn
+      //  tasks or create instances
+      bool configure_from_command_line(int argc, char **argv);
+      bool configure_from_command_line(std::vector<std::string> &cmdline,
+				       bool remove_realm_args = false);
+
+      // starts up the runtime, allowing task/instance creation
+      void start(void);
+
+      // single-call version of the above three calls
       bool init(int *argc, char ***argv);
 
       // this is now just a wrapper around Processor::register_task - consider switching to
@@ -49,14 +64,16 @@ namespace Realm {
       template <typename REDOP>
       bool register_reduction(ReductionOpID redop_id)
       {
-	return register_reduction(redop_id, ReductionOpUntyped::create_reduction_op<REDOP>());
+	const ReductionOp<REDOP> redop;
+	return register_reduction(redop_id, &redop);
       }
 
       bool register_custom_serdez(CustomSerdezID serdez_id, const CustomSerdezUntyped *serdez);
       template <typename SERDEZ>
       bool register_custom_serdez(CustomSerdezID serdez_id)
       {
-	return register_custom_serdez(serdez_id, CustomSerdezUntyped::create_custom_serdez<SERDEZ>());
+	const CustomSerdezWrapper<SERDEZ> serdez;
+	return register_custom_serdez(serdez_id, &serdez);
       }
 
       Event collective_spawn(Processor target_proc, Processor::TaskFuncID task_id, 
@@ -78,12 +95,17 @@ namespace Realm {
 
       void run(Processor::TaskFuncID task_id = 0, RunStyle style = ONE_TASK_ONLY,
 	       const void *args = 0, size_t arglen = 0, bool background = false)
-	__attribute__((deprecated("use collect_spawn calls instead")));
+	__attribute__((deprecated
+#ifndef __ICC // Apparently icc doesn't support strings for deprecated warnings
+              ("use collect_spawn calls instead")
+#endif
+              ));
 
       // requests a shutdown of the runtime
-      void shutdown(Event wait_on = Event::NO_EVENT);
+      void shutdown(Event wait_on = Event::NO_EVENT, int result_code = 0);
 
-      void wait_for_shutdown(void);
+      // returns the result_code passed to shutdown()
+      int wait_for_shutdown(void);
     };
 	
 }; // namespace Realm

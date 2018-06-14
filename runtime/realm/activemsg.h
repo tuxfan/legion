@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,10 +24,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <vector>
+#include <string>
 
 #include <sys/types.h>
 
-#include "realm_config.h"
+#include "realm/realm_config.h"
 
     enum ActiveMessageIDs {
       FIRST_AVAILABLE = 140,
@@ -40,7 +41,7 @@
       EVENT_TRIGGER_MSGID,
       EVENT_UPDATE_MSGID,
       REMOTE_MALLOC_MSGID,
-      REMOTE_MALLOC_RPLID = 150,
+      REMOTE_MALLOC_RPLID,
       CREATE_ALLOC_MSGID,
       CREATE_ALLOC_RPLID,
       CREATE_INST_MSGID,
@@ -51,7 +52,7 @@
       ROLL_UP_TIMER_MSGID,
       ROLL_UP_DATA_MSGID,
       CLEAR_TIMER_MSGID,
-      DESTROY_INST_MSGID = 160,
+      DESTROY_INST_MSGID,
       REMOTE_WRITE_MSGID,
       REMOTE_REDUCE_MSGID,
       REMOTE_SERDEZ_MSGID,
@@ -61,7 +62,7 @@
       REMOTE_REDLIST_MSGID,
       MACHINE_SHUTDOWN_MSGID,
       BARRIER_ADJUST_MSGID,
-      BARRIER_SUBSCRIBE_MSGID = 170,
+      BARRIER_SUBSCRIBE_MSGID,
       BARRIER_TRIGGER_MSGID,
       BARRIER_MIGRATE_MSGID,
       METADATA_REQUEST_MSGID,
@@ -88,6 +89,12 @@
       REMOTE_IB_ALLOC_REQUEST_MSGID,
       REMOTE_IB_ALLOC_RESPONSE_MSGID,
       REMOTE_IB_FREE_REQUEST_MSGID,
+      REMOTE_COPY_MSGID,
+      REMOTE_FILL_MSGID,
+      MEM_STORAGE_ALLOC_REQ_MSGID,
+      MEM_STORAGE_ALLOC_RESP_MSGID,
+      MEM_STORAGE_RELEASE_REQ_MSGID,
+      MEM_STORAGE_RELEASE_RESP_MSGID,
     };
 
 
@@ -182,7 +189,7 @@ extern void init_endpoints(int gasnet_mem_size_in_mb,
 			   int registered_mem_size_in_mb,
 			   int registered_ib_mem_size_in_mb,
 			   Realm::CoreReservationSet& crs,
-			   int argc, const char *argv[]);
+			   std::vector<std::string>& cmdline);
 extern void start_polling_threads(int count);
 extern void start_handler_threads(int count, Realm::CoreReservationSet& crs, size_t stacksize);
 extern void stop_activemsg_threads(void);
@@ -809,7 +816,7 @@ inline void init_endpoints(gasnet_handlerentry_t *handlers, int hcount,
 			   int registered_mem_size_in_mb,
 			   int registered_ib_mem_size_in_mb,
 			   Realm::CoreReservationSet& crs,
-                           int argc, const char *argv[])
+			   std::vector<std::string>& cmdline)
 {
   // just use malloc to obtain "gasnet" and/or "registered" memory
   fake_gasnet_mem_size = (gasnet_mem_size_in_mb + 

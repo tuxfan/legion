@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,8 @@
 
 // Layout descriptors for Realm RegionInstances
 
-#include "inst_layout.h"
-#include <realm/deppart/inst_helper.h>
+#include "realm/inst_layout.h"
+#include "realm/deppart/inst_helper.h"
 
 namespace Realm {
 

@@ -1,4 +1,4 @@
-# Copyright 2017 Stanford University
+# Copyright 2018 Stanford University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -52,9 +52,10 @@ override CC_FLAGS := $(filter-out -DBOUNDS_CHECKS, \
                      $(filter-out -DLEGION_SPY, \
                        $(CC_FLAGS))))
 
-TESTS := serializing test_profiling ctxswitch barrier_reduce taskreg memspeed idcheck
+TESTS := serializing test_profiling ctxswitch barrier_reduce taskreg memspeed idcheck inst_reuse transpose
 TESTS_SINGLENODE := proc_group
 TESTS += deppart
+TESTS += scatter
 
 ifeq ($(strip $(USE_GASNET)),1)
   ifdef NODECOUNT
@@ -76,11 +77,11 @@ endif
 TESTARGS_ctxswitch := -ll:io 1 -t 20 -i 10000
 TESTARGS_proc_group := -ll:cpu 4
 
-REALM_OBJS := $(patsubst %.cc,%.o,$(notdir $(LOW_RUNTIME_SRC))) \
+REALM_OBJS := $(patsubst %.cc,%.o,$(notdir $(REALM_SRC))) \
               $(patsubst %.S,%.o,$(notdir $(ASM_SRC)))
 EMPTY :=
 SPACE := $(EMPTY) $(EMPTY)
-RUNTIME_VPATH := $(subst $(SPACE),:,$(sort $(dir $(LOW_RUNTIME_SRC))))
+RUNTIME_VPATH := $(subst $(SPACE),:,$(sort $(dir $(REALM_SRC))))
 vpath %.cc .:$(RUNTIME_VPATH)
 vpath %.S .:$(RUNTIME_VPATH)
 #VPATH = .:$(RUNTIME_VPATH)

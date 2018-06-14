@@ -1,5 +1,5 @@
-/* Copyright 2015 Stanford University
- * Copyright 2015 Los Alamos National Laboratory
+/* Copyright 2018 Stanford University
+ * Copyright 2018 Los Alamos National Laboratory
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 #ifndef LOWLEVEL_CHANNEL_DISK
 #define LOWLEVEL_CHANNEL_DISK
 
-#include "channel.h"
+#include "realm/transfer/channel.h"
 
 namespace Realm {
 
@@ -43,6 +43,7 @@ namespace Realm {
           bool mark_started, RegionInstance inst,
 	  Memory _src_mem, Memory _dst_mem,
 	  TransferIterator *_src_iter, TransferIterator *_dst_iter,
+	  CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
           uint64_t max_req_size, long max_nr, int _priority,
           XferOrder::Type _order, XferKind _kind, XferDesFence* _complete_fence);
 
@@ -71,6 +72,7 @@ namespace Realm {
                   bool mark_started,
 		  Memory _src_mem, Memory _dst_mem,
 		  TransferIterator *_src_iter, TransferIterator *_dst_iter,
+		  CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
                   uint64_t _max_req_size, long max_nr, int _priority,
                   XferOrder::Type _order, XferKind _kind, XferDesFence* _complete_fence);
 

@@ -1,4 +1,4 @@
-/* Copyright 2015 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,14 +15,14 @@
 
 // implementation of sparsity maps
 
-#include "sparsity_impl.h"
+#include "realm/deppart/sparsity_impl.h"
 
-#include "../runtime_impl.h"
-#include "partitions.h"
-#include "deppart_config.h"
-#include "rectlist.h"
-#include "inst_helper.h"
-#include "../logging.h"
+#include "realm/runtime_impl.h"
+#include "realm/deppart/partitions.h"
+#include "realm/deppart/deppart_config.h"
+#include "realm/deppart/rectlist.h"
+#include "realm/deppart/inst_helper.h"
+#include "realm/logging.h"
 
 namespace Realm {
 
@@ -336,7 +336,7 @@ namespace Realm {
 	    this->entries.resize(n + count - 1);
 	    assert(!this->entries[n - 1].sparsity.exists());
 	    assert(this->entries[n - 1].bitmap == 0);
-	    this->entries[n - 1].bounds.hi = rects[0].lo;
+	    this->entries[n - 1].bounds.hi = rects[0].hi;
 	    for(size_t i = 1; i < count; i++) {
 	      this->entries[n - 1 + i].bounds = rects[i];
 	      this->entries[n - 1 + i].sparsity.id = 0; // no sparsity map

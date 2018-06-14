@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,15 @@
  * limitations under the License.
  */
 
-#include "mem_impl.h"
+#include "realm/mem_impl.h"
 
-#include "proc_impl.h"
-#include "logging.h"
-#include "serialize.h"
-#include "inst_impl.h"
-#include "runtime_impl.h"
-#include "profiling.h"
-#include "utils.h"
+#include "realm/proc_impl.h"
+#include "realm/logging.h"
+#include "realm/serialize.h"
+#include "realm/inst_impl.h"
+#include "realm/runtime_impl.h"
+#include "realm/profiling.h"
+#include "realm/utils.h"
 
 #ifdef USE_GASNET
 #ifndef GASNET_PAR
@@ -30,6 +30,9 @@
 #include <gasnet.h>
 // eliminate GASNet warnings for unused static functions
 static const void *ignore_gasnet_warning1 __attribute__((unused)) = (void *)_gasneti_threadkey_init;
+#ifdef _INCLUDED_GASNET_TOOLS_H
+static const void *ignore_gasnet_warning2 __attribute__((unused)) = (void *)_gasnett_trace_printf_noop;
+#endif
 #endif
 
 #define CHECK_GASNET(cmd) do { \
@@ -101,10 +104,22 @@ namespace Realm {
 
     MemoryImpl::~MemoryImpl(void)
     {
+      for(std::vector<RegionInstanceImpl *>::iterator it = local_instances.instances.begin();
+	  it != local_instances.instances.end();
+	  ++it)
+	if(*it)
+	  delete *it;
+
       for(std::map<NodeID, InstanceList *>::const_iterator it = instances_by_creator.begin();
 	  it != instances_by_creator.end();
-	  ++it)
+	  ++it) {
+	for(std::vector<RegionInstanceImpl *>::iterator it2 = it->second->instances.begin();
+	    it2 != it->second->instances.end();
+	    ++it2)
+	  if(*it2)
+	    delete *it2;
 	delete it->second;
+      }
 
 #ifdef REALM_PROFILE_MEMORY_USAGE
       printf("Memory " IDFMT " usage: peak=%zd (%.1f MB) footprint=%zd (%.1f MB)\n",
@@ -329,6 +344,13 @@ namespace Realm {
 	  const size_t chunk_size = 8;
 	  size_t old_size = local_instances.instances.size();
 	  size_t new_size = old_size + chunk_size;
+	  if(new_size > (1 << ID::INSTANCE_INDEX_WIDTH)) {
+	    new_size = (1 << ID::INSTANCE_INDEX_WIDTH);
+	    if(old_size == new_size) {
+	      // completely out of slots - nothing we can do
+	      return 0;
+	    }
+	  }
 	  local_instances.instances.resize(new_size, 0);
 	  local_instances.free_list.resize(chunk_size - 1);
 	  for(size_t i = 0; i < chunk_size - 1; i++)
@@ -362,22 +384,39 @@ namespace Realm {
       return inst_impl;
     }
 
+    // releases a deleted instance so that it can be reused
+    void MemoryImpl::release_instance(RegionInstance inst)
+    {
+      int inst_idx = ID(inst).instance.inst_idx;
+
+      log_inst.info() << "releasing local instance: " << inst;
+      {
+	AutoHSLLock al(local_instances.mutex);
+	local_instances.free_list.push_back(inst_idx);
+      }
+    }
+
     // attempt to allocate storage for the specified instance
     bool MemoryImpl::allocate_instance_storage(RegionInstance i,
 					       size_t bytes, size_t alignment,
-					       Event precondition)
+					       Event precondition, size_t offset /*=0*/)
     {
-      // TODO: remote stuff
-      assert(ID(me).memory.owner_node == my_node_id);
+      // all allocation requests are handled by the memory's owning node for
+      //  now - local caching might be possible though
+      NodeID target = ID(me).memory.owner_node;
+      if(target != my_node_id) {
+	MemStorageAllocRequest::send_request(target,
+					     me, i,
+					     bytes, alignment,
+					     precondition, offset);
+	return false /*asynchronous notification*/;
+      }
 
       if(!precondition.has_triggered()) {
 	// TODO: queue things up?
 	precondition.wait();
       }
 
-      // TODO: ideally use something like (size_t)-2 here, but that will
-      //  currently confuse the file read/write path in dma land
-      size_t offset = (size_t)0; // this will be used for zero-size allocs
       bool ok;
       {
 	AutoHSLLock al(allocator_mutex);
@@ -388,8 +427,11 @@ namespace Realm {
 	// local notification of result
 	get_instance(i)->notify_allocation(ok, offset);
       } else {
-	// TODO: remote notification
-	assert(0);
+	// remote notification
+	MemStorageAllocResponse::send_request(ID(i).instance.creator_node,
+					      i,
+					      offset,
+					      ok);
       }
 
       return true /*immediate notification*/;
@@ -399,13 +441,25 @@ namespace Realm {
     void MemoryImpl::release_instance_storage(RegionInstance i,
 					      Event precondition)
     {
-      // TODO: remote stuff
-      assert(ID(me).memory.owner_node == my_node_id);
+      // all allocation requests are handled by the memory's owning node for
+      //  now - local caching might be possible though
+      NodeID target = ID(me).memory.owner_node;
+      if(target != my_node_id) {
+	MemStorageReleaseRequest::send_request(target,
+					       me, i,
+					       precondition);
+	return;
+      }
 
       // TODO: memory needs to handle non-ready releases
       assert(precondition.has_triggered());
 
-      {
+      RegionInstanceImpl *impl = get_instance(i);
+
+      // better not be in the unallocated state...
+      assert(impl->metadata.inst_offset != size_t(-1));
+      // deallocate unless the allocation had failed
+      if(impl->metadata.inst_offset != size_t(-2)) {
 	AutoHSLLock al(allocator_mutex);
 	allocator.deallocate(i);
       }
@@ -414,8 +468,9 @@ namespace Realm {
 	// local notification of result
 	get_instance(i)->notify_deallocation();
       } else {
-	// TODO: remote notification
-	assert(0);
+	// remote notification
+	MemStorageReleaseResponse::send_request(ID(i).instance.creator_node,
+						i);
       }
     }
 
@@ -481,7 +536,7 @@ namespace Realm {
 
   void *LocalCPUMemory::get_direct_ptr(off_t offset, size_t size)
   {
-    assert((offset >= 0) && ((size_t)(offset + size) <= this->size));
+//    assert((offset >= 0) && ((size_t)(offset + size) <= this->size));
     return (base + offset);
   }
 
@@ -803,6 +858,116 @@ namespace Realm {
       DetailedTimer::pop_timer();
 #endif
     }
+
+
+  ////////////////////////////////////////////////////////////////////////
+  //
+  // class MemStorageAllocRequest
+  //
+
+  /*static*/ void MemStorageAllocRequest::handle_request(RequestArgs args)
+  {
+    MemoryImpl *impl = get_runtime()->get_memory_impl(args.memory);
+
+    impl->allocate_instance_storage(args.inst,
+				    args.bytes, args.alignment,
+				    args.precondition, args.offset);
+  }
+
+  /*static*/ void MemStorageAllocRequest::send_request(NodeID target,
+						       Memory memory, RegionInstance inst,
+						       size_t bytes, size_t alignment,
+						       Event precondition, size_t offset)
+  {
+    RequestArgs args;
+
+    args.memory = memory;
+    args.inst = inst;
+    args.bytes = bytes;
+    args.alignment = alignment;
+    args.precondition = precondition;
+    args.offset = offset;
+
+    Message::request(target, args);
+  }
+
+
+  ////////////////////////////////////////////////////////////////////////
+  //
+  // class MemStorageAllocResponse
+  //
+
+  /*static*/ void MemStorageAllocResponse::handle_request(RequestArgs args)
+  {
+    RegionInstanceImpl *impl = get_runtime()->get_instance_impl(args.inst);
+
+    impl->notify_allocation(args.success, args.offset);
+  }
+
+  /*static*/ void MemStorageAllocResponse::send_request(NodeID target,
+							RegionInstance inst,
+							size_t offset,
+							bool success)
+  {
+    RequestArgs args;
+
+    args.inst = inst;
+    args.offset = offset;
+    args.success = success;
+
+    Message::request(target, args);
+  }
+
+
+  ////////////////////////////////////////////////////////////////////////
+  //
+  // class MemStorageReleaseRequest
+  //
+
+  /*static*/ void MemStorageReleaseRequest::handle_request(RequestArgs args)
+  {
+    MemoryImpl *impl = get_runtime()->get_memory_impl(args.memory);
+
+    impl->release_instance_storage(args.inst,
+				   args.precondition);
+  }
+
+  /*static*/ void MemStorageReleaseRequest::send_request(NodeID target,
+							 Memory memory,
+							 RegionInstance inst,
+							 Event precondition)
+  {
+    RequestArgs args;
+
+    args.memory = memory;
+    args.inst = inst;
+    args.precondition = precondition;
+
+    Message::request(target, args);
+  }
+
+
+  ////////////////////////////////////////////////////////////////////////
+  //
+  // class MemStorageReleaseResponse
+  //
+
+  /*static*/ void MemStorageReleaseResponse::handle_request(RequestArgs args)
+  {
+    RegionInstanceImpl *impl = get_runtime()->get_instance_impl(args.inst);
+
+    impl->notify_deallocation();
+  }
+
+  /*static*/ void MemStorageReleaseResponse::send_request(NodeID target,
+							  RegionInstance inst)
+  {
+    RequestArgs args;
+
+    args.inst = inst;
+
+    Message::request(target, args);
+  }
 
 
   ////////////////////////////////////////////////////////////////////////
@@ -1534,25 +1699,48 @@ namespace Realm {
       char* buffer_start = (char*) malloc(max_xfer_size);
       const char *pos = (const char *)data;
       unsigned xfers = 0;
+
+      size_t element_size = 0;
       while (count > 0) {
         size_t cur_size = 0;
         size_t cur_count = 0;
         char* buffer = buffer_start;
         off_t new_offset = offset;
         while (count > 0) {
-          size_t elemnt_size = serdez_op->serialized_size(pos);
+          element_size = serdez_op->serialized_size(pos);
           // break if including this element exceeds max_xfer_size
-          if (elemnt_size + cur_size > max_xfer_size)
+          if (element_size + cur_size > max_xfer_size)
             break;
           count--;
           cur_count++;
-          serdez_op->serialize(pos, buffer); 
+          serdez_op->serialize(pos, buffer);
           pos += field_size;
           new_offset += field_size;
-          buffer += elemnt_size;
-          cur_size += elemnt_size;
+          buffer += element_size;
+          cur_size += element_size;
         }
-        assert(cur_size > 0);
+        if (cur_size == 0) {
+          if (count == 0) {
+            // No elements to serialize
+            log_copy.error() << "In performing remote serdez request "
+                             << "(serdez_id=" << serdez_id << "): "
+                             << "No elements to serialize";
+          } else if (cur_count == 0) {
+            // Individual serialized element size greater than lmb buffer
+            log_copy.error() << "In performing remote serdez request "
+                             << "(serdez_id=" << serdez_id << "): "
+                             << "Serialized size of custom serdez type (" << element_size << " bytes) "
+                             << "exceeds size of the LMB buffer (" << max_xfer_size << " bytes). Try "
+                             << "increasing the LMB buffer size using "
+                             << "-ll:lmbsize <kbytes>";
+          } else {
+            // No element wrote data
+            log_copy.error() << "In performing remote serdez request "
+                             << "(serdez_id=" << serdez_id << "): "
+                             << "No serialized element wrote data";
+          }
+          assert(cur_size > 0);
+        }
         RemoteSerdezMessage::RequestArgs args;
         args.mem = mem;
         args.offset = offset;

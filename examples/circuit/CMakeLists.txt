@@ -1,5 +1,5 @@
 #------------------------------------------------------------------------------#
-# Copyright 2017 Kitware, Inc.
+# Copyright 2018 Kitware, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,5 +37,5 @@ else()
 endif()
 target_link_libraries(circuit Legion::Legion)
 if(Legion_ENABLE_TESTING)
-  add_test(NAME circuit COMMAND $<TARGET_FILE:circuit>) 
+  add_test(NAME circuit COMMAND ${Legion_TEST_LAUNCHER} $<TARGET_FILE:circuit>)
 endif()

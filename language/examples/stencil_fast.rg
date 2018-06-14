@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ local common = require("stencil_common")
 
 local DTYPE = double
 local RADIUS = 2
-local USE_FOREIGN = true
+local USE_FOREIGN = (os.getenv('USE_FOREIGN') or '1') == '1'
 
 local c = regentlib.c
 
@@ -42,8 +42,16 @@ if USE_FOREIGN then
   end
   local cxx = os.getenv('CXX') or 'c++'
 
+  local march = os.getenv('MARCH') or 'native'
+  local march_flag = '-march=' .. march
+  if os.execute("bash -c \"[ `uname` == 'Linux' ]\"") == 0 then
+    if os.execute("grep altivec /proc/cpuinfo > /dev/null") == 0 then
+      march_flag = '-mcpu=' .. march .. ' -maltivec -mabi=altivec -mvsx'
+    end
+  end
+
   local cxx_flags = os.getenv('CC_FLAGS') or ''
-  cxx_flags = cxx_flags .. " -O3 -Wall -Werror -DDTYPE=" .. tostring(DTYPE) .. " -DRESTRICT=__restrict__ -DRADIUS=" .. tostring(RADIUS)
+  cxx_flags = cxx_flags .. " -O3 " .. march_flag .. " -Wall -Werror -DDTYPE=" .. tostring(DTYPE) .. " -DRESTRICT=__restrict__ -DRADIUS=" .. tostring(RADIUS)
   if os.execute('test "$(uname)" = Darwin') == 0 then
     cxx_flags =
       (cxx_flags ..
@@ -78,9 +86,6 @@ end
 do
   local root_dir = arg[0]:match(".*/") or "./"
   local runtime_dir = os.getenv('LG_RT_DIR') .. "/"
-  local legion_dir = runtime_dir .. "legion/"
-  local mapper_dir = runtime_dir .. "mappers/"
-  local realm_dir = runtime_dir .. "realm/"
   local mapper_cc = root_dir .. "stencil_mapper.cc"
   if os.getenv('OBJNAME') then
     local out_dir = os.getenv('OBJNAME'):match('.*/') or './'
@@ -104,16 +109,13 @@ do
   end
 
   local cmd = (cxx .. " " .. cxx_flags .. " -I " .. runtime_dir .. " " ..
-                 " -I " .. mapper_dir .. " " .. " -I " .. legion_dir .. " " ..
-                 " -I " .. realm_dir .. " " .. mapper_cc .. " -o " .. mapper_so)
+                 mapper_cc .. " -o " .. mapper_so)
   if os.execute(cmd) ~= 0 then
     print("Error: failed to compile " .. mapper_cc)
     assert(false)
   end
   terralib.linklibrary(mapper_so)
-  cmapper = terralib.includec("stencil_mapper.h", {"-I", root_dir, "-I", runtime_dir,
-                                                   "-I", mapper_dir, "-I", legion_dir,
-                                                   "-I", realm_dir})
+  cmapper = terralib.includec("stencil_mapper.h", {"-I", root_dir, "-I", runtime_dir})
 end
 
 local min = regentlib.fmin
@@ -325,33 +327,14 @@ local function make_stencil_interior(private, interior, radius)
       end
     end
   else
-    local weight
-    __demand(__inline)
-    task weight(i : int64, j : int64, radius : int64)
-      return (j + radius)*(2*radius + 1) + (i + radius)
-    end
-
     return rquote
       var rect = get_rect(private.ispace)
       var { base_input = base, stride_input = stride } = get_base_and_stride(rect, __physical(private)[0], __fields(private)[0])
       var { base_output = base, stride_output = stride } = get_base_and_stride(rect, __physical(private)[1], __fields(private)[1])
       regentlib.assert(stride_output == stride_input, "strides do not match")
 
-      var weights : double[(2*radius + 1)*(2*radius + 1)]
-      for i = -radius, radius + 1 do
-        for j = -radius, radius + 1 do
-          weights[weight(i, j, radius)] = 0
-        end
-      end
-      for i = 1, radius + 1 do
-        weights[weight( 0,  i, radius)] =  1.0/(2.0*i*radius)
-        weights[weight( i,  0, radius)] =  1.0/(2.0*i*radius)
-        weights[weight( 0, -i, radius)] = -1.0/(2.0*i*radius)
-        weights[weight(-i,  0, radius)] = -1.0/(2.0*i*radius)
-      end
-
       var interior_rect = get_rect(interior.ispace)
-      cstencil.stencil(base_input, base_output, weights,
+      cstencil.stencil(base_input, base_output,
                        stride_input / [terralib.sizeof(DTYPE)],
                        interior_rect.lo.x[0] - rect.lo.x[0], interior_rect.hi.x[0] - rect.lo.x[0] + 1,
                        interior_rect.lo.x[1] - rect.lo.x[1], interior_rect.hi.x[1] - rect.lo.x[1] + 1)
@@ -360,7 +343,8 @@ local function make_stencil_interior(private, interior, radius)
 end
 
 local function make_stencil(radius)
-  local task stencil(private : region(ispace(int2d), point),
+  local __demand(__cuda)
+        task stencil(private : region(ispace(int2d), point),
                      interior : region(ispace(int2d), point),
                      xm : region(ispace(int2d), point),
                      xp : region(ispace(int2d), point),
@@ -429,6 +413,7 @@ local function make_increment_interior(private, exterior)
   end
 end
 
+__demand(__cuda)
 task increment(private : region(ispace(int2d), point),
                exterior : region(ispace(int2d), point),
                xm : region(ispace(int2d), point),
@@ -560,20 +545,14 @@ task main()
 end
 if os.getenv('SAVEOBJ') == '1' then
   local root_dir = arg[0]:match(".*/") or "./"
-  local out_dir = os.getenv('OBJNAME'):match('.*/') or root_dir
-  local link_flags = {"-L" .. out_dir, "-lstencil", "-lstencil_mapper"}
-  if os.getenv('CRAYPE_VERSION') then
-    local new_flags = terralib.newlist({"-Wl,-Bdynamic"})
-    new_flags:insertall(link_flags)
-    for flag in os.getenv('CRAY_UGNI_POST_LINK_OPTS'):gmatch("%S+") do
-      new_flags:insert(flag)
-    end
-    new_flags:insert("-lugni")
-    for flag in os.getenv('CRAY_UDREG_POST_LINK_OPTS'):gmatch("%S+") do
-      new_flags:insert(flag)
-    end
-    new_flags:insert("-ludreg")
-    link_flags = new_flags
+  local out_dir = (os.getenv('OBJNAME') and os.getenv('OBJNAME'):match('.*/')) or root_dir
+  local link_flags = terralib.newlist({"-L" .. out_dir, "-lstencil_mapper"})
+  if USE_FOREIGN then
+    link_flags:insert("-lstencil")
+  end
+
+  if os.getenv('STANDALONE') == '1' then
+    os.execute('cp ' .. os.getenv('LG_RT_DIR') .. '/../bindings/regent/libregent.so ' .. out_dir)
   end
 
   local exe = os.getenv('OBJNAME') or "stencil"

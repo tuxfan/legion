@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,9 @@
 
 // sampling profiler implementation for Realm
 
-#include "sampling_impl.h"
-#include "cmdline.h"
-#include "timers.h"
+#include "realm/sampling_impl.h"
+#include "realm/cmdline.h"
+#include "realm/timers.h"
 
 #include <unistd.h>
 #include <errno.h>
@@ -161,8 +161,10 @@ namespace Realm {
   {
     info->gauge_id = _sampler_id;
     info->gauge_type = T::GAUGE_TYPE;
-    strncpy(info->gauge_dtype, typeid(typename T::DATA_TYPE).name(), 8);
-    strncpy(info->name, gauge->name.c_str(), 48);
+    strncpy(info->gauge_dtype, typeid(typename T::DATA_TYPE).name(), 7);
+    info->gauge_dtype[7] = 0;
+    strncpy(info->name, gauge->name.c_str(), 47);
+    info->name[47] = 0;
   }
 
   template <typename T>
@@ -374,6 +376,9 @@ namespace Realm {
   {
     if(is_default)
       DefaultSamplerHandler::get_handler().remove_default_sampler(this);
+
+    delete sampling_start;
+    delete sampling_time;
   }
 
   void SamplingProfilerImpl::flush_data(void)

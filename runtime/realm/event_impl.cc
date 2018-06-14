@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,13 +13,13 @@
  * limitations under the License.
  */
 
-#include "event_impl.h"
+#include "realm/event_impl.h"
 
-#include "proc_impl.h"
-#include "runtime_impl.h"
-#include "logging.h"
-#include "threads.h"
-#include "profiling.h"
+#include "realm/proc_impl.h"
+#include "realm/runtime_impl.h"
+#include "realm/logging.h"
+#include "realm/threads.h"
+#include "realm/profiling.h"
 
 namespace Realm {
 
@@ -178,6 +178,9 @@ namespace Realm {
 
     protected:
       const EventTriggeredCondition& cond;
+#ifdef REALM_EVENT_WAITER_BACKTRACE
+      mutable Backtrace backtrace;
+#endif
     };
 
     void add_callback(Callback& cb) const;
@@ -201,6 +204,9 @@ namespace Realm {
   EventTriggeredCondition::Callback::Callback(const EventTriggeredCondition& _cond)
     : cond(_cond)
   {
+#ifdef REALM_EVENT_WAITER_BACKTRACE
+    backtrace.capture_backtrace();
+#endif
   }
   
   EventTriggeredCondition::Callback::~Callback(void)
@@ -218,7 +224,12 @@ namespace Realm {
 
   void EventTriggeredCondition::Callback::print(std::ostream& os) const
   {
+#ifdef REALM_EVENT_WAITER_BACKTRACE
+    backtrace.lookup_symbols();
+    os << "EventTriggeredCondition (backtrace=" << backtrace << ")";
+#else
     os << "EventTriggeredCondition (thread unknown)";
+#endif
   }  
 
   Event EventTriggeredCondition::Callback::get_finish_event(void) const
@@ -319,6 +330,11 @@ namespace Realm {
   void Event::cancel_operation(const void *reason_data, size_t reason_len) const
   {
     get_runtime()->optable.request_cancellation(*this, reason_data, reason_len);
+  }
+
+  void Event::set_operation_priority(int new_priority) const
+  {
+    get_runtime()->optable.set_priority(*this, new_priority);
   }
 
 
@@ -1461,6 +1477,7 @@ namespace Realm {
     public:
       PthreadCondWaiter(GASNetCondVar &_cv)
         : cv(_cv)
+	, signalled(false)
 	, poisoned(false)
       {
       }
@@ -1475,6 +1492,7 @@ namespace Realm {
 
         // Need to hold the lock to avoid the race
         AutoHSLLock(cv.mutex);
+	signalled = true;
 	cv.signal();
         // we're allocated on caller's stack, so deleting would be bad
         return false;
@@ -1492,6 +1510,7 @@ namespace Realm {
 
     public:
       GASNetCondVar &cv;
+      bool signalled;
       bool poisoned;
     };
 
@@ -1504,7 +1523,7 @@ namespace Realm {
 	AutoHSLLock a(mutex);
 
 	// re-check condition before going to sleep
-	while(gen_needed > generation) {
+	while(!w.signalled) {
 	  // now just sleep on the condition variable - hope we wake up
 	  cv.wait();
 	}
@@ -1560,7 +1579,9 @@ namespace Realm {
 	  generation = gen_triggered;
 
 	  // we'll free the event unless it's maxed out on poisoned generations
-	  free_event = (num_poisoned_generations < POISONED_GENERATION_LIMIT);
+	  //  or generation count
+	  free_event = ((num_poisoned_generations < POISONED_GENERATION_LIMIT) &&
+			(generation < ((1U << ID::EVENT_GENERATION_WIDTH) - 1)));
 	}
 
 	// any remote nodes to notify?
@@ -1723,6 +1744,14 @@ namespace Realm {
       initial_value = 0;
       value_capacity = 0;
       final_values = 0;
+    }
+
+    BarrierImpl::~BarrierImpl(void)
+    {
+      if(initial_value)
+	free(initial_value);
+      if(final_values)
+	free(final_values);
     }
 
     void BarrierImpl::init(ID _me, unsigned _init_owner)
@@ -2074,10 +2103,11 @@ static void *bytedup(const void *data, size_t datalen)
 	  //  candidate for migration
           // don't migrate a barrier more than once though (i.e. only if it's on the creator node still)
 	  // also, do not migrate a barrier if we have any local involvement in future generations
-	  //  (either arrivals or waiters)
+	  //  (either arrivals or waiters or a subscription that will become a waiter)
 	  // finally (hah!), do not migrate barriers using reduction ops
 	  if(local_notifications.empty() && (remote_notifications.size() == 1) &&
-	     generations.empty() && (redop == 0) &&
+	     generations.empty() && (gen_subscribed <= generation) &&
+	     (redop == 0) &&
              (ID(me).barrier.creator_node == my_node_id)) {
 	    log_barrier.info() << "barrier migration: " << me << " -> " << remote_notifications[0].node;
 	    migration_target = remote_notifications[0].node;
@@ -2179,18 +2209,27 @@ static void *bytedup(const void *data, size_t datalen)
       // no need to take lock to check current generation
       if(needed_gen <= generation) return true;
 
-      // if we're not the owner, subscribe if we haven't already
-      if(owner != my_node_id) {
+      // update the subscription (even on the local node), but do a
+      //  quick test first to avoid taking a lock if the subscription is
+      //  clearly already done
+      if(gen_subscribed < needed_gen) {
+	// looks like it needs an update - take lock to avoid duplicate
+	//  subscriptions
 	gen_t previous_subscription;
-	// take lock to avoid duplicate subscriptions
+	bool send_subscription_request = false;
 	{
 	  AutoHSLLock a(mutex);
 	  previous_subscription = gen_subscribed;
-	  if(gen_subscribed < needed_gen)
+	  if(gen_subscribed < needed_gen) {
 	    gen_subscribed = needed_gen;
+	    // test ownership while holding the mutex
+	    if(owner != my_node_id)
+	      send_subscription_request = true;
+	  }
 	}
 
-	if(previous_subscription < needed_gen) {
+	// if we're not the owner, send subscription if we haven't already
+	if(send_subscription_request) {
 	  log_barrier.info() << "subscribing to barrier " << make_barrier(needed_gen) << " (prev=" << previous_subscription << ")";
 	  BarrierSubscribeMessage::send_request(owner, me.id, needed_gen, my_node_id, false/*!forwarded*/);
 	}

@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 
 #include "realm/proc_impl.h"
 
-#include "python_source.h"
+#include "realm/python/python_source.h"
 
 namespace Realm {
 
@@ -26,6 +26,9 @@ namespace Realm {
   struct PyObject;
   struct PyInterpreterState;
   struct PyThreadState {
+#if REALM_PYTHON_VERSION_MAJOR >= 3
+    struct PyThreadState *prev;
+#endif
     struct PyThreadState *next;
     struct PyInterpreterState *interp;
     // lots more stuff here
@@ -53,13 +56,14 @@ namespace Realm {
     PyObject *(*PyByteArray_FromStringAndSize)(const char *, Py_ssize_t);
 
     void (*PyEval_InitThreads)(void);
+    void (*PyEval_RestoreThread)(PyThreadState *);
+    PyThreadState *(*PyEval_SaveThread)(void);
+
     PyThreadState *(*PyThreadState_New)(PyInterpreterState *);
     void (*PyThreadState_Clear)(PyThreadState *);
     void (*PyThreadState_Delete)(PyThreadState *);
     PyThreadState *(*PyThreadState_Get)(void);
     PyThreadState *(*PyThreadState_Swap)(PyThreadState *);
-    void (*PyEval_RestoreThread)(PyThreadState *);
-    PyThreadState *(*PyEval_SaveThread)(void);
 
     void (*PyErr_PrintEx)(int set_sys_last_vars);
 
@@ -124,6 +128,9 @@ namespace Realm {
     virtual void execute_task(Processor::TaskFuncID func_id,
 			      const ByteArrayRef& task_args);
 
+    // starts worker threads and performs any per-processor initialization
+    virtual void start_threads(void);
+
     virtual void shutdown(void);
 
     virtual void add_to_group(ProcessorGroup *group);
@@ -184,11 +191,14 @@ namespace Realm {
     //   should release the GIL)
     virtual void thread_blocking(Thread *thread);
 
+    virtual void thread_ready(Thread *thread);
+
   protected:
     virtual Thread *worker_create(bool make_active);
     virtual void worker_terminate(Thread *switch_to);
 
     LocalPythonProcessor *pyproc;
+    bool interpreter_ready;
     std::list<LocalPythonProcessor::TaskRegistration *> taskreg_queue;
     std::map<Thread *, PyThreadState *> pythreads;
   };

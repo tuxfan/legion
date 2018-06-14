@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,13 +25,12 @@
  * \file legion_types.h
  */
 
-#include <cstdio>
-#include <cstdlib>
-#include <cassert>
-#include <cstring>
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <string.h>
 #include <stdint.h>
-
-#include "limits.h"
+#include <limits.h>
 
 #include <map>
 #include <set>
@@ -40,19 +39,21 @@
 #include <vector>
 #include <typeinfo>
 
-#include "legion_config.h"
-#include "legion_template_help.h"
+#include "legion/legion_config.h"
+#include "legion/legion_template_help.h"
 
 // Make sure we have the appropriate defines in place for including realm
-// SJT: too late to define this here...
-//define REALM_USE_LEGION_LAYOUT_CONSTRAINTS
 #include "realm.h"
-#include "dynamic_templates.h"
+#include "realm/dynamic_templates.h"
 
+// this may be set before including legion.h to eliminate deprecation warnings
+//  for just the Legion API
+#ifndef LEGION_DEPRECATED
 #if __cplusplus >= 201402L
 #define LEGION_DEPRECATED(x) [[deprecated(x)]]
 #else
 #define LEGION_DEPRECATED(x)
+#endif
 #endif
 
 namespace BindingLib { class Utility; } // BindingLib namespace
@@ -111,13 +112,14 @@ namespace Legion {
   struct FillLauncher;
   struct LayoutConstraintRegistrar;
   struct TaskVariantRegistrar;
-  struct TaskGeneratorArguments;
   class Future;
   class FutureMap;
   class Predicate;
   class PhysicalRegion;
   template<PrivilegeMode,typename,int,typename,typename,bool> 
     class FieldAccessor;
+  template<typename, bool, int, typename, typename, bool>
+    class ReductionAccessor;
   template<typename,int,typename,typename>
     class UnsafeFieldAccessor;
   class IndexIterator;
@@ -140,9 +142,9 @@ namespace Legion {
   struct SerdezRedopFns;
   // Some typedefs for making things nicer for users with C++11 support
 #if __cplusplus >= 201103L
-  template<typename FT, int N, typename T = ::legion_lowlevel_coord_t>
+  template<typename FT, int N, typename T = ::legion_coord_t>
   using GenericAccessor = Realm::GenericAccessor<FT,N,T>;
-  template<typename FT, int N, typename T = ::legion_lowlevel_coord_t>
+  template<typename FT, int N, typename T = ::legion_coord_t>
   using AffineAccessor = Realm::AffineAccessor<FT,N,T>;
 #endif
 
@@ -164,36 +166,11 @@ namespace Legion {
   // legion_domain.h
   class DomainPoint;
   class Domain;
-  class IndexSpaceAllocator;
+  class IndexSpaceAllocator; 
 
   // legion_utilities.h
-  struct RegionUsage;
-  class AutoLock;
-  class ImmovableAutoLock;
   class Serializer;
   class Deserializer;
-  class LgEvent; // base event type for legion
-  class ApEvent; // application event
-  class ApUserEvent; // application user event
-  class ApBarrier; // application barrier
-  class RtEvent; // runtime event
-  class RtUserEvent; // runtime user event
-  class RtBarrier;
-  template<typename T> class Fraction;
-  template<typename T, unsigned int MAX, 
-           unsigned SHIFT, unsigned MASK> class BitMask;
-  template<typename T, unsigned int MAX,
-           unsigned SHIFT, unsigned MASK> class TLBitMask;
-#ifdef __SSE2__
-  template<unsigned int MAX> class SSEBitMask;
-  template<unsigned int MAX> class SSETLBitMask;
-#endif
-#ifdef __AVX__
-  template<unsigned int MAX> class AVXBitMask;
-  template<unsigned int MAX> class AVXTLBitMask;
-#endif
-  template<typename T, unsigned LOG2MAX> class BitPermutation;
-  template<typename IT, typename DT, bool BIDIR = false> class IntegerSet;
 
   // legion_constraint.h
   class ISAConstraint;
@@ -258,15 +235,12 @@ namespace Legion {
 
     // Runtime task numbering 
     enum {
-      LG_DUMMY_BARRIER_ID     = Realm::Processor::TASK_ID_PROCESSOR_NOP,
-      INIT_TASK_ID            = Realm::Processor::TASK_ID_PROCESSOR_INIT,
-      SHUTDOWN_TASK_ID        = Realm::Processor::TASK_ID_PROCESSOR_SHUTDOWN,
+      LG_INITIALIZE_TASK_ID   = Realm::Processor::TASK_ID_PROCESSOR_INIT,
+      LG_SHUTDOWN_TASK_ID     = Realm::Processor::TASK_ID_PROCESSOR_SHUTDOWN,
       LG_TASK_ID              = Realm::Processor::TASK_ID_FIRST_AVAILABLE,
       LG_LEGION_PROFILING_ID  = Realm::Processor::TASK_ID_FIRST_AVAILABLE+1,
-      LG_LAUNCH_TOP_LEVEL_ID  = Realm::Processor::TASK_ID_FIRST_AVAILABLE+2,
-      LG_MPI_INTEROP_ID       = Realm::Processor::TASK_ID_FIRST_AVAILABLE+3,
-      LG_STARTUP_SYNC_ID      = Realm::Processor::TASK_ID_FIRST_AVAILABLE+4,
-      TASK_ID_AVAILABLE       = Realm::Processor::TASK_ID_FIRST_AVAILABLE+5,
+      LG_STARTUP_TASK_ID      = Realm::Processor::TASK_ID_FIRST_AVAILABLE+2,
+      LG_TASK_ID_AVAILABLE    = Realm::Processor::TASK_ID_FIRST_AVAILABLE+3,
     };
 
     // Realm dependent partitioning kinds
@@ -300,12 +274,14 @@ namespace Legion {
       LG_DEFERRED_EXECUTE_ID,
       LG_DEFERRED_COMPLETE_ID,
       LG_DEFERRED_COMMIT_ID,
+      LG_DEFERRED_POST_END_ID,
       LG_DEFERRED_COLLECT_ID,
       LG_PRE_PIPELINE_ID,
       LG_TRIGGER_DEPENDENCE_ID,
       LG_TRIGGER_COMPLETE_ID,
       LG_TRIGGER_OP_ID,
       LG_TRIGGER_TASK_ID,
+      LG_DEFER_MAPPER_SCHEDULER_TASK_ID,
       LG_DEFERRED_RECYCLE_ID,
       LG_MUST_INDIV_ID,
       LG_MUST_INDEX_ID,
@@ -322,16 +298,11 @@ namespace Legion {
       LG_PART_INDEPENDENCE_TASK_ID,
       LG_SPACE_INDEPENDENCE_TASK_ID,
       LG_PENDING_CHILD_TASK_ID,
-      LG_DECREMENT_PENDING_TASK_ID,
       LG_POST_DECREMENT_TASK_ID,
       LG_SEND_VERSION_STATE_UPDATE_TASK_ID,
       LG_UPDATE_VERSION_STATE_REDUCE_TASK_ID,
-      LG_ADD_TO_DEP_QUEUE_TASK_ID,
-      LG_WINDOW_WAIT_TASK_ID,
       LG_ISSUE_FRAME_TASK_ID,
-      LG_CONTINUATION_TASK_ID,
       LG_MAPPER_CONTINUATION_TASK_ID,
-      LG_FINISH_MAPPER_CONTINUATION_TASK_ID,
       LG_TASK_IMPL_SEMANTIC_INFO_REQ_TASK_ID,
       LG_INDEX_SPACE_SEMANTIC_INFO_REQ_TASK_ID,
       LG_INDEX_PART_SEMANTIC_INFO_REQ_TASK_ID,
@@ -339,6 +310,8 @@ namespace Legion {
       LG_FIELD_SEMANTIC_INFO_REQ_TASK_ID,
       LG_REGION_SEMANTIC_INFO_REQ_TASK_ID,
       LG_PARTITION_SEMANTIC_INFO_REQ_TASK_ID,
+      LG_INDEX_SPACE_DEFER_CHILD_TASK_ID,
+      LG_INDEX_PART_DEFER_CHILD_TASK_ID,
       LG_SELECT_TUNABLE_TASK_ID,
       LG_DEFERRED_ENQUEUE_OP_ID,
       LG_DEFERRED_ENQUEUE_TASK_ID,
@@ -358,30 +331,19 @@ namespace Legion {
       LG_DEFER_MAP_AND_LAUNCH_TASK_ID,
       LG_ADD_VERSIONING_SET_REF_TASK_ID,
       LG_VERSION_STATE_CAPTURE_DIRTY_TASK_ID,
+      LG_VERSION_STATE_PENDING_ADVANCE_TASK_ID,
       LG_DISJOINT_CLOSE_TASK_ID,
       LG_DEFER_MATERIALIZED_VIEW_TASK_ID,
       LG_MISSPECULATE_TASK_ID,
       LG_DEFER_PHI_VIEW_REF_TASK_ID,
       LG_DEFER_PHI_VIEW_REGISTRATION_TASK_ID,
       LG_TIGHTEN_INDEX_SPACE_TASK_ID,
-      LG_PROF_OUTPUT_TASK_ID,
+      LG_REMOTE_PHYSICAL_REQUEST_TASK_ID,
+      LG_REMOTE_PHYSICAL_RESPONSE_TASK_ID,
       LG_MESSAGE_ID, // These two must be the last two
       LG_RETRY_SHUTDOWN_TASK_ID,
       LG_LAST_TASK_ID, // This one should always be last
-    };
-
-    /**
-     * \class LgTaskArgs
-     * The base class for all Legion Task arguments
-     */
-    template<typename T>
-    struct LgTaskArgs {
-    public:
-      LgTaskArgs(void)
-        : lg_task_id(T::TASK_ID) { }
-    public:
-      const LgTaskID lg_task_id;
-    };
+    }; 
 
     // Make this a macro so we can keep it close to 
     // declaration of the task IDs themselves
@@ -397,12 +359,14 @@ namespace Legion {
         "Deferred Execute",                                       \
         "Deferred Complete",                                      \
         "Deferred Commit",                                        \
+        "Deferred Post-Task Execution",                           \
         "Garbage Collection",                                     \
         "Prepipeline Stage",                                      \
         "Logical Dependence Analysis",                            \
         "Trigger Complete",                                       \
         "Operation Physical Dependence Analysis",                 \
         "Task Physical Dependence Analysis",                      \
+        "Defer Mapper Scheduler",                                 \
         "Deferred Recycle",                                       \
         "Must Individual Task Dependence Analysis",               \
         "Must Index Task Dependence Analysis",                    \
@@ -419,16 +383,11 @@ namespace Legion {
         "Partition Independence Test",                            \
         "Index Space Independence Test",                          \
         "Remove Pending Child",                                   \
-        "Decrement Pending Task",                                 \
         "Post Decrement Task",                                    \
         "Send Version State Update",                              \
         "Update Version State Reduce",                            \
-        "Add to Dependence Queue",                                \
-        "Window Wait",                                            \
         "Issue Frame",                                            \
-        "Legion Continuation",                                    \
         "Mapper Continuation",                                    \
-        "Finish Mapper Continuation",                             \
         "Task Impl Semantic Request",                             \
         "Index Space Semantic Request",                           \
         "Index Partition Semantic Request",                       \
@@ -436,6 +395,8 @@ namespace Legion {
         "Field Semantic Request",                                 \
         "Region Semantic Request",                                \
         "Partition Semantic Request",                             \
+        "Defer Index Space Child Request",                        \
+        "Defer Index Partition Child Request",                    \
         "Select Tunable",                                         \
         "Deferred Enqueue Op",                                    \
         "Deferred Enqueue Task",                                  \
@@ -455,13 +416,15 @@ namespace Legion {
         "Defer Task Map and Launch",                              \
         "Defer Versioning Set Reference",                         \
         "Version State Capture Dirty",                            \
+        "Version State Reclaim Pending Advance",                  \
         "Disjoint Close",                                         \
         "Defer Materialized View Creation",                       \
         "Handle Mapping Misspeculation",                          \
         "Defer Phi View Reference",                               \
         "Defer Phi View Registration",                            \
         "Tighten Index Space",                                    \
-        "Legion Prof Early Output",                               \
+        "Remote Physical Context Request",                        \
+        "Remote Physical Context Response",                       \
         "Remote Message",                                         \
         "Retry Shutdown",                                         \
       };
@@ -568,27 +531,45 @@ namespace Legion {
       "handle_task_result",                         \
     }
 
-    // Methodology for assigning priorities to meta-tasks
-    // The lowest priority is for the heavy lifting meta
-    // tasks, so they go through the queue at low priority.
-    // The deferred-throughput priority is for tasks that
-    // have already gone through the queue once with 
-    // throughput priority, but had to be deferred for
-    // some reason and therefore shouldn't get stuck at
-    // the back of the throughput queue again. Latency 
-    // priority is for very small tasks which take a 
-    // minimal amount of time to perform and therefore 
-    // shouldn't get stuck behind the heavy meta-tasks. 
-    // Resource priority means that this task holds a 
-    // Realm resource (e.g. reservation) and therefore 
-    // shouldn't be stuck behind anything.
+    // Methodology for assigning priorities to meta-tasks:
+    // Minimum and low priority are for things like profiling
+    // that we don't want to interfere with normal execution.
+    // Resource priority is reserved for tasks that have been 
+    // granted resources like reservations. Running priority
+    // is the highest and guarantees that we drain out any 
+    // previously running tasks over starting new ones. The rest
+    // of the priorities are classified as either 'throughput'
+    // or 'latency' sensitive. Under each of these two major
+    // categories there are four sub-priorities:
+    //  - work: general work to be done
+    //  - deferred: work that was already scheduled but 
+    //              for which a continuation had to be 
+    //              made so we don't want to wait behind
+    //              work that hasn't started yet
+    //  - messsage: a message from a remote node that we
+    //              should handle sooner than our own
+    //              work since work on the other node is
+    //              blocked waiting on our response
+    //  - response: a response message from a remote node
+    //              that we should handle to unblock work
+    //              on our own node
     enum LgPriority {
+      LG_MIN_PRIORITY = INT_MIN,
       LG_LOW_PRIORITY = -1,
-      LG_THROUGHPUT_PRIORITY = 0,
-      LG_DEFERRED_THROUGHPUT_PRIORITY = 1,
-      LG_LATENCY_PRIORITY = 2,
-      LG_RESPONSE_PRIORITY = 3,
-      LG_RESOURCE_PRIORITY = 4,
+      // Throughput priorities
+      LG_THROUGHPUT_WORK_PRIORITY = 0,
+      LG_THROUGHPUT_DEFERRED_PRIORITY = 1,
+      LG_THROUGHPUT_MESSAGE_PRIORITY = 2,
+      LG_THROUGHPUT_RESPONSE_PRIORITY = 3,
+      // Latency priorities
+      LG_LATENCY_WORK_PRIORITY = 4,
+      LG_LATENCY_DEFERRED_PRIORITY = 5,
+      LG_LATENCY_MESSAGE_PRIORITY = 6,
+      LG_LATENCY_RESPONSE_PRIORITY = 7,
+      // Resource priorities
+      LG_RESOURCE_PRIORITY = 8,
+      // Running priorities
+      LG_RUNNING_PRIORITY = 9,
     };
 
     enum VirtualChannelKind {
@@ -659,6 +640,8 @@ namespace Legion {
       DISTRIBUTED_VALID_UPDATE,
       DISTRIBUTED_GC_UPDATE,
       DISTRIBUTED_RESOURCE_UPDATE,
+      DISTRIBUTED_INVALIDATE,
+      DISTRIBUTED_DEACTIVATE,
       DISTRIBUTED_CREATE_ADD,
       DISTRIBUTED_CREATE_REMOVE,
       DISTRIBUTED_UNREGISTER,
@@ -723,6 +706,7 @@ namespace Legion {
       SEND_VERSION_MANAGER_UNVERSIONED_RESPONSE,
       SEND_INSTANCE_REQUEST,
       SEND_INSTANCE_RESPONSE,
+      SEND_EXTERNAL_DETACH,
       SEND_GC_PRIORITY_UPDATE,
       SEND_NEVER_GC_RESPONSE,
       SEND_ACQUIRE_REQUEST,
@@ -733,10 +717,15 @@ namespace Legion {
       SEND_CONSTRAINT_REQUEST,
       SEND_CONSTRAINT_RESPONSE,
       SEND_CONSTRAINT_RELEASE,
-      SEND_CONSTRAINT_REMOVAL,
       SEND_TOP_LEVEL_TASK_REQUEST,
       SEND_TOP_LEVEL_TASK_COMPLETE,
       SEND_MPI_RANK_EXCHANGE,
+      SEND_LIBRARY_MAPPER_REQUEST,
+      SEND_LIBRARY_MAPPER_RESPONSE,
+      SEND_LIBRARY_PROJECTION_REQUEST,
+      SEND_LIBRARY_PROJECTION_RESPONSE,
+      SEND_LIBRARY_TASK_REQUEST,
+      SEND_LIBRARY_TASK_RESPONSE,
       SEND_SHUTDOWN_NOTIFICATION,
       SEND_SHUTDOWN_RESPONSE,
       LAST_SEND_KIND, // This one must be last
@@ -790,6 +779,8 @@ namespace Legion {
         "Distributed Valid Update",                                   \
         "Distributed GC Update",                                      \
         "Distributed Resource Update",                                \
+        "Distributed Invalidate",                                     \
+        "Distributed Deactivate",                                     \
         "Distributed Create Add",                                     \
         "Distributed Create Remove",                                  \
         "Distributed Unregister",                                     \
@@ -854,6 +845,7 @@ namespace Legion {
         "Send Version Manager Unversioned Response",                  \
         "Send Instance Request",                                      \
         "Send Instance Response",                                     \
+        "Send External Detach",                                       \
         "Send GC Priority Update",                                    \
         "Send Never GC Response",                                     \
         "Send Acquire Request",                                       \
@@ -864,10 +856,15 @@ namespace Legion {
         "Send Constraint Request",                                    \
         "Send Constraint Response",                                   \
         "Send Constraint Release",                                    \
-        "Send Constraint Removal",                                    \
         "Top Level Task Request",                                     \
         "Top Level Task Complete",                                    \
         "Send MPI Rank Exchange",                                     \
+        "Send Library Mapper Request",                                \
+        "Send Library Mapper Response",                               \
+        "Send Library Projection Request",                            \
+        "Send Library Projection Response",                           \
+        "Send Library Task Request",                                  \
+        "Send Library Task Response",                                 \
         "Send Shutdown Notification",                                 \
         "Send Shutdown Response",                                     \
       };
@@ -981,8 +978,8 @@ namespace Legion {
       REGION_TREE_PHYSICAL_REDUCE_ACROSS_CALL,
       REGION_TREE_PHYSICAL_CONVERT_MAPPING_CALL,
       REGION_TREE_PHYSICAL_FILL_FIELDS_CALL,
-      REGION_TREE_PHYSICAL_ATTACH_FILE_CALL,
-      REGION_TREE_PHYSICAL_DETACH_FILE_CALL,
+      REGION_TREE_PHYSICAL_ATTACH_EXTERNAL_CALL,
+      REGION_TREE_PHYSICAL_DETACH_EXTERNAL_CALL,
       REGION_NODE_REGISTER_LOGICAL_USER_CALL,
       REGION_NODE_CLOSE_LOGICAL_NODE_CALL,
       REGION_NODE_SIPHON_LOGICAL_CHILDREN_CALL,
@@ -1139,8 +1136,8 @@ namespace Legion {
       "Region Tree Physical Reduce Across",                           \
       "Region Tree Physical Convert Mapping",                         \
       "Region Tree Physical Fill Fields",                             \
-      "Region Tree Physical Attach File",                             \
-      "Region Tree Physical Detach File",                             \
+      "Region Tree Physical Attach External",                         \
+      "Region Tree Physical Detach External",                         \
       "Region Node Register Logical User",                            \
       "Region Node Close Logical Node",                               \
       "Region Node Siphon Logical Children",                          \
@@ -1196,6 +1193,39 @@ namespace Legion {
       TASK_SEMANTIC,
     };
 
+    // legion_types.h
+    class LocalLock;
+    class AutoLock;
+    class LgEvent; // base event type for legion
+    class ApEvent; // application event
+    class ApUserEvent; // application user event
+    class ApBarrier; // application barrier
+    class RtEvent; // runtime event
+    class RtUserEvent; // runtime user event
+    class RtBarrier;
+
+    // legion_utilities.h
+    struct RegionUsage; 
+    template<typename T> class Fraction;
+    template<typename T, unsigned int MAX, 
+             unsigned SHIFT, unsigned MASK> class BitMask;
+    template<typename T, unsigned int MAX,
+             unsigned SHIFT, unsigned MASK> class TLBitMask;
+#ifdef __SSE2__
+    template<unsigned int MAX> class SSEBitMask;
+    template<unsigned int MAX> class SSETLBitMask;
+#endif
+#ifdef __AVX__
+    template<unsigned int MAX> class AVXBitMask;
+    template<unsigned int MAX> class AVXTLBitMask;
+#endif
+#ifdef __ALTIVEC__
+    template<unsigned int MAX> class PPCBitMask;
+    template<unsigned int MAX> class PPCTLBitMask;
+#endif
+    template<typename T, unsigned LOG2MAX> class BitPermutation;
+    template<typename IT, typename DT, bool BIDIR = false> class IntegerSet;
+
     // Forward declarations for runtime level objects
     // runtime.h
     class Collectable;
@@ -1215,7 +1245,6 @@ namespace Legion {
     class TaskImpl;
     class VariantImpl;
     class LayoutConstraints;
-    class GeneratorImpl;
     class ProjectionFunction;
     class Runtime;
     // A small interface class for handling profiling responses
@@ -1295,9 +1324,11 @@ namespace Legion {
     class ContextInterface {
     public:
       virtual Task* get_task(void) = 0;
-      virtual const std::vector<PhysicalRegion>& begin_task(void) = 0;
+      virtual const std::vector<PhysicalRegion>& begin_task(
+                                      Legion::Runtime *&rt) = 0;
       virtual void end_task(const void *result, 
-                            size_t result_size, bool owned) = 0;
+                            size_t result_size, bool owned, 
+          Realm::RegionInstance inst = Realm::RegionInstance::NO_INST) = 0;
       // This is safe because we see in legion_context.h that
       // TaskContext implements this interface and no one else
       // does. If only C++ implemented forward declarations of
@@ -1306,11 +1337,35 @@ namespace Legion {
       inline TaskContext* as_context(void) 
         { return reinterpret_cast<TaskContext*>(this); }
     };
+
     // Nasty global variable for TLS support of figuring out
-    // our context implicitly, this is experimental only
-#ifdef ENABLE_LEGION_TLS
+    // our context implicitly
     extern __thread TaskContext *implicit_context;
-#endif
+    // Same thing for the runtime
+    extern __thread Runtime *implicit_runtime;
+    // Another nasty global variable for tracking the fast
+    // reservations that we are holding
+    extern __thread AutoLock *local_lock_list;
+    // One more nasty global variable that we use for tracking
+    // the provenance of meta-task operations for profiling
+    // purposes, this has no bearing on correctness
+    extern __thread ::legion_unique_id_t task_profiling_provenance;
+
+    /**
+     * \class LgTaskArgs
+     * The base class for all Legion Task arguments
+     */
+    template<typename T>
+    struct LgTaskArgs {
+    public:
+      LgTaskArgs(void)
+        : lg_task_id(T::TASK_ID), provenance(task_profiling_provenance) { }
+      LgTaskArgs(::legion_unique_id_t uid)
+        : lg_task_id(T::TASK_ID), provenance(uid) { }
+    public:
+      const LgTaskID lg_task_id;
+      const ::legion_unique_id_t provenance;
+    };
     
     // legion_trace.h
     class LegionTrace;
@@ -1524,7 +1579,7 @@ namespace Legion {
   typedef Realm::Machine::MemoryMemoryAffinity MemoryMemoryAffinity;
   typedef Realm::DynamicTemplates::TagType TypeTag;
   typedef Realm::Logger Logger;
-  typedef ::legion_lowlevel_coord_t coord_t;
+  typedef ::legion_coord_t coord_t;
   typedef std::map<CustomSerdezID, 
                    const Realm::CustomSerdezUntyped *> SerdezOpTable;
   typedef std::map<Realm::ReductionOpID, 
@@ -1552,10 +1607,9 @@ namespace Legion {
   typedef ::legion_projection_id_t ProjectionID;
   typedef ::legion_region_tree_id_t RegionTreeID;
   typedef ::legion_distributed_id_t DistributedID;
-  typedef ::legion_address_space_id_t AddressSpaceID;
+  typedef ::legion_address_space_t AddressSpaceID;
   typedef ::legion_tunable_id_t TunableID;
   typedef ::legion_local_variable_id_t LocalVariableID;
-  typedef ::legion_generator_id_t GeneratorID;
   typedef ::legion_mapping_tag_id_t MappingTagID;
   typedef ::legion_semantic_tag_t SemanticTag;
   typedef ::legion_variant_id_t VariantID;
@@ -1580,9 +1634,6 @@ namespace Legion {
   // (don't forget to update ones in old HighLevel namespace in legion.inl)
   typedef Internal::TaskContext* Context;
   typedef Internal::ContextInterface* InternalContext;
-  typedef Internal::GeneratorImpl* GeneratorContext;
-  typedef void (*GeneratorFnptr)(GeneratorContext,
-                                 const TaskGeneratorArguments&, Runtime*);
   // Anothing magical typedef
   namespace Mapping {
     typedef Internal::MappingCallInfo* MapperContext;
@@ -1594,7 +1645,6 @@ namespace Legion {
     const LegionColor INVALID_COLOR = LLONG_MAX;
     // This is only needed internally
     typedef Realm::RegionInstance PhysicalInstance;
-    typedef Realm::CopySrcDstField CopySrcDstField;
     // Helper for encoding templates
     struct NT_TemplateHelper : 
       public Realm::DynamicTemplates::ListProduct2<Realm::DIMCOUNTS, 
@@ -1661,6 +1711,16 @@ namespace Legion {
                     LEGION_FIELD_MASK_FIELD_SHIFT,
                     LEGION_FIELD_MASK_FIELD_MASK> FieldMask;
 #endif
+#elif defined(__ALTIVEC__)
+#if (MAX_FIELDS > 128)
+    typedef PPCTLBitMask<MAX_FIELDS> FieldMask;
+#elif (MAX_FIELDS > 64)
+    typedef PPCBitMask<MAX_FIELDS> FieldMask;
+#else
+    typedef BitMask<LEGION_FIELD_MASK_FIELD_TYPE,MAX_FIELDS,
+                    LEGION_FIELD_MASK_FIELD_SHIFT,
+                    LEGION_FIELD_MASK_FIELD_MASK> FieldMask;
+#endif
 #else
 #if (MAX_FIELDS > 64)
     typedef TLBitMask<LEGION_FIELD_MASK_FIELD_TYPE,MAX_FIELDS,
@@ -1703,6 +1763,16 @@ namespace Legion {
     typedef SSETLBitMask<MAX_NUM_NODES> NodeMask;
 #elif (MAX_NUM_NODES > 64)
     typedef SSEBitMask<MAX_NUM_NODES> NodeMask;
+#else
+    typedef BitMask<LEGION_NODE_MASK_NODE_TYPE,MAX_NUM_NODES,
+                    LEGION_NODE_MASK_NODE_SHIFT,
+                    LEGION_NODE_MASK_NODE_MASK> NodeMask;
+#endif
+#elif defined(__ALTIVEC__)
+#if (MAX_NUM_NODES > 128)
+    typedef PPCTLBitMask<MAX_NUM_NODES> NodeMask;
+#elif (MAX_NUM_NODES > 64)
+    typedef PPCBitMask<MAX_NUM_NODES> NodeMask;
 #else
     typedef BitMask<LEGION_NODE_MASK_NODE_TYPE,MAX_NUM_NODES,
                     LEGION_NODE_MASK_NODE_SHIFT,
@@ -1754,6 +1824,16 @@ namespace Legion {
                     LEGION_PROC_MASK_PROC_SHIFT,
                     LEGION_PROC_MASK_PROC_MASK> ProcessorMask;
 #endif
+#elif defined(__ALTIVEC__)
+#if (MAX_NUM_PROCS > 128)
+    typedef PPCTLBitMask<MAX_NUM_PROCS> ProcessorMask;
+#elif (MAX_NUM_PROCS > 64)
+    typedef PPCBitMask<MAX_NUM_PROCS> ProcessorMask;
+#else
+    typedef BitMask<LEGION_PROC_MASK_PROC_TYPE,MAX_NUM_PROCS,
+                    LEGION_PROC_MASK_PROC_SHIFT,
+                    LEGION_PROC_MASK_PROC_MASK> ProcessorMask;
+#endif
 #else
 #if (MAX_NUM_PROCS > 64)
     typedef TLBitMask<LEGION_PROC_MASK_PROC_TYPE,MAX_NUM_PROCS,
@@ -1767,144 +1847,347 @@ namespace Legion {
 #endif
 
 #undef PROC_SHIFT
-#undef PROC_MASK
-  }; // namespace Internal 
+#undef PROC_MASK 
 
-  // Legion derived event types
-  class LgEvent : public Realm::Event {
-  public:
-    static const LgEvent NO_LG_EVENT;
-  public:
-    LgEvent(void) { id = 0; }
-    LgEvent(const LgEvent &rhs) { id = rhs.id; }
-    explicit LgEvent(const Realm::Event e) { id = e.id; }
-  public:
-    inline LgEvent& operator=(const LgEvent &rhs)
-      { id = rhs.id; return *this; }
-  public:
-    inline void lg_wait(void) const
+    // Legion derived event types
+    class LgEvent : public Realm::Event {
+    public:
+      static const LgEvent NO_LG_EVENT;
+    public:
+      LgEvent(void) { id = 0; }
+      LgEvent(const LgEvent &rhs) { id = rhs.id; }
+      explicit LgEvent(const Realm::Event e) { id = e.id; }
+    public:
+      inline LgEvent& operator=(const LgEvent &rhs)
+        { id = rhs.id; return *this; }
+    public:
+      // Override the wait method so we can have our own implementation
+      inline void wait(void) const;
+    };
+
+    class PredEvent : public LgEvent {
+    public:
+      static const PredEvent NO_PRED_EVENT;
+    public:
+      PredEvent(void) : LgEvent() { } 
+      PredEvent(const PredEvent &rhs) { id = rhs.id; }
+      explicit PredEvent(const Realm::UserEvent &e) : LgEvent(e) { }
+    public:
+      inline PredEvent& operator=(const PredEvent &rhs)
+        { id = rhs.id; return *this; }
+      inline operator Realm::UserEvent() const
+        { Realm::UserEvent e; e.id = id; return e; }
+    };
+
+    class ApEvent : public LgEvent {
+    public:
+      static const ApEvent NO_AP_EVENT;
+    public:
+      ApEvent(void) : LgEvent() { }
+      ApEvent(const ApEvent &rhs) { id = rhs.id; }
+      explicit ApEvent(const Realm::Event &e) : LgEvent(e) { }
+      explicit ApEvent(const PredEvent &e) { id = e.id; }
+    public:
+      inline ApEvent& operator=(const ApEvent &rhs)
+        { id = rhs.id; return *this; }
+      inline bool has_triggered_faultignorant(void) const
+        { bool poisoned; return has_triggered_faultaware(poisoned); }
+    };
+
+    class ApUserEvent : public ApEvent {
+    public:
+      static const ApUserEvent NO_AP_USER_EVENT;
+    public:
+      ApUserEvent(void) : ApEvent() { }
+      ApUserEvent(const ApUserEvent &rhs) : ApEvent(rhs) { }
+      explicit ApUserEvent(const Realm::UserEvent &e) : ApEvent(e) { }
+    public:
+      inline ApUserEvent& operator=(const ApUserEvent &rhs)
+        { id = rhs.id; return *this; }
+      inline operator Realm::UserEvent() const
+        { Realm::UserEvent e; e.id = id; return e; }
+    };
+
+    class ApBarrier : public ApEvent {
+    public:
+      static const ApBarrier NO_AP_BARRIER;
+    public:
+      ApBarrier(void) : ApEvent(), timestamp(0) { }
+      ApBarrier(const ApBarrier &rhs) 
+        : ApEvent(rhs), timestamp(rhs.timestamp) { }
+      explicit ApBarrier(const Realm::Barrier &b) 
+        : ApEvent(b), timestamp(b.timestamp) { }
+    public:
+      inline ApBarrier& operator=(const ApBarrier &rhs)
+        { id = rhs.id; timestamp = rhs.timestamp; return *this; }
+      inline operator Realm::Barrier() const
+        { Realm::Barrier b; b.id = id; 
+          b.timestamp = timestamp; return b; }
+    public:
+      Realm::Barrier::timestamp_t timestamp;
+    };
+
+    class RtEvent : public LgEvent {
+    public:
+      static const RtEvent NO_RT_EVENT;
+    public:
+      RtEvent(void) : LgEvent() { }
+      RtEvent(const RtEvent &rhs) { id = rhs.id; }
+      explicit RtEvent(const Realm::Event &e) : LgEvent(e) { }
+      explicit RtEvent(const PredEvent &e) { id = e.id; }
+    public:
+      inline RtEvent& operator=(const RtEvent &rhs)
+        { id = rhs.id; return *this; }
+    };
+
+    class RtUserEvent : public RtEvent {
+    public:
+      static const RtUserEvent NO_RT_USER_EVENT;
+    public:
+      RtUserEvent(void) : RtEvent() { }
+      RtUserEvent(const RtUserEvent &rhs) : RtEvent(rhs) { }
+      explicit RtUserEvent(const Realm::UserEvent &e) : RtEvent(e) { }
+    public:
+      inline RtUserEvent& operator=(const RtUserEvent &rhs)
+        { id = rhs.id; return *this; }
+      inline operator Realm::UserEvent() const
+        { Realm::UserEvent e; e.id = id; return e; }
+    };
+
+    class RtBarrier : public RtEvent {
+    public:
+      static const RtBarrier NO_RT_BARRIER;
+    public:
+      RtBarrier(void) : RtEvent(), timestamp(0) { }
+      RtBarrier(const RtBarrier &rhs)
+        : RtEvent(rhs), timestamp(rhs.timestamp) { }
+      explicit RtBarrier(const Realm::Barrier &b)
+        : RtEvent(b), timestamp(b.timestamp) { }
+    public:
+      inline RtBarrier& operator=(const RtBarrier &rhs)
+        { id = rhs.id; timestamp = rhs.timestamp; return *this; }
+      inline operator Realm::Barrier() const
+        { Realm::Barrier b; b.id = id; 
+          b.timestamp = timestamp; return b; } 
+    public:
+      Realm::Barrier::timestamp_t timestamp;
+    }; 
+
+    // Local lock for accelerating lock taking
+    class LocalLock {
+    public:
+      inline LocalLock(void) { } 
+    public:
+      inline LocalLock(const LocalLock &rhs)
       {
-#ifdef ENABLE_LEGION_TLS
-        // Save the context locally
-        Internal::TaskContext *local_ctx = Internal::implicit_context; 
-        // Do the wait
-        wait();
-        // Write the context back
-        Internal::implicit_context = local_ctx;
-#else
-        // Just do the normal wait call
-        wait(); 
-#endif
+        // should never be called
+        assert(false);
       }
-  };
+      inline ~LocalLock(void) { }
+    public:
+      inline LocalLock& operator=(const LocalLock &rhs)
+      {
+        // should never be called
+        assert(false);
+        return *this;
+      }
+    private:
+      // These are only accessible via AutoLock
+      friend class AutoLock;
+      inline RtEvent lock(void)   { return RtEvent(wrlock()); }
+      inline RtEvent wrlock(void) { return RtEvent(reservation.wrlock()); }
+      inline RtEvent rdlock(void) { return RtEvent(reservation.rdlock()); }
+      inline void unlock(void) { reservation.unlock(); }
+    private:
+      inline void advise_sleep_entry(Realm::UserEvent guard)
+        { reservation.advise_sleep_entry(guard); }
+      inline void advise_sleep_exit(void)
+        { reservation.advise_sleep_exit(); }
+    protected:
+      Realm::FastReservation reservation;
+    };
 
-  class PredEvent : public LgEvent {
-  public:
-    static const PredEvent NO_PRED_EVENT;
-  public:
-    PredEvent(void) : LgEvent() { } 
-    PredEvent(const PredEvent &rhs) { id = rhs.id; }
-    explicit PredEvent(const Realm::UserEvent &e) : LgEvent(e) { }
-  public:
-    inline PredEvent& operator=(const PredEvent &rhs)
-      { id = rhs.id; return *this; }
-    inline operator Realm::UserEvent() const
-      { Realm::UserEvent e; e.id = id; return e; }
-  };
+    /////////////////////////////////////////////////////////////
+    // AutoLock 
+    /////////////////////////////////////////////////////////////
+    // An auto locking class for taking a lock and releasing it when
+    // the object goes out of scope
+    class AutoLock { 
+    public:
+      inline AutoLock(LocalLock &r, int mode = 0, bool excl = true)
+        : local_lock(r), previous(Internal::local_lock_list), 
+          exclusive(excl), held(true)
+      {
+#ifdef DEBUG_REENTRANT_LOCKS
+        if (previous != NULL)
+          previous->check_for_reentrant_locks(&local_lock);
+#endif
+        if (exclusive)
+        {
+          RtEvent ready = local_lock.wrlock();
+          while (ready.exists())
+          {
+            ready.wait();
+            ready = local_lock.wrlock();
+          }
+        }
+        else
+        {
+          RtEvent ready = local_lock.rdlock();
+          while (ready.exists())
+          {
+            ready.wait();
+            ready = local_lock.rdlock();
+          }
+        }
+        Internal::local_lock_list = this;
+      }
+    public:
+      inline AutoLock(const AutoLock &rhs)
+        : local_lock(rhs.local_lock), previous(NULL), exclusive(false)
+      {
+        // should never be called
+        assert(false);
+      }
+      inline ~AutoLock(void)
+      {
+#ifdef DEBUG_LEGION
+        assert(held);
+        assert(Internal::local_lock_list == this);
+#endif
+        local_lock.unlock();
+        Internal::local_lock_list = previous;
+      }
+    public:
+      inline AutoLock& operator=(const AutoLock &rhs)
+      {
+        // should never be called
+        assert(false);
+        return *this;
+      }
+    public:
+      inline void release(void) 
+      { 
+#ifdef DEBUG_LEGION
+        assert(held);
+        assert(Internal::local_lock_list == this);
+#endif
+        local_lock.unlock(); 
+        Internal::local_lock_list = previous;
+        held = false; 
+      }
+      inline void reacquire(void)
+      {
+#ifdef DEBUG_LEGION
+        assert(!held);
+        assert(Internal::local_lock_list == previous);
+#endif
+#ifdef DEBUG_REENTRANT_LOCKS
+        if (previous != NULL)
+          previous->check_for_reentrant_locks(&local_lock);
+#endif
+        if (exclusive)
+        {
+          RtEvent ready = local_lock.wrlock();
+          while (ready.exists())
+          {
+            ready.wait();
+            ready = local_lock.wrlock();
+          }
+        }
+        else
+        {
+          RtEvent ready = local_lock.rdlock();
+          while (ready.exists())
+          {
+            ready.wait();
+            ready = local_lock.rdlock();
+          }
+        }
+        Internal::local_lock_list = this;
+        held = true;
+      }
+    public:
+      inline void advise_sleep_entry(Realm::UserEvent guard) const
+      {
+        if (held)
+          local_lock.advise_sleep_entry(guard);
+        if (previous != NULL)
+          previous->advise_sleep_entry(guard);
+      }
+      inline void advise_sleep_exit(void) const
+      {
+        if (held)
+          local_lock.advise_sleep_exit();
+        if (previous != NULL)
+          previous->advise_sleep_exit();
+      }
+#ifdef DEBUG_REENTRANT_LOCKS
+      inline void check_for_reentrant_locks(LocalLock *to_acquire) const
+      {
+        assert(to_acquire != &local_lock);
+        if (previous != NULL)
+          previous->check_for_reentrant_locks(to_acquire);
+      }
+#endif
+    private:
+      LocalLock &local_lock;
+      AutoLock *const previous;
+      const bool exclusive;
+      bool held;
+    };
+    
+    // Special method that we need here for waiting on events
 
-  class ApEvent : public LgEvent {
-  public:
-    static const ApEvent NO_AP_EVENT;
-  public:
-    ApEvent(void) : LgEvent() { }
-    ApEvent(const ApEvent &rhs) { id = rhs.id; }
-    explicit ApEvent(const Realm::Event &e) : LgEvent(e) { }
-    explicit ApEvent(const PredEvent &e) { id = e.id; }
-  public:
-    inline ApEvent& operator=(const ApEvent &rhs)
-      { id = rhs.id; return *this; }
-    inline bool has_triggered_faultignorant(void) const
-      { bool poisoned; return has_triggered_faultaware(poisoned); }
-  };
+    //--------------------------------------------------------------------------
+    inline void LgEvent::wait(void) const
+    //--------------------------------------------------------------------------
+    {
+      // Save the context locally
+      Internal::TaskContext *local_ctx = Internal::implicit_context; 
+      // Save the task provenance information
+      UniqueID local_provenance = Internal::task_profiling_provenance;
+      // Check to see if we have any local locks to notify
+      if (Internal::local_lock_list != NULL)
+      {
+        // Make a copy of the local locks here
+        AutoLock *local_lock_list_copy = Internal::local_lock_list;
+        // Set this back to NULL until we are done waiting
+        Internal::local_lock_list = NULL;
+        // Make a user event and notify all the thread locks
+        const Realm::UserEvent done = Realm::UserEvent::create_user_event();
+        local_lock_list_copy->advise_sleep_entry(done);
+        // Now we can do the wait
+        Realm::Event::wait();
+        // When we wake up, notify that we are done and exited the wait
+        local_lock_list_copy->advise_sleep_exit();
+        // Trigger the user-event
+        done.trigger();
+        // Restore our local lock list
+#ifdef DEBUG_LEGION
+        assert(Internal::local_lock_list == NULL); 
+#endif
+        Internal::local_lock_list = local_lock_list_copy; 
+      }
+      else // Just do the normal wait
+        Realm::Event::wait();
+      // Write the context back
+      Internal::implicit_context = local_ctx;
+      // Write the provenance information back
+      Internal::task_profiling_provenance = local_provenance;
+    }
 
-  class ApUserEvent : public ApEvent {
-  public:
-    static const ApUserEvent NO_AP_USER_EVENT;
-  public:
-    ApUserEvent(void) : ApEvent() { }
-    ApUserEvent(const ApUserEvent &rhs) : ApEvent(rhs) { }
-    explicit ApUserEvent(const Realm::UserEvent &e) : ApEvent(e) { }
-  public:
-    inline ApUserEvent& operator=(const ApUserEvent &rhs)
-      { id = rhs.id; return *this; }
-    inline operator Realm::UserEvent() const
-      { Realm::UserEvent e; e.id = id; return e; }
-  };
+#ifdef LEGION_SPY
+    // Need a custom version of these for Legion Spy to track instance events
+    struct CopySrcDstField : public Realm::CopySrcDstField {
+    public:
+      ApEvent inst_event;
+    };
+#else
+    typedef Realm::CopySrcDstField CopySrcDstField;
+#endif
 
-  class ApBarrier : public ApEvent {
-  public:
-    static const ApBarrier NO_AP_BARRIER;
-  public:
-    ApBarrier(void) : ApEvent(), timestamp(0) { }
-    ApBarrier(const ApBarrier &rhs) 
-      : ApEvent(rhs), timestamp(rhs.timestamp) { }
-    explicit ApBarrier(const Realm::Barrier &b) 
-      : ApEvent(b), timestamp(b.timestamp) { }
-  public:
-    inline ApBarrier& operator=(const ApBarrier &rhs)
-      { id = rhs.id; timestamp = rhs.timestamp; return *this; }
-    inline operator Realm::Barrier() const
-      { Realm::Barrier b; b.id = id; 
-        b.timestamp = timestamp; return b; }
-  public:
-    Realm::Barrier::timestamp_t timestamp;
-  };
-
-  class RtEvent : public LgEvent {
-  public:
-    static const RtEvent NO_RT_EVENT;
-  public:
-    RtEvent(void) : LgEvent() { }
-    RtEvent(const RtEvent &rhs) { id = rhs.id; }
-    explicit RtEvent(const Realm::Event &e) : LgEvent(e) { }
-    explicit RtEvent(const PredEvent &e) { id = e.id; }
-  public:
-    inline RtEvent& operator=(const RtEvent &rhs)
-      { id = rhs.id; return *this; }
-  };
-
-  class RtUserEvent : public RtEvent {
-  public:
-    static const RtUserEvent NO_RT_USER_EVENT;
-  public:
-    RtUserEvent(void) : RtEvent() { }
-    RtUserEvent(const RtUserEvent &rhs) : RtEvent(rhs) { }
-    explicit RtUserEvent(const Realm::UserEvent &e) : RtEvent(e) { }
-  public:
-    inline RtUserEvent& operator=(const RtUserEvent &rhs)
-      { id = rhs.id; return *this; }
-    inline operator Realm::UserEvent() const
-      { Realm::UserEvent e; e.id = id; return e; }
-  };
-
-  class RtBarrier : public RtEvent {
-  public:
-    static const RtBarrier NO_RT_BARRIER;
-  public:
-    RtBarrier(void) : RtEvent(), timestamp(0) { }
-    RtBarrier(const RtBarrier &rhs)
-      : RtEvent(rhs), timestamp(rhs.timestamp) { }
-    explicit RtBarrier(const Realm::Barrier &b)
-      : RtEvent(b), timestamp(b.timestamp) { }
-  public:
-    inline RtBarrier& operator=(const RtBarrier &rhs)
-      { id = rhs.id; timestamp = rhs.timestamp; return *this; }
-    inline operator Realm::Barrier() const
-      { Realm::Barrier b; b.id = id; 
-        b.timestamp = timestamp; return b; } 
-  public:
-    Realm::Barrier::timestamp_t timestamp;
-  }; 
+  }; // namespace Internal 
   
   // A class for preventing serialization of Legion objects
   // which cannot be serialized
@@ -1920,7 +2203,7 @@ namespace Legion {
 
 // now that we have things like LgEvent defined, we can include accessor.h to
 // pick up ptr_t, which is used for compatibility-mode Coloring and friends
-#include "accessor.h"
+#include "legion/accessor.h"
 
 namespace Legion {
   typedef LegionRuntime::Accessor::ByteOffset ByteOffset;

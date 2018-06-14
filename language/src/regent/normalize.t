@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University, NVIDIA Corporation
+-- Copyright 2018 Stanford University, NVIDIA Corporation
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -509,7 +509,7 @@ local function can_alias(node, cx, updates)
 
     else
       for k, child in pairs(node) do
-        if k ~= "node_type" then
+        if k ~= "node_type" and k ~= "node_id" then
           if can_alias(child, cx, updates) then
             return true
           end
@@ -673,11 +673,12 @@ function normalize.stat(cx)
       return normalize.stat_assignment_or_reduce(cx, node)
     elseif not std.config["parallelize"] and
            node:is(ast.typed.stat.ParallelizeWith) then
-      return ast.typed.stat.Block {
+      node = ast.typed.stat.Block {
         block = node.block,
         span = node.span,
         annotations = node.annotations,
       }
+      return continuation(node, true)
     elseif node:is(ast.specialized.stat.Var) then
       return normalize.stat_var(node)
     elseif node:is(ast.typed.stat.Var) and node.value and

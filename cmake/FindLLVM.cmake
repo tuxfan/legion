@@ -1,5 +1,5 @@
 #=============================================================================
-# Copyright 2017 Kitware, Inc.
+# Copyright 2018 Kitware, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,6 +30,8 @@ if(NOT LLVM_FOUND AND NOT TARGET_LLVM)
                                               llvm-config-3.8
                                               llvm-config-3.6
                                               llvm-config-3.5
+                                              llvm-config-4.0
+                                              llvm-config-5.0
                                               llvm-config)
   endif(NOT LLVM_CONFIG_EXECUTABLE)
   if(LLVM_CONFIG_EXECUTABLE)

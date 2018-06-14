@@ -1,5 +1,5 @@
 #------------------------------------------------------------------------------#
-# Copyright 2017 Kitware, Inc.
+# Copyright 2018 Kitware, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,6 +30,8 @@ add_subdirectory(realm_stencil)
 add_subdirectory(spmd_cgsolver)
 add_subdirectory(virtual_map)
 add_subdirectory(visualization)
+add_subdirectory(attach_2darray_c_fortran_layout)
+add_subdirectory(attach_array_daxpy)
 
 if(Legion_USE_GASNet)
   add_subdirectory(mpi_interop)

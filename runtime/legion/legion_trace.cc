@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,11 @@
 
 
 #include "legion.h"
-#include "legion_ops.h"
-#include "legion_spy.h"
-#include "legion_trace.h"
-#include "legion_tasks.h"
-#include "legion_context.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_spy.h"
+#include "legion/legion_trace.h"
+#include "legion/legion_tasks.h"
+#include "legion/legion_context.h"
 
 namespace Legion {
   namespace Internal {
@@ -863,7 +863,7 @@ namespace Legion {
       // Now mark our trace as NULL to avoid registering this operation
       trace = NULL;
       tracing = false;
-      if (Runtime::legion_spy_enabled)
+      if (runtime->legion_spy_enabled)
         LegionSpy::log_trace_operation(ctx->get_unique_id(), unique_op_id);
     }
 
@@ -997,9 +997,33 @@ namespace Legion {
       // This also registers that we have dependences on all operations
       // in the trace.
       local_trace->end_trace_execution(this);
+#ifdef LEGION_SPY
+      // For Legion Spy we still have to run through the full fence analysis
+      FenceOp::trigger_dependence_analysis();
+#else
       // Now update the parent context with this fence before we can complete
       // the dependence analysis and possibly be deactivated
-      parent_ctx->update_current_fence(this);
+      switch (fence_kind)
+      {
+        case MAPPING_FENCE:
+          {
+            parent_ctx->update_current_fence(this, true, false);
+            break;
+          }
+        case EXECUTION_FENCE:
+          {
+            parent_ctx->update_current_fence(this, false, true);
+            break;
+          }
+        case MIXED_FENCE:
+          {
+            parent_ctx->update_current_fence(this, true, true);
+            break;
+          }
+        default:
+          assert(false);
+      }
+#endif
       // If this is a static trace, then we remove our reference when we're done
       if (local_trace->is_static_trace())
       {

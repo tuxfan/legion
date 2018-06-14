@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,20 +15,20 @@
 
 // Runtime implementation for Realm
 
-#include "runtime_impl.h"
+#include "realm/runtime_impl.h"
 
-#include "proc_impl.h"
-#include "mem_impl.h"
-#include "inst_impl.h"
+#include "realm/proc_impl.h"
+#include "realm/mem_impl.h"
+#include "realm/inst_impl.h"
 
-#include <realm/activemsg.h>
-#include "deppart/preimage.h"
+#include "realm/activemsg.h"
+#include "realm/deppart/preimage.h"
 
-#include "cmdline.h"
+#include "realm/cmdline.h"
 
-#include "codedesc.h"
+#include "realm/codedesc.h"
 
-#include "utils.h"
+#include "realm/utils.h"
 
 // For doing backtraces
 #include <execinfo.h> // symbols
@@ -39,8 +39,12 @@
 #define GASNET_PAR
 #endif
 #include <gasnet.h>
+#include <gasnet_coll.h>
 // eliminate GASNet warnings for unused static functions
 static const void *ignore_gasnet_warning1 __attribute__((unused)) = (void *)_gasneti_threadkey_init;
+#ifdef _INCLUDED_GASNET_TOOLS_H
+static const void *ignore_gasnet_warning2 __attribute__((unused)) = (void *)_gasnett_trace_printf_noop;
+#endif
 #endif
 
 #ifndef USE_GASNET
@@ -49,13 +53,15 @@ static const void *ignore_gasnet_warning1 __attribute__((unused)) = (void *)_gas
 #endif
 
 // remote copy active messages from from lowlevel_dma.h for now
-#include <realm/transfer/lowlevel_dma.h>
+#include "realm/transfer/lowlevel_dma.h"
 
 // create xd message and update bytes read/write messages
-#include <realm/transfer/channel.h>
+#include "realm/transfer/channel.h"
 
 #include <unistd.h>
 #include <signal.h>
+
+#include <fstream>
 
 #define CHECK_PTHREAD(cmd) do { \
   int ret = (cmd); \
@@ -74,6 +80,12 @@ static const void *ignore_gasnet_warning1 __attribute__((unused)) = (void *)_gas
   } \
 } while(0)
 #endif
+
+TYPE_IS_SERIALIZABLE(Realm::NodeAnnounceTag);
+TYPE_IS_SERIALIZABLE(Realm::Memory);
+TYPE_IS_SERIALIZABLE(Realm::Memory::Kind);
+TYPE_IS_SERIALIZABLE(Realm::Channel::SupportedPath);
+TYPE_IS_SERIALIZABLE(Realm::XferDes::XferKind);
 
 namespace LegionRuntime {
   namespace Accessor {
@@ -244,7 +256,15 @@ namespace Realm {
 
   static void realm_show_events(int signal)
   {
-    show_event_waiters(std::cout);
+    const char *filename = getenv("REALM_SHOW_EVENT_FILENAME");
+    if(filename) {
+      std::ofstream f(filename);
+      get_runtime()->optable.print_operations(f);
+      show_event_waiters(f);
+    } else {
+      get_runtime()->optable.print_operations(std::cout);
+      show_event_waiters(std::cout);
+    }
   }
 
   ////////////////////////////////////////////////////////////////////////
@@ -266,7 +286,10 @@ namespace Realm {
       return r;
     }
 
-    bool Runtime::init(int *argc, char ***argv)
+    // performs any network initialization and, critically, makes sure
+    //  *argc and *argv contain the application's real command line
+    //  (instead of e.g. mpi spawner information)
+    bool Runtime::network_init(int *argc, char ***argv)
     {
       if(runtime_singleton != 0) {
 	fprintf(stderr, "ERROR: cannot initialize more than one runtime at a time!\n");
@@ -274,8 +297,51 @@ namespace Realm {
       }
 
       impl = new RuntimeImpl;
-      runtime_singleton = ((RuntimeImpl *)impl);
-      return ((RuntimeImpl *)impl)->init(argc, argv);
+      runtime_singleton = static_cast<RuntimeImpl *>(impl);
+      return static_cast<RuntimeImpl *>(impl)->network_init(argc, argv);
+    }
+
+    // configures the runtime from the provided command line - after this 
+    //  call it is possible to create user events/reservations/etc, 
+    //  perform registrations and query the machine model, but not spawn
+    //  tasks or create instances
+    bool Runtime::configure_from_command_line(int argc, char **argv)
+    {
+      assert(impl != 0);
+      std::vector<std::string> cmdline;
+      cmdline.reserve(argc);
+      for(int i = 1; i < argc; i++)
+	cmdline.push_back(argv[i]);
+      return static_cast<RuntimeImpl *>(impl)->configure_from_command_line(cmdline);
+    }
+
+    bool Runtime::configure_from_command_line(std::vector<std::string> &cmdline,
+					      bool remove_realm_args /*= false*/)
+    {
+      assert(impl != 0);
+      if(remove_realm_args) {
+	return static_cast<RuntimeImpl *>(impl)->configure_from_command_line(cmdline);
+      } else {
+	// pass in a copy so we don't mess up the original
+	std::vector<std::string> cmdline_copy(cmdline);
+	return static_cast<RuntimeImpl *>(impl)->configure_from_command_line(cmdline_copy);
+      }
+    }
+
+    // starts up the runtime, allowing task/instance creation
+    void Runtime::start(void)
+    {
+      assert(impl != 0);
+      static_cast<RuntimeImpl *>(impl)->start();
+    }
+
+    // single-call version of the above three calls
+    bool Runtime::init(int *argc, char ***argv)
+    {
+      if(!network_init(argc, argv)) return false;
+      if(!configure_from_command_line(*argc, *argv)) return false;
+      start();
+      return true;
     }
     
     // this is now just a wrapper around Processor::register_task - consider switching to
@@ -315,7 +381,7 @@ namespace Realm {
       if(((RuntimeImpl *)impl)->reduce_op_table.count(redop_id) > 0)
 	return false;
 
-      ((RuntimeImpl *)impl)->reduce_op_table[redop_id] = redop;
+      ((RuntimeImpl *)impl)->reduce_op_table[redop_id] = redop->clone();
       return true;
     }
 
@@ -326,7 +392,7 @@ namespace Realm {
       if(((RuntimeImpl *)impl)->custom_serdez_table.count(serdez_id) > 0)
 	return false;
 
-      ((RuntimeImpl *)impl)->custom_serdez_table[serdez_id] = serdez;
+      ((RuntimeImpl *)impl)->custom_serdez_table[serdez_id] = serdez->clone();
       return true;
     }
 
@@ -359,7 +425,7 @@ namespace Realm {
 
     class DeferredShutdown : public EventWaiter {
     public:
-      DeferredShutdown(RuntimeImpl *_runtime);
+      DeferredShutdown(RuntimeImpl *_runtime, int _result_code);
       virtual ~DeferredShutdown(void);
 
       virtual bool event_triggered(Event e, bool poisoned);
@@ -368,10 +434,12 @@ namespace Realm {
 
     protected:
       RuntimeImpl *runtime;
+      int result_code;
     };
 
-    DeferredShutdown::DeferredShutdown(RuntimeImpl *_runtime)
+    DeferredShutdown::DeferredShutdown(RuntimeImpl *_runtime, int _result_code)
       : runtime(_runtime)
+      , result_code(_result_code)
     {}
 
     DeferredShutdown::~DeferredShutdown(void)
@@ -385,7 +453,7 @@ namespace Realm {
 	assert(false);
       }
       log_runtime.info() << "triggering deferred shutdown";
-      runtime->shutdown(true);
+      runtime->shutdown(true, result_code);
       return true; // go ahead and delete us
     }
 
@@ -399,23 +467,28 @@ namespace Realm {
       return Event::NO_EVENT;
     }
 
-    void Runtime::shutdown(Event wait_on /*= Event::NO_EVENT*/)
+    void Runtime::shutdown(Event wait_on /*= Event::NO_EVENT*/,
+			   int result_code /*= 0*/)
     {
       log_runtime.info() << "shutdown requested - wait_on=" << wait_on;
       if(wait_on.has_triggered())
-	((RuntimeImpl *)impl)->shutdown(true); // local request
+	((RuntimeImpl *)impl)->shutdown(true, result_code); // local request
       else
-	EventImpl::add_waiter(wait_on, new DeferredShutdown((RuntimeImpl *)impl));
+	EventImpl::add_waiter(wait_on,
+			      new DeferredShutdown((RuntimeImpl *)impl,
+						   result_code));
     }
 
-    void Runtime::wait_for_shutdown(void)
+    int Runtime::wait_for_shutdown(void)
     {
-      ((RuntimeImpl *)impl)->wait_for_shutdown();
+      int result = ((RuntimeImpl *)impl)->wait_for_shutdown();
 
       // after the shutdown, we nuke the RuntimeImpl
       delete ((RuntimeImpl *)impl);
       impl = 0;
       runtime_singleton = 0;
+
+      return result;
     }
 
 
@@ -586,11 +659,16 @@ namespace Realm {
   // class CoreModule
   //
 
+  namespace Config {
+    // if true, worker threads that might have used user-level thread switching
+    //  fall back to kernel threading
+    bool force_kernel_threads = false;
+  };
+
   CoreModule::CoreModule(void)
     : Module("core")
     , num_cpu_procs(1), num_util_procs(1), num_io_procs(0)
     , concurrent_io_threads(1)  // Legion does not support values > 1 right now
-    , force_kernel_threads(false)
     , sysmem_size_in_mb(512), stack_size_in_mb(2)
   {}
 
@@ -610,7 +688,6 @@ namespace Realm {
       .add_option_int("-ll:concurrent_io", m->concurrent_io_threads)
       .add_option_int("-ll:csize", m->sysmem_size_in_mb)
       .add_option_int("-ll:stacksize", m->stack_size_in_mb, true /*keep*/)
-      .add_option_bool("-ll:force_kthreads", m->force_kernel_threads, true /*keep*/)
       .parse_command_line(cmdline);
 
     return m;
@@ -640,7 +717,7 @@ namespace Realm {
       Processor p = runtime->next_local_processor_id();
       ProcessorImpl *pi = new LocalUtilityProcessor(p, runtime->core_reservation_set(),
 						    stack_size_in_mb << 20,
-						    force_kernel_threads);
+						    Config::force_kernel_threads);
       runtime->add_processor(pi);
     }
 
@@ -656,7 +733,7 @@ namespace Realm {
       Processor p = runtime->next_local_processor_id();
       ProcessorImpl *pi = new LocalCPUProcessor(p, runtime->core_reservation_set(),
 						stack_size_in_mb << 20,
-						force_kernel_threads);
+						Config::force_kernel_threads);
       runtime->add_processor(pi);
     }
   }
@@ -710,11 +787,17 @@ namespace Realm {
 	local_proc_group_free_list(0),
 	//local_sparsity_map_free_list(0),
 	run_method_called(false),
-	shutdown_requested(false), shutdown_condvar(shutdown_mutex),
+	shutdown_requested(false),
+	shutdown_result_code(0),
+	shutdown_condvar(shutdown_mutex),
 	core_map(0), core_reservations(0),
 	sampling_profiler(true /*system default*/),
 	num_local_memories(0), num_local_ib_memories(0),
 	num_local_processors(0),
+#ifndef USE_GASNET
+	nongasnet_regmem_base(0),
+	nongasnet_reg_ib_mem_base(0),
+#endif
 	module_registrar(this)
     {
       machine = new MachineImpl;
@@ -725,6 +808,9 @@ namespace Realm {
       delete machine;
       delete core_reservations;
       delete core_map;
+
+      delete_container_contents(reduce_op_table);
+      delete_container_contents(custom_serdez_table);
     }
 
     Memory RuntimeImpl::next_local_memory_id(void)
@@ -780,7 +866,7 @@ namespace Realm {
 
     void RuntimeImpl::add_dma_channel(DMAChannel *c)
     {
-      dma_channels.push_back(c);
+      nodes[c->node].dma_channels.push_back(c);
     }
 
     void RuntimeImpl::add_code_translator(CodeTranslator *t)
@@ -802,11 +888,6 @@ namespace Realm {
     {
       assert(core_reservations);
       return *core_reservations;
-    }
-
-    const std::vector<DMAChannel *>& RuntimeImpl::get_dma_channels(void) const
-    {
-      return dma_channels;
     }
 
     const std::vector<CodeTranslator *>& RuntimeImpl::get_code_translators(void) const
@@ -864,7 +945,7 @@ namespace Realm {
 	}
     }
 
-    bool RuntimeImpl::init(int *argc, char ***argv)
+    bool RuntimeImpl::network_init(int *argc, char ***argv)
     {
       DetailedTimer::init_timers();
 
@@ -947,6 +1028,9 @@ namespace Realm {
 #endif
 #endif
 
+      // TODO: this is here to match old behavior, but it'd probably be
+      //  better to have REALM_DEFAULT_ARGS only be visible to Realm...
+
       // if the REALM_DEFAULT_ARGS environment variable is set, these arguments
       //  are inserted at the FRONT of the command line (so they may still be
       //  overridden by actual command line args)
@@ -1006,15 +1090,11 @@ namespace Realm {
 	}
       }
 
-      // new command-line parsers will work from a vector<string> representation of the
-      //  command line
-      std::vector<std::string> cmdline;
-      if(*argc > 1) {
-	cmdline.resize(*argc - 1);
-	for(int i = 1; i < *argc; i++)
-	  cmdline[i - 1] = (*argv)[i];
-      }
+      return true;
+    }
 
+    bool RuntimeImpl::configure_from_command_line(std::vector<std::string> &cmdline)
+    {
       // very first thing - let the logger initialization happen
       Logger::configure_from_cmdline(cmdline);
 
@@ -1033,7 +1113,7 @@ namespace Realm {
       size_t reg_ib_mem_size_in_mb = 256;
 #else
       size_t gasnet_mem_size_in_mb = 0;
-      size_t reg_ib_mem_size_in_mb = 0;
+      size_t reg_ib_mem_size_in_mb = 64; // for transposes/serdez
 #endif
       size_t reg_mem_size_in_mb = 0;
       size_t disk_mem_size_in_mb = 0;
@@ -1086,20 +1166,8 @@ namespace Realm {
 #endif
 
       cp.add_option_int("-realm:eventloopcheck", Config::event_loop_detection_limit);
-
-      // these are actually parsed in activemsg.cc, but consume them here for now
-      size_t dummy = 0;
-      bool dummy_bool = false;
-      cp.add_option_int("-ll:numlmbs", dummy)
-	.add_option_int("-ll:lmbsize", dummy)
-	.add_option_int("-ll:forcelong", dummy)
-	.add_option_int("-ll:sdpsize", dummy)
-	.add_option_int("-ll:spillwarn", dummy)
-	.add_option_int("-ll:spillstep", dummy)
-	.add_option_int("-ll:spillstall", dummy);
-
-      // used in multiple places, so consume here
-      cp.add_option_bool("-ll:force_kthreads", dummy_bool);
+      cp.add_option_bool("-ll:force_kthreads", Config::force_kernel_threads);
+      cp.add_option_bool("-ll:frsrv_fallback", Config::use_fast_reservation_fallback);
 
       bool cmdline_ok = cp.parse_command_line(cmdline);
 
@@ -1126,15 +1194,6 @@ namespace Realm {
       }
 #endif
 
-      // scan through what's left and see if anything starts with -ll: - probably a misspelled argument
-      for(std::vector<std::string>::const_iterator it = cmdline.begin();
-	  it != cmdline.end();
-	  it++)
-	if(it->compare(0, 4, "-ll:") == 0) {
-	  fprintf(stderr, "ERROR: unrecognized lowlevel option: %s\n", it->c_str());
-          assert(0);
-	}
-
       // Check that we have enough resources for the number of nodes we are using
       if (max_node_id >= MAX_NUM_NODES)
       {
@@ -1150,6 +1209,18 @@ namespace Realm {
 		       "of bits in ID", max_node_id+1, (ID::MAX_NODE_ID + 1));
         exit(1);
       }
+
+      // if compiled in and not explicitly disabled, check our user threading
+      //  support
+#ifdef REALM_USE_USER_THREADS
+      if(!Config::force_kernel_threads) {
+        bool ok = Thread::test_user_switch_support();
+        if(!ok) {
+          log_runtime.warning() << "user switching not working - falling back to kernel threads";
+          Config::force_kernel_threads = true;
+        }
+      }
+#endif
 
       core_map = CoreMap::discover_core_map(hyperthread_sharing);
       core_reservations = new CoreReservationSet(core_map);
@@ -1215,6 +1286,10 @@ namespace Realm {
       RemoteIBAllocRequestAsync::Message::add_handler_entries("Remote IB Alloc Request AM");
       RemoteIBAllocResponseAsync::Message::add_handler_entries("Remote IB Alloc Response AM");
       RemoteIBFreeRequestAsync::Message::add_handler_entries("Remote IB Free Request AM");
+      MemStorageAllocRequest::Message::add_handler_entries("Memory Storage Alloc Request");
+      MemStorageAllocResponse::Message::add_handler_entries("Memory Storage Alloc Response");
+      MemStorageReleaseRequest::Message::add_handler_entries("Memory Storage Release Request");
+      MemStorageReleaseResponse::Message::add_handler_entries("Memory Storage Release Response");
       //TestMessage::add_handler_entries("Test AM");
       //TestMessage2::add_handler_entries("Test 2 AM");
 
@@ -1240,7 +1315,18 @@ namespace Realm {
 
       init_endpoints(gasnet_mem_size_in_mb, reg_mem_size_in_mb, reg_ib_mem_size_in_mb,
 		     *core_reservations,
-		     *argc, (const char **)*argv);
+		     cmdline);
+
+      // now that we've done all of our argument parsing, scan through what's
+      //  left and see if anything starts with -ll: - probably a misspelled
+      //  argument
+      for(std::vector<std::string>::const_iterator it = cmdline.begin();
+	  it != cmdline.end();
+	  it++)
+	if(it->compare(0, 4, "-ll:") == 0) {
+	  fprintf(stderr, "ERROR: unrecognized lowlevel option: %s\n", it->c_str());
+          assert(0);
+	}
 
 #ifndef USE_GASNET
       // network initialization is also responsible for setting the "zero_time"
@@ -1306,8 +1392,6 @@ namespace Realm {
       gasnet_coll_init(0, 0, 0, 0, 0);
 #endif
 
-      create_builtin_dma_channels(this);
-
       start_dma_worker_threads(dma_worker_threads,
 			       *core_reservations);
 
@@ -1357,8 +1441,9 @@ namespace Realm {
 	char *regmem_base = ((char *)(seginfos[my_node_id].addr)) + (gasnet_mem_size_in_mb << 20);
 	delete[] seginfos;
 #else
-	char *regmem_base = (char *)(malloc(reg_mem_size_in_mb << 20));
-	assert(regmem_base != 0);
+	nongasnet_regmem_base = malloc(reg_mem_size_in_mb << 20);
+	assert(nongasnet_regmem_base != 0);
+	char *regmem_base = static_cast<char *>(nongasnet_regmem_base);
 #endif
 	Memory m = get_runtime()->next_local_memory_id();
 	regmem = new LocalCPUMemory(m,
@@ -1383,8 +1468,9 @@ namespace Realm {
                                 + (reg_mem_size_in_mb << 20);
 	delete[] seginfos;
 #else
-	char *reg_ib_mem_base = (char *)(malloc(reg_ib_mem_size_in_mb << 20));
-	assert(reg_ib_mem_base != 0);
+	nongasnet_reg_ib_mem_base = malloc(reg_ib_mem_size_in_mb << 20);
+	assert(nongasnet_reg_ib_mem_base != 0);
+	char *reg_ib_mem_base = static_cast<char *>(nongasnet_reg_ib_mem_base);
 #endif
 	Memory m = get_runtime()->next_local_ib_memory_id();
 	reg_ib_mem = new LocalCPUMemory(m,
@@ -1561,13 +1647,12 @@ namespace Realm {
 	}
       }
       {
-	const unsigned ADATA_SIZE = 4096;
-	size_t adata[ADATA_SIZE];
-	unsigned apos = 0;
+	Serialization::DynamicBufferSerializer dbs(4096);
 
 	unsigned num_procs = 0;
 	unsigned num_memories = 0;
 	unsigned num_ib_memories = 0;
+	bool ok = true;
 
 	// announce each processor
 	for(std::vector<ProcessorImpl *>::const_iterator it = n->processors.begin();
@@ -1579,10 +1664,11 @@ namespace Realm {
 	    int num_cores = (*it)->num_cores;
 
 	    num_procs++;
-	    adata[apos++] = NODE_ANNOUNCE_PROC;
-	    adata[apos++] = p.id;
-	    adata[apos++] = k;
-	    adata[apos++] = num_cores;
+	    ok = (ok &&
+		  (dbs << NODE_ANNOUNCE_PROC) &&
+		  (dbs << p) &&
+		  (dbs << k) &&
+		  (dbs << num_cores));
 	  }
 
 	// now each memory
@@ -1592,13 +1678,16 @@ namespace Realm {
 	  if(*it) {
 	    Memory m = (*it)->me;
 	    Memory::Kind k = (*it)->me.kind();
+	    size_t size = (*it)->size;
+	    intptr_t regptr = reinterpret_cast<intptr_t>((*it)->local_reg_base());
 
 	    num_memories++;
-	    adata[apos++] = NODE_ANNOUNCE_MEM;
-	    adata[apos++] = m.id;
-	    adata[apos++] = k;
-	    adata[apos++] = (*it)->size;
-	    adata[apos++] = reinterpret_cast<size_t>((*it)->local_reg_base());
+	    ok = (ok &&
+		  (dbs << NODE_ANNOUNCE_MEM) &&
+		  (dbs << m) &&
+		  (dbs << k) &&
+		  (dbs << size) &&
+		  (dbs << regptr));
 	  }
 
         for (std::vector<MemoryImpl *>::const_iterator it = n->ib_memories.begin();
@@ -1607,13 +1696,16 @@ namespace Realm {
           if(*it) {
             Memory m = (*it)->me;
             Memory::Kind k = (*it)->me.kind();
+	    size_t size = (*it)->size;
+	    intptr_t regptr = reinterpret_cast<intptr_t>((*it)->local_reg_base());
 
             num_ib_memories++;
-            adata[apos++] = NODE_ANNOUNCE_IB_MEM;
-            adata[apos++] = m.id;
-            adata[apos++] = k;
-            adata[apos++] = (*it)->size;
-            adata[apos++] = reinterpret_cast<size_t>((*it)->local_reg_base());
+	    ok = (ok &&
+		  (dbs << NODE_ANNOUNCE_IB_MEM) &&
+		  (dbs << m) &&
+		  (dbs << k) &&
+		  (dbs << size) &&
+		  (dbs << regptr));
           }
 
 	// announce each processor's affinities
@@ -1628,11 +1720,12 @@ namespace Realm {
 	    for(std::vector<Machine::ProcessorMemoryAffinity>::const_iterator it2 = pmas.begin();
 		it2 != pmas.end();
 		it2++) {
-	      adata[apos++] = NODE_ANNOUNCE_PMA;
-	      adata[apos++] = it2->p.id;
-	      adata[apos++] = it2->m.id;
-	      adata[apos++] = it2->bandwidth;
-	      adata[apos++] = it2->latency;
+	      ok = (ok &&
+		    (dbs << NODE_ANNOUNCE_PMA) &&
+		    (dbs << it2->p) &&
+		    (dbs << it2->m) &&
+		    (dbs << it2->bandwidth) &&
+		    (dbs << it2->latency));
 	    }
 	  }
 
@@ -1653,16 +1746,26 @@ namespace Realm {
 	      if((it2->m1 != m) || ((NodeID)(it2->m2.address_space()) != my_node_id))
 		continue;
 
-	      adata[apos++] = NODE_ANNOUNCE_MMA;
-	      adata[apos++] = it2->m1.id;
-	      adata[apos++] = it2->m2.id;
-	      adata[apos++] = it2->bandwidth;
-	      adata[apos++] = it2->latency;
+	      ok = (ok &&
+		    (dbs << NODE_ANNOUNCE_MMA) &&
+		    (dbs << it2->m1) &&
+		    (dbs << it2->m2) &&
+		    (dbs << it2->bandwidth) &&
+		    (dbs << it2->latency));
 	    }
 	  }
 
-	adata[apos++] = NODE_ANNOUNCE_DONE;
-	assert(apos < ADATA_SIZE);
+	for(std::vector<Channel *>::const_iterator it = n->dma_channels.begin();
+	    it != n->dma_channels.end();
+	    ++it)
+	  if(*it) {
+	    ok = (ok &&
+		  (dbs << NODE_ANNOUNCE_DMA_CHANNEL) &&
+		  (*it)->serialize_remote_info(dbs));
+	  }
+
+	ok = (ok && (dbs << NODE_ANNOUNCE_DONE));
+	assert(ok);
 
 #ifdef DEBUG_REALM_STARTUP
 	if(my_node_id == 0) {
@@ -1675,11 +1778,12 @@ namespace Realm {
 	for(NodeID i = 0; i <= max_node_id; i++)
 	  if(i != my_node_id)
 	    NodeAnnounceMessage::send_request(i,
-						     num_procs,
-						     num_memories,
-						     num_ib_memories,
-						     adata, apos*sizeof(adata[0]),
-						     PAYLOAD_COPY);
+					      num_procs,
+					      num_memories,
+					      num_ib_memories,
+					      dbs.get_buffer(),
+					      dbs.bytes_used(),
+					      PAYLOAD_COPY);
 
 	NodeAnnounceMessage::await_all_announcements();
 
@@ -1692,6 +1796,16 @@ namespace Realm {
       }
 
       return true;
+    }
+
+    void RuntimeImpl::start(void)
+    {
+      // all we have to do here is tell the processors to start up their
+      //  threads...
+      for(std::vector<ProcessorImpl *>::const_iterator it = nodes[my_node_id].processors.begin();
+	  it != nodes[my_node_id].processors.end();
+	  ++it)
+	(*it)->start_threads();
     }
 
   template <typename T>
@@ -2017,14 +2131,14 @@ namespace Realm {
 	log_runtime.info("shutdown request received - terminating\n");
       }
 
-      wait_for_shutdown();
-      exit(0);
+      int result = wait_for_shutdown();
+      exit(result);
     }
 
     // this is not member data of RuntimeImpl because we don't want use-after-free problems
     static int shutdown_count = 0;
 
-    void RuntimeImpl::shutdown(bool local_request /*= true*/)
+    void RuntimeImpl::shutdown(bool local_request, int result_code)
     {
       // filter out duplicate requests
       bool already_started = (__sync_fetch_and_add(&shutdown_count, 1) > 0);
@@ -2035,7 +2149,7 @@ namespace Realm {
 	log_runtime.info("shutdown request - notifying other nodes");
 	for(NodeID i = 0; i <= max_node_id; i++)
 	  if(i != my_node_id)
-	    RuntimeShutdownMessage::send_request(i);
+	    RuntimeShutdownMessage::send_request(i, result_code);
       }
 
       log_runtime.info("shutdown request - cleaning up local processors");
@@ -2053,12 +2167,13 @@ namespace Realm {
 
       {
 	AutoHSLLock al(shutdown_mutex);
+	shutdown_result_code = result_code;
 	shutdown_requested = true;
 	shutdown_condvar.broadcast();
       }
     }
 
-    void RuntimeImpl::wait_for_shutdown(void)
+    int RuntimeImpl::wait_for_shutdown(void)
     {
 #if 0
       bool exit_process = true;
@@ -2149,6 +2264,9 @@ namespace Realm {
 
 	  delete_container_contents(n.memories);
 	  delete_container_contents(n.processors);
+	  delete_container_contents(n.ib_memories);
+	  delete_container_contents(n.dma_channels);
+	  delete_container_contents(n.sparsity_maps);
 	}
 	
 	delete[] nodes;
@@ -2157,9 +2275,7 @@ namespace Realm {
 	delete local_barrier_free_list;
 	delete local_reservation_free_list;
 	delete local_proc_group_free_list;
-
-	// delete all the DMA channels that we were given
-	delete_container_contents(dma_channels);
+	delete_container_contents(local_sparsity_map_free_lists);
 
 	// same for code translators
 	delete_container_contents(code_translators);
@@ -2174,12 +2290,16 @@ namespace Realm {
 	module_registrar.unload_module_sofiles();
       }
 
+#ifndef USE_GASNET
+      if(nongasnet_regmem_base != 0)
+	free(nongasnet_regmem_base);
+      if(nongasnet_reg_ib_mem_base != 0)
+	free(nongasnet_reg_ib_mem_base);
+#endif
+
       if(!Threading::cleanup()) exit(1);
 
-      // this terminates the process, so control never gets back to caller
-      // would be nice to fix this...
-      //if (exit_process)
-      //  exit(0);
+      return shutdown_result_code;
     }
 
     EventImpl *RuntimeImpl::get_event_impl(Event e)
@@ -2394,6 +2514,7 @@ namespace Realm {
       assert((signal == SIGILL) || (signal == SIGFPE) || 
              (signal == SIGABRT) || (signal == SIGSEGV) ||
              (signal == SIGBUS));
+#if 0
       void *bt[256];
       int bt_size = backtrace(bt, 256);
       char **bt_syms = backtrace_symbols(bt, bt_size);
@@ -2454,11 +2575,22 @@ namespace Realm {
       fflush(stderr);
       free(buffer);
       free(funcname);
+#endif
+      Backtrace bt;
+      bt.capture_backtrace(1 /* skip this handler */);
+      bt.lookup_symbols();
+      fflush(stdout);
+      fflush(stderr);
+      std::cout << std::flush;
+      std::cerr << "Signal " << signal << " received by process " << getpid()
+                << " (thread "  << std::hex << uintptr_t(pthread_self())
+                << std::dec << ") at: " << bt << std::flush;
       // returning would almost certainly cause this signal to be raised again,
       //  so sleep for a second in case other threads also want to chronicle
       //  their own deaths, and then exit
       sleep(1);
-      exit(1);
+      // don't bother trying to clean things up
+      _exit(1);
     }
 
   
@@ -2479,17 +2611,18 @@ namespace Realm {
 
   /*static*/ void RuntimeShutdownMessage::handle_request(RequestArgs args)
   {
-    log_runtime.info("received shutdown request from node %d", args.initiating_node);
+    log_runtime.info() << "shutdown request received: sender=" << args.initiating_node << " code=" << args.result_code;
 
-    get_runtime()->shutdown(false);
+    get_runtime()->shutdown(false, args.result_code);
   }
 
-  /*static*/ void RuntimeShutdownMessage::send_request(NodeID target)
+  /*static*/ void RuntimeShutdownMessage::send_request(NodeID target,
+						       int result_code)
   {
     RequestArgs args;
 
     args.initiating_node = my_node_id;
-    args.dummy = 0;
+    args.result_code = result_code;
     Message::request(target, args);
   }
 

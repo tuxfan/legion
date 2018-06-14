@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,12 +17,12 @@
 #ifndef __LEGION_REGION_TREE_H__
 #define __LEGION_REGION_TREE_H__
 
-#include "legion_types.h"
-#include "legion_utilities.h"
-#include "legion_allocation.h"
-#include "legion_analysis.h"
-#include "garbage_collection.h"
-#include "field_tree.h"
+#include "legion/legion_types.h"
+#include "legion/legion_utilities.h"
+#include "legion/legion_allocation.h"
+#include "legion/legion_analysis.h"
+#include "legion/garbage_collection.h"
+#include "legion/field_tree.h"
 
 namespace Legion {
   namespace Internal {
@@ -283,8 +283,6 @@ namespace Legion {
                                        VersionInfo &version_info,
                                        ProjectionInfo &projection_info,
                                        RegionTreePath &path);
-      void perform_fence_analysis(RegionTreeContext ctx, Operation *fence,
-                                  LogicalRegion handle, bool dominate);
       void perform_deletion_analysis(DeletionOp *op, unsigned idx,
                                      RegionRequirement &req,
                                      RestrictInfo &restrict_info,
@@ -472,17 +470,18 @@ namespace Legion {
                           InstanceSet &instances, ApEvent precondition,
                           std::set<RtEvent> &map_applied_events,
                           PredEvent true_guard, PredEvent false_guard);
-      InstanceManager* create_file_instance(AttachOp *attach_op,
-                                            const RegionRequirement &req);
-      InstanceRef attach_file(AttachOp *attach_op, unsigned index,
-                              const RegionRequirement &req,
-                              InstanceManager *file_instance,
-                              VersionInfo &version_info,
+      InstanceManager* create_external_instance(AttachOp *attach_op,
+                                const RegionRequirement &req,
+                                const std::vector<FieldID> &field_set);
+      InstanceRef attach_external(AttachOp *attach_op, unsigned index,
+                                  const RegionRequirement &req,
+                                  InstanceManager *ext_instance,
+                                  VersionInfo &version_info,
+                                  std::set<RtEvent> &map_applied_events);
+      ApEvent detach_external(const RegionRequirement &req, DetachOp *detach_op,
+                              unsigned index, VersionInfo &version_info, 
+                              const InstanceRef &ref, 
                               std::set<RtEvent> &map_applied_events);
-      ApEvent detach_file(const RegionRequirement &req, DetachOp *detach_op,
-                          unsigned index, VersionInfo &version_info, 
-                          const InstanceRef &ref, 
-                          std::set<RtEvent> &map_applied_events);
     public:
       // Debugging method for checking context state
       void check_context_state(RegionTreeContext ctx);
@@ -515,20 +514,24 @@ namespace Legion {
       PartitionNode*  create_node(LogicalPartition p, RegionNode *par);
     public:
       IndexSpaceNode* get_node(IndexSpace space);
-      IndexPartNode*  get_node(IndexPartition part);
+      IndexPartNode*  get_node(IndexPartition part, RtEvent *defer = NULL);
       FieldSpaceNode* get_node(FieldSpace space);
       RegionNode*     get_node(LogicalRegion handle, bool need_check = true);
       PartitionNode*  get_node(LogicalPartition handle, bool need_check = true);
       RegionNode*     get_tree(RegionTreeID tid);
       // Request but don't block
       RtEvent request_node(IndexSpace space);
+      // Find a local node if it exists and return it with reference
+      // otherwise return NULL
+      RegionNode*     find_local_node(LogicalRegion handle);
+      PartitionNode*  find_local_node(LogicalPartition handle);
     public:
-      bool has_node(IndexSpace space, bool local_only = false);
-      bool has_node(IndexPartition part, bool local_only = false);
-      bool has_node(FieldSpace space, bool local_only = false);
-      bool has_node(LogicalRegion handle, bool local_only = false);
-      bool has_node(LogicalPartition handle, bool local_only = false);
-      bool has_tree(RegionTreeID tid, bool local_only = false);
+      bool has_node(IndexSpace space);
+      bool has_node(IndexPartition part);
+      bool has_node(FieldSpace space);
+      bool has_node(LogicalRegion handle);
+      bool has_node(LogicalPartition handle);
+      bool has_tree(RegionTreeID tid);
       bool has_field(FieldSpace space, FieldID fid);
     public:
       void remove_node(IndexSpace space);
@@ -629,7 +632,7 @@ namespace Legion {
     public:
       Runtime *const runtime;
     protected:
-      Reservation lookup_lock;
+      mutable LocalLock lookup_lock;
     private:
       // The lookup lock must be held when accessing these
       // data structures
@@ -695,7 +698,7 @@ namespace Legion {
       NodeSet child_creation;
       bool destroyed;
     protected:
-      Reservation node_lock;
+      LocalLock &node_lock;
     protected:
       std::map<IndexTreeNode*,bool> dominators;
     protected:
@@ -733,6 +736,16 @@ namespace Legion {
           LG_TIGHTEN_INDEX_SPACE_TASK_ID;
       public:
         IndexSpaceNode *proxy_this;
+      };
+      struct DeferChildArgs : public LgTaskArgs<DeferChildArgs> {
+      public:
+        static const LgTaskID TASK_ID = LG_INDEX_SPACE_DEFER_CHILD_TASK_ID;
+      public:
+        IndexSpaceNode *proxy_this;
+        LegionColor child_color;
+        IndexPartNode *target;
+        RtUserEvent to_trigger;
+        AddressSpaceID source;
       };
       class IndexSpaceSetFunctor {
       public:
@@ -791,7 +804,8 @@ namespace Legion {
                                  Deserializer &derez, AddressSpaceID source);
     public:
       bool has_color(const LegionColor c);
-      IndexPartNode* get_child(const LegionColor c, bool can_fail = false);
+      IndexPartNode* get_child(const LegionColor c, 
+                               RtEvent *defer = NULL, bool can_fail = false);
       void add_child(IndexPartNode *child);
       void remove_child(const LegionColor c);
       size_t get_num_children(void) const;
@@ -822,6 +836,7 @@ namespace Legion {
       static void handle_node_return(Deserializer &derez);
       static void handle_node_child_request(RegionTreeForest *context,
                             Deserializer &derez, AddressSpaceID source);
+      static void defer_node_child_request(const void *args);
       static void handle_node_child_response(Deserializer &derez);
       static void handle_colors_request(RegionTreeForest *context,
                             Deserializer &derez, AddressSpaceID source);
@@ -868,7 +883,8 @@ namespace Legion {
       virtual bool dominates(IndexSpaceNode *rhs) = 0;
       virtual bool dominates(IndexPartNode *rhs) = 0;
     public:
-      virtual void pack_index_space(Serializer &rez) const = 0;
+      virtual void pack_index_space(Serializer &rez, 
+                                    bool include_size) const = 0;
       virtual void unpack_index_space(Deserializer &derez,
                                       AddressSpaceID source) = 0;
     public:
@@ -927,28 +943,42 @@ namespace Legion {
       virtual bool check_field_size(size_t field_size, bool range) = 0;
     public:
       virtual ApEvent issue_copy(Operation *op, 
+#ifdef LEGION_SPY
+                  const std::vector<Realm::CopySrcDstField> &src_fields,
+                  const std::vector<Realm::CopySrcDstField> &dst_fields,
+#else
                   const std::vector<CopySrcDstField> &src_fields,
                   const std::vector<CopySrcDstField> &dst_fields,
+#endif
                   ApEvent precondition, PredEvent predicate_guard,
                   IndexTreeNode *intersect = NULL,
                   ReductionOpID redop = 0, bool reduction_fold = true) = 0;
       virtual ApEvent issue_fill(Operation *op,
+#ifdef LEGION_SPY
+                  const std::vector<Realm::CopySrcDstField> &dst_fields,
+#else
                   const std::vector<CopySrcDstField> &dst_fields,
+#endif
                   const void *fill_value, size_t fill_size,
                   ApEvent precondition, PredEvent predicate_guard,
                   IndexTreeNode *intersect = NULL) = 0;
     public:
       virtual Realm::InstanceLayoutGeneric* create_layout(
-                           const Realm::InstanceLayoutConstraints &ilc) = 0;
+                           const Realm::InstanceLayoutConstraints &ilc,
+                           const OrderingConstraint &constraint) = 0;
       virtual PhysicalInstance create_file_instance(const char *file_name,
 				   const std::vector<Realm::FieldID> &field_ids,
                                    const std::vector<size_t> &field_sizes,
-                                   legion_lowlevel_file_mode_t file_mode) = 0;
+                                   legion_file_mode_t file_mode,
+                                   ApEvent &ready_event) = 0;
       virtual PhysicalInstance create_hdf5_instance(const char *file_name,
                                    const std::vector<Realm::FieldID> &field_ids,
                                    const std::vector<size_t> &field_sizes,
                                    const std::vector<const char*> &field_files,
-                                   bool read_only) = 0;
+                                   bool read_only, ApEvent &ready_event) = 0;
+      virtual PhysicalInstance create_external_instance(Memory memory,
+                             uintptr_t base, Realm::InstanceLayoutGeneric *ilg,
+                             ApEvent &ready_event) = 0;
     public:
       virtual void get_launch_space_domain(Domain &launch_domain) = 0;
       virtual void validate_slicing(const std::vector<IndexSpace> &slice_spaces,
@@ -1052,7 +1082,7 @@ namespace Legion {
       virtual bool dominates(IndexSpaceNode *rhs);
       virtual bool dominates(IndexPartNode *rhs);
     public:
-      virtual void pack_index_space(Serializer &rez) const;
+      virtual void pack_index_space(Serializer &rez, bool include_size) const;
       virtual void unpack_index_space(Deserializer &derez,
                                       AddressSpaceID source);
     public:
@@ -1149,28 +1179,42 @@ namespace Legion {
       virtual bool check_field_size(size_t field_size, bool range);
     public:
       virtual ApEvent issue_copy(Operation *op, 
+#ifdef LEGION_SPY
+                  const std::vector<Realm::CopySrcDstField> &src_fields,
+                  const std::vector<Realm::CopySrcDstField> &dst_fields,
+#else
                   const std::vector<CopySrcDstField> &src_fields,
                   const std::vector<CopySrcDstField> &dst_fields,
+#endif
                   ApEvent precondition, PredEvent predicate_guard,
                   IndexTreeNode *intersect = NULL,
                   ReductionOpID redop = 0, bool reduction_fold = true);
       virtual ApEvent issue_fill(Operation *op,
+#ifdef LEGION_SPY
+                  const std::vector<Realm::CopySrcDstField> &dst_fields,
+#else
                   const std::vector<CopySrcDstField> &dst_fields,
+#endif
                   const void *fill_value, size_t fill_size,
                   ApEvent precondition, PredEvent predicate_guard,
                   IndexTreeNode *intersect = NULL);
     public:
       virtual Realm::InstanceLayoutGeneric* create_layout(
-                           const Realm::InstanceLayoutConstraints &ilc);
+                           const Realm::InstanceLayoutConstraints &ilc,
+                           const OrderingConstraint &constraint);
       virtual PhysicalInstance create_file_instance(const char *file_name,
                                    const std::vector<Realm::FieldID> &field_ids,
                                    const std::vector<size_t> &field_sizes,
-                                   legion_lowlevel_file_mode_t file_mode);
+                                   legion_file_mode_t file_mode, 
+                                   ApEvent &ready_event);
       virtual PhysicalInstance create_hdf5_instance(const char *file_name,
                                    const std::vector<Realm::FieldID> &field_ids,
                                    const std::vector<size_t> &field_sizes,
                                    const std::vector<const char*> &field_files,
-                                   bool read_only);
+                                   bool read_only, ApEvent &ready_event);
+      virtual PhysicalInstance create_external_instance(Memory memory,
+                             uintptr_t base, Realm::InstanceLayoutGeneric *ilg,
+                             ApEvent &ready_event);
     public:
       virtual void get_launch_space_domain(Domain &launch_domain);
       virtual void validate_slicing(const std::vector<IndexSpace> &slice_spaces,
@@ -1395,6 +1439,16 @@ namespace Legion {
         SemanticTag tag;
         AddressSpaceID source;
       };
+      struct DeferChildArgs : public LgTaskArgs<DeferChildArgs> {
+      public:
+        static const LgTaskID TASK_ID = LG_INDEX_PART_DEFER_CHILD_TASK_ID;
+      public:
+        IndexPartNode *proxy_this;
+        LegionColor child_color;
+        IndexSpace *target;
+        RtUserEvent to_trigger;
+        AddressSpaceID source;
+      };
       class DestructionFunctor {
       public:
         DestructionFunctor(IndexPartNode *n, ReferenceMutator *m)
@@ -1446,7 +1500,7 @@ namespace Legion {
                                    Deserializer &derez, AddressSpaceID source);
     public:
       bool has_color(const LegionColor c);
-      IndexSpaceNode* get_child(const LegionColor c);
+      IndexSpaceNode* get_child(const LegionColor c, RtEvent *defer = NULL);
       void add_child(IndexSpaceNode *child);
       void remove_child(const LegionColor c);
       size_t get_num_children(void) const;
@@ -1504,6 +1558,7 @@ namespace Legion {
       static void handle_node_return(Deserializer &derez);
       static void handle_node_child_request(
           RegionTreeForest *forest, Deserializer &derez, AddressSpaceID source);
+      static void defer_node_child_request(const void *args);
       static void handle_node_child_response(Deserializer &derez);
       static void handle_notification(RegionTreeForest *context, 
                                       Deserializer &derez);
@@ -1800,8 +1855,8 @@ namespace Legion {
                                 std::vector<CustomSerdezID> &serdez,
                                 FieldMask &instance_mask);
     public:
-      InstanceManager* create_file_instance(const std::set<FieldID> &fields,
-                                            RegionNode *node, AttachOp *op);
+      InstanceManager* create_external_instance(
+            const std::vector<FieldID> &fields, RegionNode *node, AttachOp *op);
     public:
       LayoutDescription* find_layout_description(const FieldMask &field_mask,
                      unsigned num_dims, const LayoutConstraintSet &constraints);
@@ -1865,7 +1920,7 @@ namespace Legion {
       const FieldSpace handle;
       RegionTreeForest *const context;
     private:
-      Reservation node_lock;
+      LocalLock &node_lock;
       // Top nodes in the trees for which this field space is used
       std::set<LogicalRegion> logical_trees;
       std::set<RegionNode*> local_trees;
@@ -1896,23 +1951,15 @@ namespace Legion {
      * this kind of node making them general across
      * all kinds of node types.
      */
-    class RegionTreeNode
-#ifdef LEGION_GC
-      : public DistributedCollectable
-#else
-      : public Collectable
-#endif
-      {
+    class RegionTreeNode : public DistributedCollectable {
     public:
       RegionTreeNode(RegionTreeForest *ctx, FieldSpaceNode *column);
       virtual ~RegionTreeNode(void);
-#ifdef LEGION_GC
     public:
-      virtual void notify_active(ReferenceMutator *mutator) { assert(false); }
-      virtual void notify_inactive(ReferenceMutator *mutator) { assert(false); }
+      virtual void notify_active(ReferenceMutator *mutator);
+      virtual void notify_inactive(ReferenceMutator *mutator) = 0;
       virtual void notify_valid(ReferenceMutator *mutator) { assert(false); }
       virtual void notify_invalid(ReferenceMutator *mutator) { assert(false); }
-#endif
     public:
       static AddressSpaceID get_owner_space(RegionTreeID tid, Runtime *rt);
     public:
@@ -2305,16 +2352,18 @@ namespace Legion {
       RegionTreeForest *const context;
       FieldSpaceNode *const column_source;
     public:
-#ifndef LEGION_GC
       NodeSet remote_instances;
-#endif
       bool registered;
       bool destroyed;
+#ifdef DEBUG_LEGION
+    protected:
+      bool currently_active; // should be monotonic
+#endif
     protected:
       DynamicTable<LogicalStateAllocator> logical_states;
       DynamicTable<VersionManagerAllocator> current_versions;
     protected:
-      Reservation node_lock;
+      LocalLock &node_lock;
       // While logical states and version managers have dense keys
       // within a node, distributed IDs don't so we use a map that
       // should rarely need to be accessed for tracking views
@@ -2363,6 +2412,8 @@ namespace Legion {
       virtual ~RegionNode(void);
     public:
       RegionNode& operator=(const RegionNode &rhs);
+    public:
+      virtual void notify_inactive(ReferenceMutator *mutator);
     public:
       void record_registered(void);
     public:
@@ -2496,18 +2547,18 @@ namespace Legion {
                               VersionInfo &version_info, InstanceSet &instances,
                               ApEvent precondition, PredEvent true_guard,
                               std::set<RtEvent> &map_applied_events);
-      InstanceRef attach_file(ContextID ctx, InnerContext *parent_ctx,
-                           const UniqueID logical_ctx_uid,
-                           const FieldMask &attach_mask,
-                           const RegionRequirement &req, 
-                           InstanceManager *manager, 
-                           VersionInfo &version_info,
-                           std::set<RtEvent> &map_applied_events);
-      ApEvent detach_file(ContextID ctx, InnerContext *context, 
-                          const UniqueID logical_ctx_uid,
-                          VersionInfo &version_info, 
-                          const InstanceRef &ref,
-                          std::set<RtEvent> &map_applied_events);
+      InstanceRef attach_external(ContextID ctx, InnerContext *parent_ctx,
+                                  const UniqueID logical_ctx_uid,
+                                  const FieldMask &attach_mask,
+                                  const RegionRequirement &req, 
+                                  InstanceManager *manager, 
+                                  VersionInfo &version_info,
+                                  std::set<RtEvent> &map_applied_events);
+      ApEvent detach_external(ContextID ctx, InnerContext *context, 
+                              const UniqueID logical_ctx_uid,
+                              VersionInfo &version_info, 
+                              const InstanceRef &ref,
+                              std::set<RtEvent> &map_applied_events);
     public:
       virtual InstanceView* find_context_view(PhysicalManager *manager,
                                               InnerContext *context);
@@ -2559,6 +2610,8 @@ namespace Legion {
       virtual ~PartitionNode(void);
     public:
       PartitionNode& operator=(const PartitionNode &rhs);
+    public:
+      virtual void notify_inactive(ReferenceMutator *mutator);
     public:
       void record_registered(void);
     public:

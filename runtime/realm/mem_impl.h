@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,16 +18,16 @@
 #ifndef REALM_MEMORY_IMPL_H
 #define REALM_MEMORY_IMPL_H
 
-#include "memory.h"
-#include "id.h"
+#include "realm/memory.h"
+#include "realm/id.h"
 
-#include <realm/activemsg.h>
-#include "operation.h"
-#include "profiling.h"
-#include "sampling.h"
+#include "realm/activemsg.h"
+#include "realm/operation.h"
+#include "realm/profiling.h"
+#include "realm/sampling.h"
 
-#include "event_impl.h"
-#include "rsrv_impl.h"
+#include "realm/event_impl.h"
+#include "realm/rsrv_impl.h"
 
 #ifdef USE_HDF
 #include <hdf5.h>
@@ -95,10 +95,17 @@ namespace Realm {
       // adds a new instance to this memory, to be filled in by caller
       RegionInstanceImpl *new_instance(void);
 
+      // releases a deleted instance so that it can be reused
+      void release_instance(RegionInstance inst);
+      
       // attempt to allocate storage for the specified instance
       virtual bool allocate_instance_storage(RegionInstance i,
 					     size_t bytes, size_t alignment,
-					     Event precondition);
+					     Event precondition, 
+                                             // this will be used for zero-size allocs
+                    // TODO: ideally use something like (size_t)-2 here, but that will
+                    //  currently confuse the file read/write path in dma land
+                                             size_t offset = 0);
 
       // release storage associated with an instance
       virtual void release_instance_storage(RegionInstance i,
@@ -292,6 +299,80 @@ namespace Realm {
 
     // active messages
 
+    struct MemStorageAllocRequest {
+      struct RequestArgs {
+	Memory memory;
+	RegionInstance inst;
+	size_t bytes;
+	size_t alignment;
+        size_t offset;
+	Event precondition;
+      };
+
+      static void handle_request(RequestArgs args);
+
+      typedef ActiveMessageShortNoReply<MEM_STORAGE_ALLOC_REQ_MSGID,
+					RequestArgs,
+					handle_request> Message;
+
+      static void send_request(NodeID target,
+			       Memory memory, RegionInstance inst,
+			       size_t bytes, size_t alignment,
+			       Event precondition, size_t offset);
+    };
+
+    struct MemStorageAllocResponse {
+      struct RequestArgs {
+	RegionInstance inst;
+	size_t offset;
+	bool success;
+      };
+
+      static void handle_request(RequestArgs args);
+
+      typedef ActiveMessageShortNoReply<MEM_STORAGE_ALLOC_RESP_MSGID,
+					RequestArgs,
+					handle_request> Message;
+
+      static void send_request(NodeID target,
+			       RegionInstance inst,
+			       size_t offset, bool success);
+    };
+
+    struct MemStorageReleaseRequest {
+      struct RequestArgs {
+	Memory memory;
+	RegionInstance inst;
+	Event precondition;
+      };
+
+      static void handle_request(RequestArgs args);
+
+      typedef ActiveMessageShortNoReply<MEM_STORAGE_RELEASE_REQ_MSGID,
+					RequestArgs,
+					handle_request> Message;
+
+      static void send_request(NodeID target,
+			       Memory memory,
+			       RegionInstance inst,
+			       Event precondition);
+    };
+
+    struct MemStorageReleaseResponse {
+      struct RequestArgs {
+	RegionInstance inst;
+      };
+
+      static void handle_request(RequestArgs args);
+
+      typedef ActiveMessageShortNoReply<MEM_STORAGE_RELEASE_RESP_MSGID,
+					RequestArgs,
+					handle_request> Message;
+
+      static void send_request(NodeID target,
+			       RegionInstance inst);
+    };
+
     struct RemoteMemAllocRequest {
       struct RequestArgs {
 	int sender;
@@ -478,4 +559,4 @@ namespace Realm {
 
 #endif // ifndef REALM_MEM_IMPL_H
 
-#include "mem_impl.inl"
+#include "realm/mem_impl.inl"

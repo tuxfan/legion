@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@
 #ifndef REALM_INST_LAYOUT_H
 #define REALM_INST_LAYOUT_H
 
-#include "indexspace.h"
-#include "serialize.h"
+#include "realm/indexspace.h"
+#include "realm/serialize.h"
 
 #include <vector>
 #include <map>
@@ -70,7 +70,8 @@ namespace Realm {
 
     template <int N, typename T>
     static InstanceLayoutGeneric *choose_instance_layout(IndexSpace<N,T> is,
-							 const InstanceLayoutConstraints& ilc);
+							 const InstanceLayoutConstraints& ilc,
+                                                         const int dim_order[N]);
 
     size_t bytes_used;
     size_t alignment_reqd;
@@ -211,6 +212,7 @@ namespace Realm {
 
     // "write"
     AccessorRefHelper<FT>& operator=(const FT& newval);
+    AccessorRefHelper<FT>& operator=(const AccessorRefHelper<FT>& rhs);
 
   protected:
     RegionInstance inst;
@@ -294,16 +296,39 @@ namespace Realm {
 		   FieldID field_id, const Rect<N,T>& subrect,
 		   size_t subfield_offset = 0);
 
+    // these two constructors build accessors that incorporate an
+    //  affine coordinate transform before the lookup in the actual instance
+    template <int N2, typename T2>
+    AffineAccessor(RegionInstance inst,
+		   const Matrix<N2, N, T2>& transform,
+		   const Point<N2, T2>& offset,
+		   FieldID field_id, size_t subfield_offset = 0);
+
+    // note that the subrect here is in in the accessor's indexspace
+    //  (from which the corresponding subrectangle in the instance can be
+    //  easily determined)
+    template <int N2, typename T2>
+    AffineAccessor(RegionInstance inst,
+		   const Matrix<N2, N, T2>& transform,
+		   const Point<N2, T2>& offset,
+		   FieldID field_id, const Rect<N,T>& subrect,
+		   size_t subfield_offset = 0);
+
     __CUDA_HD__
     ~AffineAccessor(void);
 
-    static bool is_compatible(RegionInstance inst, ptrdiff_t field_offset);
-    static bool is_compatible(RegionInstance inst, ptrdiff_t field_offset, const Rect<N,T>& subrect);
-
-    template <typename INST>
-    static bool is_compatible(const INST &instance, unsigned field_id);
-    template <typename INST>
-    static bool is_compatible(const INST &instance, unsigned field_id, const Rect<N,T>& subrect);
+    static bool is_compatible(RegionInstance inst, FieldID field_id);
+    static bool is_compatible(RegionInstance inst, FieldID field_id, const Rect<N,T>& subrect);
+    template <int N2, typename T2>
+    static bool is_compatible(RegionInstance inst,
+			      const Matrix<N2, N, T2>& transform,
+			      const Point<N2, T2>& offset,
+			      FieldID field_id);
+    template <int N2, typename T2>
+    static bool is_compatible(RegionInstance inst,
+			      const Matrix<N2, N, T2>& transform,
+			      const Point<N2, T2>& offset,
+			      FieldID field_id, const Rect<N,T>& subrect);
 
     __CUDA_HD__
     FT *ptr(const Point<N,T>& p) const;
@@ -345,7 +370,7 @@ namespace Realm {
 
 }; // namespace Realm
 
-#include "inst_layout.inl"
+#include "realm/inst_layout.inl"
 
 #endif // ifndef REALM_INST_LAYOUT_H
 

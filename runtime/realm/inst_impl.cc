@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,15 @@
  * limitations under the License.
  */
 
-#include "inst_impl.h"
+#include "realm/inst_impl.h"
 
-#include "event_impl.h"
-#include "mem_impl.h"
-#include "logging.h"
-#include "runtime_impl.h"
-#include <realm/deppart/inst_helper.h>
+#include "realm/event_impl.h"
+#include "realm/mem_impl.h"
+#include "realm/logging.h"
+#include "realm/runtime_impl.h"
+#include "realm/deppart/inst_helper.h"
 #ifdef USE_HDF
-#include <realm/hdf5/hdf5_access.h>
+#include "realm/hdf5/hdf5_access.h"
 #endif
 
 TYPE_IS_SERIALIZABLE(Realm::InstanceLayoutGeneric::FieldLayout);
@@ -48,7 +48,6 @@ namespace Realm {
 	if(poisoned) {
 	  log_poison.info() << "poisoned deferred instance destruction skipped - POSSIBLE LEAK - inst=" << inst;
 	} else {
-	  log_inst.info() << "instance destroyed: inst=" << inst;
 	  inst.destroy();
 	  //get_runtime()->get_memory_impl(impl->memory)->destroy_instance(impl->me, true); 
 	}
@@ -82,8 +81,8 @@ namespace Realm {
 
     Memory RegionInstance::get_location(void) const
     {
-      RegionInstanceImpl *i_impl = get_runtime()->get_instance_impl(*this);
-      return i_impl->memory;
+      return ID::make_memory(ID(id).instance.owner_node,
+			     ID(id).instance.mem_idx).convert<Memory>();
     }
 
     /*static*/ Event RegionInstance::create_instance(RegionInstance& inst,
@@ -94,6 +93,29 @@ namespace Realm {
     {
       MemoryImpl *m_impl = get_runtime()->get_memory_impl(memory);
       RegionInstanceImpl *impl = m_impl->new_instance();
+      // we can fail to get a valid pointer if we are out of instance slots
+      if(!impl) {
+	inst = RegionInstance::NO_INST;
+	// import the profiling requests to see if anybody is paying attention to
+	//  failure
+	ProfilingMeasurementCollection pmc;
+	pmc.import_requests(prs);
+	if(pmc.wants_measurement<ProfilingMeasurements::InstanceStatus>()) {
+	  ProfilingMeasurements::InstanceStatus stat;
+	  stat.result = ProfilingMeasurements::InstanceStatus::INSTANCE_COUNT_EXCEEDED;
+	  stat.error_code = 0;
+	  pmc.add_measurement(stat);
+	} else {
+	  // fatal error
+	  log_inst.fatal() << "FATAL: instance count exceeded for memory " << memory;
+	  assert(0);
+	}
+	// generate a poisoned event for completion
+	GenEventImpl *ev = GenEventImpl::create_genevent();
+	Event ready_event = ev->current_event();
+	GenEventImpl::trigger(ready_event, true /*poisoned*/);
+	return ready_event;
+      }
 
       impl->metadata.layout = ilg;
       
@@ -141,15 +163,17 @@ namespace Realm {
 	  }
 	}
 	if(alloc_done) {
+	  // lost the race to the notification callback, so we trigger the
+	  //  ready event ourselves
 	  if(alloc_successful) {
 	    if(impl->measurements.wants_measurement<ProfilingMeasurements::InstanceTimeline>())
 	      impl->timeline.record_ready_time();
 	    GenEventImpl::trigger(ready_event, false /*!poisoned*/);
 	    ready_event = Event::NO_EVENT;
+	  } else {
+	    // poison the ready event and still return it
+	    GenEventImpl::trigger(ready_event, true /*poisoned*/);
 	  }
-	} else {
-	  // poison the ready event and still return it
-	  GenEventImpl::trigger(ready_event, true /*poisoned*/);
 	}
       }
 
@@ -157,6 +181,48 @@ namespace Realm {
       log_inst.info() << "instance created: inst=" << inst << " bytes=" << ilg->bytes_used << " ready=" << ready_event;
       log_inst.debug() << "instance layout: inst=" << inst << " layout=" << *ilg;
       return ready_event;
+    }
+
+    /*static*/ Event RegionInstance::create_external(RegionInstance &inst,
+                                                     Memory memory, uintptr_t base,
+                                                     InstanceLayoutGeneric *ilg,
+						     const ProfilingRequestSet& prs,
+						     Event wait_on)
+    {
+      MemoryImpl *m_impl = get_runtime()->get_memory_impl(memory);
+      RegionInstanceImpl *impl = m_impl->new_instance();
+
+      // This actually doesn't have any bytes used in realm land
+      ilg->bytes_used = 0;
+      impl->metadata.layout = ilg;
+      
+      if (!prs.empty()) {
+        impl->requests = prs;
+        impl->measurements.import_requests(impl->requests);
+        if(impl->measurements.wants_measurement<ProfilingMeasurements::InstanceTimeline>())
+          impl->timeline.record_create_time();
+      }
+
+      // This is a little scary because the result could be negative, but we know
+      // that unsigned undeflow produces correct results mod 2^64 so its ok
+      // Pray that we never have to debug this
+      unsigned char *impl_base = 
+        (unsigned char*)m_impl->get_direct_ptr(0/*offset*/, 0/*size*/);
+      size_t inst_offset = (size_t)(((unsigned char*)base) - impl_base);
+#ifndef NDEBUG
+      bool ok = 
+#endif
+        m_impl->allocate_instance_storage(impl->me,
+					  ilg->bytes_used,
+					  ilg->alignment_reqd,
+					  wait_on, 
+                                          inst_offset);
+      assert(ok);
+
+      inst = impl->me;
+      log_inst.info() << "external instance created: inst=" << inst;
+      log_inst.debug() << "external instance layout: inst=" << inst << " layout=" << *ilg;
+      return Event::NO_EVENT;
     }
 
     void RegionInstance::destroy(Event wait_on /*= Event::NO_EVENT*/) const
@@ -175,18 +241,23 @@ namespace Realm {
       // a poisoned precondition silently cancels the deletion - up to
       //  requestor to realize this has occurred since the deletion does
       //  not have its own completion event
-      if(!poisoned) {
-	// this does the right thing even though we're using an instance ID
-	MemoryImpl *mem_impl = get_runtime()->get_memory_impl(*this);
-	mem_impl->release_instance_storage(*this, wait_on);
-      }
+      if(poisoned)
+	return;
+
+      log_inst.info() << "instance destroyed: inst=" << *this;
+
+      // this does the right thing even though we're using an instance ID
+      MemoryImpl *mem_impl = get_runtime()->get_memory_impl(*this);
+      mem_impl->release_instance_storage(*this, wait_on);
     }
 
     void RegionInstance::destroy(const std::vector<DestroyedField>& destroyed_fields,
 				 Event wait_on /*= Event::NO_EVENT*/) const
     {
       // TODO: actually call destructor
-      assert(destroyed_fields.empty());
+      if(!destroyed_fields.empty()) {
+	log_inst.warning() << "WARNING: field destructors ignored - inst=" << *this;
+      }
       destroy(wait_on);
     }
 
@@ -355,9 +426,16 @@ namespace Realm {
       metadata.inst_offset = (size_t)-1;
       metadata.ready_event = Event::NO_EVENT;
       metadata.layout = 0;
+      
+      // Initialize this in case the user asks for profiling information
+      timeline.instance = _me;
     }
 
-    RegionInstanceImpl::~RegionInstanceImpl(void) {}
+    RegionInstanceImpl::~RegionInstanceImpl(void)
+    {
+      if(metadata.is_valid())
+	delete metadata.layout;
+    }
 
     void RegionInstanceImpl::notify_allocation(bool success, size_t offset)
     {
@@ -383,6 +461,9 @@ namespace Realm {
 	  
 	  // send any remaining incomplete profiling responses
 	  measurements.send_responses(requests);
+
+          // clear the measurments after we send the response
+          measurements.clear();
 
 	  // poison the completion event, if it exists
 	  Event ready_event = Event::NO_EVENT;
@@ -469,6 +550,34 @@ namespace Realm {
 
       // send any remaining incomplete profiling responses
       measurements.send_responses(requests);
+
+      // was this a successfully allocatated instance?
+      if(metadata.inst_offset != size_t(-2)) {
+	// send any required invalidation messages for metadata
+	bool recycle_now = metadata.initiate_cleanup(me.id);
+	if(recycle_now)
+	  recycle_instance();
+      } else {
+	// failed allocations never had valid metadata - recycle immediately
+	recycle_instance();
+      }
+    }
+
+    void RegionInstanceImpl::recycle_instance(void)
+    {
+      // delete an existing layout, if present
+      if(metadata.layout) {
+	delete metadata.layout;
+	metadata.layout = 0;
+      }
+
+      // set the offset back to the "unallocated" value
+      metadata.inst_offset = size_t(-1);
+
+      measurements.clear();
+
+      MemoryImpl *m_impl = get_runtime()->get_memory_impl(memory);
+      m_impl->release_instance(me);
     }
 
     // helper function to figure out which field we're in
@@ -500,8 +609,8 @@ namespace Realm {
     {
       MemoryImpl *mem = get_runtime()->get_memory_impl(memory);
 
-      // this exists for compatibility and assumes N=1, T=coord_t
-      const InstanceLayout<1,coord_t> *inst_layout = dynamic_cast<const InstanceLayout<1,coord_t> *>(metadata.layout);
+      // this exists for compatibility and assumes N=1, T=long long
+      const InstanceLayout<1,long long> *inst_layout = dynamic_cast<const InstanceLayout<1,long long> *>(metadata.layout);
       assert(inst_layout != 0);
 
       // look up the right field
@@ -517,9 +626,9 @@ namespace Realm {
 
       // also only works for a single piece
       assert(inst_layout->piece_lists[it->second.list_idx].pieces.size() == 1);
-      const InstanceLayoutPiece<1,coord_t> *piece = inst_layout->piece_lists[it->second.list_idx].pieces[0];
-      assert((piece->layout_type == InstanceLayoutPiece<1,coord_t>::AffineLayoutType));
-      const AffineLayoutPiece<1,coord_t> *affine = static_cast<const AffineLayoutPiece<1,coord_t> *>(piece);
+      const InstanceLayoutPiece<1,long long> *piece = inst_layout->piece_lists[it->second.list_idx].pieces[0];
+      assert((piece->layout_type == InstanceLayoutPiece<1,long long>::AffineLayoutType));
+      const AffineLayoutPiece<1,long long> *affine = static_cast<const AffineLayoutPiece<1,long long> *>(piece);
 
       // if the caller wants a particular stride and we differ (and have more
       //  than one element), fail
@@ -551,21 +660,6 @@ namespace Realm {
       base = ((char *)base) - (stride * affine->bounds.lo[0]);
      
       return true;
-    }
-
-    void RegionInstanceImpl::finalize_instance(void)
-    {
-      if (!requests.empty()) {
-        if (measurements.wants_measurement<
-                          ProfilingMeasurements::InstanceTimeline>()) {
-	  // set the instance ID correctly now - it wasn't available at construction time
-          timeline.instance = me;
-          timeline.record_delete_time();
-          measurements.add_measurement(timeline);
-        }
-        measurements.send_responses(requests);
-        requests.clear();
-      }
     }
 
     void *RegionInstanceImpl::Metadata::serialize(size_t& out_size) const

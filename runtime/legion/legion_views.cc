@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,16 +14,16 @@
  */
 
 #include "legion.h"
-#include "runtime.h"
-#include "legion_ops.h"
-#include "legion_tasks.h"
-#include "region_tree.h"
-#include "legion_spy.h"
-#include "legion_profiling.h"
-#include "legion_instances.h"
-#include "legion_views.h"
-#include "legion_analysis.h"
-#include "legion_context.h"
+#include "legion/runtime.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_tasks.h"
+#include "legion/region_tree.h"
+#include "legion/legion_spy.h"
+#include "legion/legion_profiling.h"
+#include "legion/legion_instances.h"
+#include "legion/legion_views.h"
+#include "legion/legion_analysis.h"
+#include "legion/legion_context.h"
 
 namespace Legion {
   namespace Internal {
@@ -39,31 +39,18 @@ namespace Legion {
                              AddressSpaceID own_addr,
                              RegionTreeNode *node, bool register_now)
       : DistributedCollectable(ctx->runtime, did, own_addr, register_now), 
-        context(ctx), logical_node(node), 
-        view_lock(Reservation::create_reservation()) 
+        context(ctx), logical_node(node)
     //--------------------------------------------------------------------------
     {
-#ifdef LEGION_GC
-      logical_node->add_base_resource_ref(LOGICAL_VIEW_REF);
-#else
-      logical_node->add_reference();
-#endif
+      logical_node->add_base_gc_ref(LOGICAL_VIEW_REF);
     }
 
     //--------------------------------------------------------------------------
     LogicalView::~LogicalView(void)
     //--------------------------------------------------------------------------
     {
-      if (is_owner() && registered_with_runtime)
-        unregister_with_runtime(VIEW_VIRTUAL_CHANNEL);
-#ifdef LEGION_GC
-      if (logical_node->remove_base_resource_ref(LOGICAL_VIEW_REF))
-#else
-      if (logical_node->remove_reference())
-#endif
+      if (logical_node->remove_base_gc_ref(LOGICAL_VIEW_REF))
         delete logical_node;
-      view_lock.destroy_reservation();
-      view_lock = Reservation::NO_RESERVATION;
     }
 
     //--------------------------------------------------------------------------
@@ -138,7 +125,7 @@ namespace Legion {
       RtEvent ready = RtEvent::NO_RT_EVENT;
       LogicalView *view = runtime->find_or_request_logical_view(did, ready);
       if (ready.exists())
-        ready.lg_wait();
+        ready.wait();
 #ifdef DEBUG_LEGION
       assert(view->is_instance_view());
 #endif
@@ -159,7 +146,7 @@ namespace Legion {
       RtEvent ready = RtEvent::NO_RT_EVENT;
       LogicalView *view = runtime->find_or_request_logical_view(did, ready);
       if (ready.exists())
-        ready.lg_wait();
+        ready.wait();
 #ifdef DEBUG_LEGION
       assert(view->is_instance_view());
 #endif
@@ -178,7 +165,7 @@ namespace Legion {
       RtEvent ready = RtEvent::NO_RT_EVENT;
       LogicalView *view = runtime->find_or_request_logical_view(did, ready);
       if (ready.exists())
-        ready.lg_wait();
+        ready.wait();
 #ifdef DEBUG_LEGION
       assert(view->is_instance_view());
 #endif
@@ -201,7 +188,7 @@ namespace Legion {
       RtEvent ready = RtEvent::NO_RT_EVENT;
       LogicalView *view = runtime->find_or_request_logical_view(did, ready);
       if (ready.exists())
-        ready.lg_wait();
+        ready.wait();
 #ifdef DEBUG_LEGION
       assert(view->is_instance_view());
 #endif
@@ -296,10 +283,6 @@ namespace Legion {
       assert(previous_epoch_users.empty());
       assert(outstanding_gc_events.empty());
 #endif
-#ifdef LEGION_GC
-      log_garbage.info("GC Deletion %lld %d", 
-          LEGION_DISTRIBUTED_ID_FILTER(did), local_space);
-#endif
     }
 
     //--------------------------------------------------------------------------
@@ -370,7 +353,7 @@ namespace Legion {
         RegionTreeNode *child_node = logical_node->get_tree_child(c);
         // Allocate the DID eagerly
         DistributedID child_did = 
-          context->runtime->get_available_distributed_id(false);
+          context->runtime->get_available_distributed_id();
         bool free_child_did = false;
         MaterializedView *child_view = NULL;
         {
@@ -393,7 +376,8 @@ namespace Legion {
             children[c] = child_view;
           }
           if (free_child_did)
-            context->runtime->free_distributed_id(child_did);
+            context->runtime->recycle_distributed_id(child_did,
+                                                     RtEvent::NO_RT_EVENT);
           return child_view;
         }
       }
@@ -411,12 +395,12 @@ namespace Legion {
           rez.serialize(wait_on);
         }
         runtime->send_subview_did_request(owner_space, rez); 
-        wait_on.lg_wait();
+        wait_on.wait();
         RtEvent ready;
         LogicalView *child_view = 
           context->runtime->find_or_request_logical_view(child_did, ready);
         if (ready.exists())
-          ready.lg_wait();
+          ready.wait();
 #ifdef DEBUG_LEGION
         assert(child_view->is_materialized_view());
 #endif
@@ -1060,7 +1044,8 @@ namespace Legion {
         assert(!IS_REDUCE(usage)); // no user reductions currently, might change
 #endif
         // Only writing if we are overwriting, otherwise we are also reading
-        perform_remote_valid_check(user_mask, versions, !IS_WRITE_ONLY(usage));
+        perform_remote_valid_check(user_mask, versions, 
+                                   !HAS_WRITE_DISCARD(usage));
       }
       std::set<ApEvent> dead_events;
       LegionMap<ApEvent,FieldMask>::aligned filter_current_users, 
@@ -1149,7 +1134,8 @@ namespace Legion {
         assert(!IS_REDUCE(usage)); // no reductions for now, might change
 #endif
         // We are reading if we are not overwriting
-        perform_remote_valid_check(user_mask, versions, !IS_WRITE_ONLY(usage));
+        perform_remote_valid_check(user_mask, versions, 
+                                   !HAS_WRITE_DISCARD(usage));
       }
       std::set<ApEvent> dead_events;
       LegionMap<ApEvent,FieldMask>::aligned filter_current_users;
@@ -1608,6 +1594,52 @@ namespace Legion {
         outstanding_gc_events.insert(*it);
       }
     }    
+
+    //--------------------------------------------------------------------------
+    void MaterializedView::filter_invalid_fields(FieldMask &to_filter,
+                                                 VersionInfo &version_info)
+    //--------------------------------------------------------------------------
+    {
+      // If we're not the parent then keep going up
+      if ((parent != NULL) && !version_info.is_upper_bound_node(logical_node))
+        parent->filter_invalid_fields(to_filter, version_info);
+      // If we still have fields to filter, then do that now
+      if (!!to_filter)
+      {
+        // If we're not the owner then make sure that we are up to date
+        if (!is_logical_owner())
+          perform_remote_valid_check(to_filter, &version_info, true/*reading*/);
+        // Get the version numbers that we need 
+        FieldVersions needed_versions;
+        version_info.get_field_versions(logical_node, false/*split prev*/,
+                                        to_filter, needed_versions);
+        // Need the lock in read only mode while touching current versions
+        AutoLock v_lock(view_lock,1,false/*exclusive*/);
+        for (FieldVersions::iterator it = needed_versions.begin();
+              it != needed_versions.end(); it++)
+        {
+          std::map<VersionID,FieldMask>::const_iterator finder =  
+            current_versions.find(it->first);
+          if (finder != current_versions.end())
+          {
+            const FieldMask to_remove = it->second - finder->second;
+            if (!!to_remove)
+            {
+              to_filter -= to_remove;
+              if (!to_filter)
+                return;
+            }
+          }
+          else
+          {
+            // None of the fields are at the right version number
+            to_filter -= it->second;
+            if (!to_filter)
+              return;
+          }
+        }
+      }
+    }
 
     //--------------------------------------------------------------------------
     void MaterializedView::find_copy_version_updates(const FieldMask &copy_mask,
@@ -2892,7 +2924,7 @@ namespace Legion {
               rez.serialize(wait_on);
             }
             runtime->send_atomic_reservation_request(owner_space, rez);
-            wait_on.lg_wait();
+            wait_on.wait();
             // Now retake the lock and get the remaining reservations
             AutoLock v_lock(view_lock, 1, false);
             for (std::vector<FieldID>::const_iterator it = 
@@ -3077,8 +3109,8 @@ namespace Legion {
           // Have to static cast this since it might not be ready
           args.parent = static_cast<MaterializedView*>(par_view);
           args.context_uid = context_uid;
-          runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-             NULL/*op*/, Runtime::merge_events(par_ready, man_ready));
+          runtime->issue_runtime_meta_task(args, LG_LATENCY_DEFERRED_PRIORITY,
+                                  Runtime::merge_events(par_ready, man_ready));
           return;
         }
 #ifdef DEBUG_LEGION
@@ -3087,7 +3119,7 @@ namespace Legion {
         parent = par_view->as_materialized_view();
       }
       if (man_ready.exists())
-        man_ready.lg_wait();
+        man_ready.wait();
 #ifdef DEBUG_LEGION
       assert(phy_man->is_instance_manager());
 #endif
@@ -3284,7 +3316,7 @@ namespace Legion {
         {
           // If we are the base caller, then we do the wait
           RtEvent wait_for = Runtime::merge_events(local_wait_on);
-          wait_for.lg_wait();
+          wait_for.wait();
         }
         else // Otherwise add the events to the set to wait on
           wait_on->insert(local_wait_on.begin(), local_wait_on.end());
@@ -4566,7 +4598,7 @@ namespace Legion {
     /////////////////////////////////////////////////////////////
 
     //--------------------------------------------------------------------------
-    CompositeBase::CompositeBase(Reservation &r)
+    CompositeBase::CompositeBase(LocalLock &r)
       : base_lock(r)
     //--------------------------------------------------------------------------
     {
@@ -5003,10 +5035,6 @@ namespace Legion {
       // Remove the reference on our context
       if (owner_context->remove_reference())
         delete owner_context;
-#ifdef LEGION_GC
-      log_garbage.info("GC Deletion %lld %d", 
-          LEGION_DISTRIBUTED_ID_FILTER(did), local_space);
-#endif
     }
 
     //--------------------------------------------------------------------------
@@ -5024,7 +5052,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       Runtime *runtime = context->runtime; 
-      DistributedID result_did = runtime->get_available_distributed_id(false);
+      DistributedID result_did = runtime->get_available_distributed_id();
       CompositeView *result = new CompositeView(context, result_did,
           runtime->address_space, logical_node, version_info, closed_tree, 
           owner_context, true/*register now*/);
@@ -5074,16 +5102,14 @@ namespace Legion {
     void CompositeView::notify_active(ReferenceMutator *mutator)
     //--------------------------------------------------------------------------
     {
-      if (!is_owner())
-        send_remote_gc_update(owner_space, mutator, 1, true/*add*/);
+      // No need to do anything
     }
 
     //--------------------------------------------------------------------------
     void CompositeView::notify_inactive(ReferenceMutator *mutator)
     //--------------------------------------------------------------------------
     {
-      if (!is_owner())
-        send_remote_gc_update(owner_space, mutator, 1, false/*add*/);
+      // No need to do anything
     }
 
     //--------------------------------------------------------------------------
@@ -5578,8 +5604,8 @@ namespace Legion {
         RtEvent wait_on = Runtime::merge_events(ready_events);
         DeferCompositeViewRegistrationArgs args;
         args.view = view;
-        runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY, 
-                                         NULL/*op*/, wait_on);
+        runtime->issue_runtime_meta_task(args, LG_LATENCY_DEFERRED_PRIORITY,
+                                         wait_on);
         // Not ready to perform registration yet
         return;
       }
@@ -5893,7 +5919,7 @@ namespace Legion {
       args.dc = dc;
       args.did = did;
       return context->runtime->issue_runtime_meta_task(args, 
-          LG_LATENCY_PRIORITY, NULL/*op*/, precondition);
+          LG_LATENCY_DEFERRED_PRIORITY, precondition);
     }
 
     //--------------------------------------------------------------------------
@@ -5913,8 +5939,7 @@ namespace Legion {
     CompositeNode::CompositeNode(RegionTreeNode* node, CompositeBase *p,
                                  DistributedID own_did)
       : CompositeBase(node_lock), logical_node(node), parent(p), 
-        owner_did(own_did), node_lock(Reservation::create_reservation()),
-        currently_valid(false)
+        owner_did(own_did), currently_valid(false)
     //--------------------------------------------------------------------------
     {
     }
@@ -5932,8 +5957,6 @@ namespace Legion {
     CompositeNode::~CompositeNode(void)
     //--------------------------------------------------------------------------
     {
-      node_lock.destroy_reservation();
-      node_lock = Reservation::NO_RESERVATION;
       for (LegionMap<VersionState*,FieldMask>::aligned::const_iterator it = 
             version_states.begin(); it != version_states.end(); it++)
       {
@@ -6045,8 +6068,8 @@ namespace Legion {
           args.capture_event = capture_event;
           Runtime *runtime = logical_node->context->runtime;
           RtEvent precondition = 
-            runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                             NULL/*op*/, capture_precondition);
+            runtime->issue_runtime_meta_task(args, LG_LATENCY_DEFERRED_PRIORITY,
+                                             capture_precondition);
           preconditions.insert(precondition);
         }
         else // We can do the capture now!
@@ -6058,7 +6081,7 @@ namespace Legion {
       if (!preconditions.empty())
       {
         RtEvent wait_on = Runtime::merge_events(preconditions);
-        wait_on.lg_wait();
+        wait_on.wait();
       }
     }
 
@@ -6225,8 +6248,8 @@ namespace Legion {
           args.state = state;
           args.owner_did = owner_did;
           RtEvent precondition = 
-            runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                             NULL/*op*/, ready);
+            runtime->issue_runtime_meta_task(args, LG_LATENCY_DEFERRED_PRIORITY,
+                                             ready);
           preconditions.insert(precondition);
         }
         else
@@ -6255,13 +6278,7 @@ namespace Legion {
       {
         for (LegionMap<VersionState*,FieldMask>::aligned::const_iterator it = 
               version_states.begin(); it != version_states.end(); it++)
-        {
-          if (it->first->is_owner())
-            it->first->add_nested_valid_ref(owner_did, mutator);
-          else
-            it->first->send_remote_valid_update(it->first->owner_space,
-                                      mutator, 1/*count*/, true/*add*/);
-        }
+          it->first->add_nested_valid_ref(owner_did, mutator);
       }
       for (LegionMap<CompositeNode*,FieldMask>::aligned::const_iterator it = 
             children.begin(); it != children.end(); it++)
@@ -6286,13 +6303,7 @@ namespace Legion {
       {
         for (LegionMap<VersionState*,FieldMask>::aligned::const_iterator it = 
               version_states.begin(); it != version_states.end(); it++)
-        {
-          if (it->first->is_owner())
-            it->first->remove_nested_valid_ref(owner_did, mutator);
-          else
-            it->first->send_remote_valid_update(it->first->owner_space,
-                                    mutator, 1/*count*/, false/*add*/);
-        }
+          it->first->remove_nested_valid_ref(owner_did, mutator);
       }
       for (LegionMap<CompositeNode*,FieldMask>::aligned::const_iterator it = 
             children.begin(); it != children.end(); it++)
@@ -6400,13 +6411,7 @@ namespace Legion {
         state->add_nested_resource_ref(owner_did);
         version_states[state] = mask;
         if (root && currently_valid)
-        {
-          if (state->is_owner())
-            state->add_nested_valid_ref(owner_did, mutator);
-          else
-            state->send_remote_valid_update(state->owner_space, mutator,
-                                            1/*count*/, true/*add*/);
-        }
+          state->add_nested_valid_ref(owner_did, mutator);
       }
       else
         finder->second |= mask;
@@ -6480,10 +6485,6 @@ namespace Legion {
     {
       if (value->remove_reference())
         delete value;
-#ifdef LEGION_GC
-      log_garbage.info("GC Deletion %lld %d", 
-          LEGION_DISTRIBUTED_ID_FILTER(did), local_space);
-#endif
     }
 
     //--------------------------------------------------------------------------
@@ -6706,10 +6707,11 @@ namespace Legion {
     PhiView::PhiView(RegionTreeForest *ctx, DistributedID did, 
                      AddressSpaceID owner_space,
                      DeferredVersionInfo *info, RegionTreeNode *node, 
-                     PredEvent tguard, PredEvent fguard, bool register_now) 
+                     PredEvent tguard, PredEvent fguard, 
+                     InnerContext *owner, bool register_now) 
       : DeferredView(ctx, encode_phi_did(did), owner_space, node, 
-                     register_now), 
-        true_guard(tguard), false_guard(fguard), version_info(info)
+                     register_now), true_guard(tguard), false_guard(fguard), 
+        version_info(info), owner_context(owner)
     //--------------------------------------------------------------------------
     {
       version_info->add_reference();
@@ -6722,8 +6724,9 @@ namespace Legion {
     //--------------------------------------------------------------------------
     PhiView::PhiView(const PhiView &rhs)
       : DeferredView(NULL, 0, 0, NULL, false),
-        true_guard(PredEvent::NO_PRED_EVENT), 
-        false_guard(PredEvent::NO_PRED_EVENT), version_info(NULL)
+        true_guard(PredEvent::NO_PRED_EVENT),
+        false_guard(PredEvent::NO_PRED_EVENT), 
+        version_info(NULL), owner_context(NULL)
     //--------------------------------------------------------------------------
     {
       // should never be called
@@ -6750,10 +6753,6 @@ namespace Legion {
       false_views.clear();
       if (version_info->remove_reference())
         delete version_info;
-#ifdef LEGION_GC
-      log_garbage.info("GC Deletion %lld %d", 
-          LEGION_DISTRIBUTED_ID_FILTER(did), local_space);
-#endif
     }
 
     //--------------------------------------------------------------------------
@@ -7105,7 +7104,7 @@ namespace Legion {
       args.dc = dc;
       args.did = did;
       return context->runtime->issue_runtime_meta_task(args,
-          LG_LATENCY_PRIORITY, NULL/*op*/, precondition);
+          LG_LATENCY_DEFERRED_PRIORITY, precondition);
     }
 
     //--------------------------------------------------------------------------
@@ -7126,6 +7125,7 @@ namespace Legion {
         rez.serialize(true_guard);
         rez.serialize(false_guard);
         version_info->pack_version_numbers(rez);
+        rez.serialize<UniqueID>(owner_context->get_context_uid());
         pack_phi_view(rez);
       }
       runtime->send_phi_view(target, rez);
@@ -7204,18 +7204,21 @@ namespace Legion {
       derez.deserialize(false_guard);
       DeferredVersionInfo *version_info = new DeferredVersionInfo();
       version_info->unpack_version_numbers(derez, runtime->forest);
+      UniqueID owner_uid;
+      derez.deserialize(owner_uid);
+      InnerContext *owner_context = runtime->find_context(owner_uid);
       // Make the phi view but don't register it yet
       void *location;
       PhiView *view = NULL;
       if (runtime->find_pending_collectable_location(did, location))
         view = new(location) PhiView(runtime->forest,
                                      did, owner, version_info, target_node, 
-                                     true_guard, false_guard, 
+                                     true_guard, false_guard, owner_context, 
                                      false/*register_now*/);
       else
         view = new PhiView(runtime->forest, did, owner,
                            version_info, target_node, true_guard, 
-                           false_guard, false/*register now*/);
+                           false_guard, owner_context, false/*register now*/);
       // Unpack all the internal data structures
       std::set<RtEvent> ready_events;
       view->unpack_phi_view(derez, ready_events);
@@ -7224,8 +7227,8 @@ namespace Legion {
         RtEvent wait_on = Runtime::merge_events(ready_events);
         DeferPhiViewRegistrationArgs args;
         args.view = view;
-        runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
-                                         NULL/*op*/, wait_on);
+        runtime->issue_runtime_meta_task(args, LG_LATENCY_DEFERRED_PRIORITY,
+                                         wait_on);
         return;
       }
       view->register_with_runtime(NULL/*remote registration not needed*/);
@@ -7309,10 +7312,6 @@ namespace Legion {
       assert(reduction_users.empty());
       assert(reading_users.empty());
       assert(outstanding_gc_events.empty());
-#endif
-#ifdef LEGION_GC
-      log_garbage.info("GC Deletion %lld %d", 
-          LEGION_DISTRIBUTED_ID_FILTER(did), local_space);
 #endif
     }
 
@@ -8213,7 +8212,7 @@ namespace Legion {
       PhysicalManager *phy_man = 
         runtime->find_or_request_physical_manager(manager_did, man_ready);
       if (man_ready.exists())
-        man_ready.lg_wait();
+        man_ready.wait();
 #ifdef DEBUG_LEGION
       assert(phy_man->is_reduction_manager());
 #endif
@@ -8264,7 +8263,7 @@ namespace Legion {
         context->runtime->send_view_update_request(logical_owner, rez);
       }
       if (!remote_request_event.has_triggered())
-        remote_request_event.lg_wait();
+        remote_request_event.wait();
     }
 
     //--------------------------------------------------------------------------

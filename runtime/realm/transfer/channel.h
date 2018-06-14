@@ -1,5 +1,5 @@
-/* Copyright 2017 Stanford University
- * Copyright 2017 Los Alamos National Laboratory
+/* Copyright 2018 Stanford University
+ * Copyright 2018 Los Alamos National Laboratory
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,12 +28,12 @@
 #include <assert.h>
 #include <pthread.h>
 #include <string.h>
-#include "lowlevel_dma.h"
+#include "realm/transfer/lowlevel_dma.h"
 
-#include <realm/id.h>
-#include <realm/runtime_impl.h>
-#include <realm/mem_impl.h>
-#include <realm/inst_impl.h>
+#include "realm/id.h"
+#include "realm/runtime_impl.h"
+#include "realm/mem_impl.h"
+#include "realm/inst_impl.h"
 
 #ifdef USE_CUDA
 #include "realm/cuda/cuda_module.h"
@@ -179,7 +179,8 @@ namespace Realm {
       // whether I am a 1D or 2D transfer
       Dimension dim;
       // sequence info - used to update read/write counts, handle reordering
-      size_t seq_pos, seq_count;
+      size_t read_seq_pos, read_seq_count;
+      size_t write_seq_pos, write_seq_count;
     };
 
     class SequenceAssembler {
@@ -306,13 +307,16 @@ namespace Realm {
       NodeID launch_node;
       //uint64_t /*bytes_submit, */bytes_read, bytes_write/*, bytes_total*/;
       bool iteration_completed;
-      uint64_t bytes_total; // not valid until iteration_completed == true
+      uint64_t read_bytes_total, write_bytes_total; // not valid until iteration_completed == true
+      uint64_t read_bytes_cons, write_bytes_cons; // used for serdez, updated atomically
       uint64_t pre_bytes_total;
       //uint64_t next_bytes_read;
       MemoryImpl *src_mem;
       MemoryImpl *dst_mem;
       TransferIterator *src_iter;
       TransferIterator *dst_iter;
+      const CustomSerdezUntyped *src_serdez_op;
+      const CustomSerdezUntyped *dst_serdez_op;
       size_t src_ib_offset, src_ib_size;
       // maximum size for a single request
       uint64_t max_req_size;
@@ -349,6 +353,7 @@ namespace Realm {
               bool _mark_start,
 	      Memory _src_mem, Memory _dst_mem,
 	      TransferIterator *_src_iter, TransferIterator *_dst_iter,
+	      CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
               uint64_t _max_req_size, int _priority,
               XferOrder::Type _order, XferKind _kind, XferDesFence* _complete_fence);
 
@@ -421,6 +426,7 @@ namespace Realm {
                     bool mark_started,
 		    Memory _src_mem, Memory _dst_mem,
 		    TransferIterator *_src_iter, TransferIterator *_dst_iter,
+		    CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
                     uint64_t max_req_size, long max_nr, int _priority,
                     XferOrder::Type _order, XferDesFence* _complete_fence);
 
@@ -447,6 +453,7 @@ namespace Realm {
                     bool mark_started,
 		    Memory _src_mem, Memory _dst_mem,
 		    TransferIterator *_src_iter, TransferIterator *_dst_iter,
+		    CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
                     uint64_t _max_req_size, long max_nr, int _priority,
                     XferOrder::Type _order, XferKind _kind, XferDesFence* _complete_fence);
 
@@ -472,6 +479,7 @@ namespace Realm {
                          bool mark_started,
 			 Memory _src_mem, Memory _dst_mem,
 			 TransferIterator *_src_iter, TransferIterator *_dst_iter,
+			 CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
                          uint64_t max_req_size, long max_nr, int _priority,
                          XferOrder::Type _order, XferDesFence* _complete_fence);
 
@@ -503,6 +511,7 @@ namespace Realm {
                  bool mark_started,
 		 Memory _src_mem, Memory _dst_mem,
 		 TransferIterator *_src_iter, TransferIterator *_dst_iter,
+		 CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
                  uint64_t _max_req_size, long max_nr, int _priority,
                  XferOrder::Type _order, XferKind _kind, XferDesFence* _complete_fence);
       ~GPUXferDes()
@@ -537,6 +546,7 @@ namespace Realm {
                  RegionInstance inst,
 		 Memory _src_mem, Memory _dst_mem,
 		 TransferIterator *_src_iter, TransferIterator *_dst_iter,
+		 CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
                  uint64_t _max_req_size, long max_nr, int _priority,
                  XferOrder::Type _order, XferKind _kind, XferDesFence* _complete_fence);
       ~HDFXferDes()
@@ -569,8 +579,12 @@ namespace Realm {
 
     class Channel {
     public:
+      Channel(XferDes::XferKind _kind)
+	: node(my_node_id), kind(_kind) {}
       virtual ~Channel() {};
     public:
+      // which node manages this channel
+      NodeID node;
       // the kind of XferDes this channel can accept
       XferDes::XferKind kind;
       /*
@@ -591,10 +605,118 @@ namespace Realm {
        * submitting requests
        */
       virtual long available() = 0;
+
+      struct SupportedPath {
+	enum SrcDstType {
+	  SPECIFIC_MEMORY,
+	  LOCAL_KIND,
+	  GLOBAL_KIND
+	};
+	SrcDstType src_type, dst_type;
+	union {
+	  Memory src_mem;
+	  Memory::Kind src_kind;
+	};
+	union {
+	  Memory dst_mem;
+	  Memory::Kind dst_kind;
+	};
+	unsigned bandwidth; // units = MB/s = B/us
+	unsigned latency;   // units = ns
+	bool redops_allowed; // TODO: list of redops?
+	bool serdez_allowed; // TODO: list of serdez ops?
+      };
+
+      const std::vector<SupportedPath>& get_paths(void) const;
+
+      virtual bool supports_path(Memory src_mem, Memory dst_mem,
+				 CustomSerdezID src_serdez_id,
+				 CustomSerdezID dst_serdez_id,
+				 ReductionOpID redop_id,
+				 unsigned *bw_ret = 0,
+				 unsigned *lat_ret = 0);
+
+      template <typename S>
+      bool serialize_remote_info(S& serializer) const;
+
+      void print(std::ostream& os) const;
+
     protected:
+      void add_path(Memory src_mem, Memory dst_mem,
+		    unsigned bandwidth, unsigned latency,
+		    bool redops_allowed, bool serdez_allowed);
+      void add_path(Memory src_mem, Memory::Kind dst_kind, bool dst_global,
+		    unsigned bandwidth, unsigned latency,
+		    bool redops_allowed, bool serdez_allowed);
+      void add_path(Memory::Kind src_kind, bool src_global,
+		    Memory::Kind dst_kind, bool dst_global,
+		    unsigned bandwidth, unsigned latency,
+		    bool redops_allowed, bool serdez_allowed);
+
+      std::vector<SupportedPath> paths;
       // std::deque<Copy_1D> copies_1D;
       // std::deque<Copy_2D> copies_2D;
     };
+
+ 
+    std::ostream& operator<<(std::ostream& os, const Channel::SupportedPath& p);
+
+    inline std::ostream& operator<<(std::ostream& os, const Channel& c)
+    {
+      c.print(os);
+      return os;
+    }
+
+    template <typename S>
+    inline bool Channel::serialize_remote_info(S& serializer) const
+    {
+      return ((serializer << node) &&
+	      (serializer << kind) &&
+	      (serializer << paths));
+    }
+
+    class RemoteChannel : public Channel {
+    protected:
+      RemoteChannel(void);
+
+    public:
+      template <typename S>
+      static RemoteChannel *deserialize_new(S& serializer);
+
+      /*
+       * Submit nr asynchronous requests into the channel instance.
+       * This is supposed to be a non-blocking function call, and
+       * should immediately return the number of requests that are
+       * successfully submitted.
+       */
+      virtual long submit(Request** requests, long nr);
+
+      /*
+       *
+       */
+      virtual void pull();
+
+      /*
+       * Return the number of slots that are available for
+       * submitting requests
+       */
+      virtual long available();
+    };
+
+    template <typename S>
+    /*static*/ RemoteChannel *RemoteChannel::deserialize_new(S& serializer)
+    {
+      RemoteChannel *rc = new RemoteChannel;
+      bool ok = ((serializer >> rc->node) &&
+		 (serializer >> rc->kind) &&
+		 (serializer >> rc->paths));
+      if(ok) {
+	return rc;
+      } else {
+	delete rc;
+	return 0;
+      }
+    }
 
     class MemcpyChannel;
 
@@ -619,6 +741,14 @@ namespace Realm {
       long submit(Request** requests, long nr);
       void pull();
       long available();
+
+      virtual bool supports_path(Memory src_mem, Memory dst_mem,
+				 CustomSerdezID src_serdez_id,
+				 CustomSerdezID dst_serdez_id,
+				 ReductionOpID redop_id,
+				 unsigned *bw_ret = 0,
+				 unsigned *lat_ret = 0);
+
       bool is_stopped;
     private:
       std::deque<MemcpyRequest*> pending_queue, finished_queue;
@@ -705,60 +835,25 @@ namespace Realm {
 #endif
       }
       ~ChannelManager(void);
-      MemcpyChannel* create_memcpy_channel(long max_nr) {
-        assert(memcpy_channel == NULL);
-        memcpy_channel = new MemcpyChannel(max_nr);
-        return memcpy_channel;
-      }
-      GASNetChannel* create_gasnet_read_channel(long max_nr) {
-        assert(gasnet_read_channel == NULL);
-        gasnet_read_channel = new GASNetChannel(max_nr, XferDes::XFER_GASNET_READ);
-        return gasnet_read_channel;
-      }
-      GASNetChannel* create_gasnet_write_channel(long max_nr) {
-        assert(gasnet_write_channel == NULL);
-        gasnet_write_channel = new GASNetChannel(max_nr, XferDes::XFER_GASNET_WRITE);
-        return gasnet_write_channel;
-      }
-      RemoteWriteChannel* create_remote_write_channel(long max_nr) {
-        assert(remote_write_channel == NULL);
-        remote_write_channel = new RemoteWriteChannel(max_nr);
-        return remote_write_channel;
-      }
+      MemcpyChannel* create_memcpy_channel(long max_nr);
+      GASNetChannel* create_gasnet_read_channel(long max_nr);
+      GASNetChannel* create_gasnet_write_channel(long max_nr);
+      RemoteWriteChannel* create_remote_write_channel(long max_nr);
       DiskChannel* create_disk_read_channel(long max_nr);
       DiskChannel* create_disk_write_channel(long max_nr);
       FileChannel* create_file_read_channel(long max_nr);
       FileChannel* create_file_write_channel(long max_nr);
 #ifdef USE_CUDA
-      GPUChannel* create_gpu_to_fb_channel(long max_nr, Cuda::GPU* src_gpu) {
-        gpu_to_fb_channels[src_gpu] = new GPUChannel(src_gpu, max_nr, XferDes::XFER_GPU_TO_FB);
-        return gpu_to_fb_channels[src_gpu];
-      }
-      GPUChannel* create_gpu_from_fb_channel(long max_nr, Cuda::GPU* src_gpu) {
-        gpu_from_fb_channels[src_gpu] = new GPUChannel(src_gpu, max_nr, XferDes::XFER_GPU_FROM_FB);
-        return gpu_from_fb_channels[src_gpu];
-      }
-      GPUChannel* create_gpu_in_fb_channel(long max_nr, Cuda::GPU* src_gpu) {
-        gpu_in_fb_channels[src_gpu] = new GPUChannel(src_gpu, max_nr, XferDes::XFER_GPU_IN_FB);
-        return gpu_in_fb_channels[src_gpu];
-      }
-      GPUChannel* create_gpu_peer_fb_channel(long max_nr, Cuda::GPU* src_gpu) {
-        gpu_peer_fb_channels[src_gpu] = new GPUChannel(src_gpu, max_nr, XferDes::XFER_GPU_PEER_FB);
-        return gpu_peer_fb_channels[src_gpu];
-      }
+      GPUChannel* create_gpu_to_fb_channel(long max_nr, Cuda::GPU* src_gpu);
+      GPUChannel* create_gpu_from_fb_channel(long max_nr, Cuda::GPU* src_gpu);
+      GPUChannel* create_gpu_in_fb_channel(long max_nr, Cuda::GPU* src_gpu);
+      GPUChannel* create_gpu_peer_fb_channel(long max_nr, Cuda::GPU* src_gpu);
 #endif
 #ifdef USE_HDF
-      HDFChannel* create_hdf_read_channel(long max_nr) {
-        assert(hdf_read_channel == NULL);
-        hdf_read_channel = new HDFChannel(max_nr, XferDes::XFER_HDF_READ);
-        return hdf_read_channel;
-      }
-      HDFChannel* create_hdf_write_channel(long max_nr) {
-        assert(hdf_write_channel == NULL);
-        hdf_write_channel = new HDFChannel(max_nr, XferDes::XFER_HDF_WRITE);
-        return hdf_write_channel;
-      }
+      HDFChannel* create_hdf_read_channel(long max_nr);
+      HDFChannel* create_hdf_write_channel(long max_nr);
 #endif
+
       MemcpyChannel* get_memcpy_channel() {
         return memcpy_channel;
       }
@@ -1041,6 +1136,7 @@ namespace Realm {
                                bool mark_started,
 			       Memory _src_mem, Memory _dst_mem,
 			       TransferIterator *_src_iter, TransferIterator *_dst_iter,
+			       CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
                                uint64_t max_req_size, long max_nr, int priority,
                                XferOrder::Type order, XferDes::XferKind kind,
                                XferDesFence* fence, RegionInstance inst = RegionInstance::NO_INST);
@@ -1354,6 +1450,7 @@ namespace Realm {
                          bool mark_started,
 			 Memory _src_mem, Memory _dst_mem,
 			 TransferIterator *_src_iter, TransferIterator *_dst_iter,
+			 CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
                          uint64_t _max_req_size, long max_nr, int _priority,
                          XferOrder::Type _order, XferDes::XferKind _kind,
                          XferDesFence* _complete_fence, RegionInstance inst = RegionInstance::NO_INST);

@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,13 @@
 #define __LEGION_OPERATIONS_H__
 
 #include "legion.h"
-#include "runtime.h"
-#include "region_tree.h"
-#include "legion_mapping.h"
-#include "legion_utilities.h"
-#include "legion_allocation.h"
-#include "legion_analysis.h"
-#include "mapper_manager.h"
+#include "legion/runtime.h"
+#include "legion/region_tree.h"
+#include "legion/legion_mapping.h"
+#include "legion/legion_utilities.h"
+#include "legion/legion_allocation.h"
+#include "legion/legion_analysis.h"
+#include "legion/mapper_manager.h"
 
 namespace Legion {
   namespace Internal {
@@ -105,67 +105,106 @@ namespace Legion {
         "Task",                     \
       }
     public:
-      struct PrepipelineArgs : public LgTaskArgs<PrepipelineArgs> {
+      struct TriggerOpArgs : public LgTaskArgs<TriggerOpArgs> {
       public:
-        static const LgTaskID TASK_ID = LG_PRE_PIPELINE_ID;
+        static const LgTaskID TASK_ID = LG_TRIGGER_OP_ID;
       public:
-        Operation *proxy_this;
+        TriggerOpArgs(Operation *o)
+          : LgTaskArgs<TriggerOpArgs>(o->get_unique_op_id()), op(o) { }
+      public:
+        Operation *const op;
       };
       struct DeferredReadyArgs : public LgTaskArgs<DeferredReadyArgs> {
       public:
         static const LgTaskID TASK_ID = LG_DEFERRED_READY_TRIGGER_ID;
       public:
-        Operation *proxy_this;
+        DeferredReadyArgs(Operation *op)
+          : LgTaskArgs<DeferredReadyArgs>(op->get_unique_op_id()),
+            proxy_this(op) { }
+      public:
+        Operation *const proxy_this;
       };
       struct DeferredEnqueueArgs : public LgTaskArgs<DeferredEnqueueArgs> {
       public:
         static const LgTaskID TASK_ID = LG_DEFERRED_ENQUEUE_OP_ID;
       public:
-        Operation *proxy_this;
-        LgPriority priority;
+        DeferredEnqueueArgs(Operation *op, LgPriority p)
+          : LgTaskArgs<DeferredEnqueueArgs>(op->get_unique_op_id()),
+            proxy_this(op), priority(p) { }
+      public:
+        Operation *const proxy_this;
+        const LgPriority priority;
       };
       struct DeferredResolutionArgs :
         public LgTaskArgs<DeferredResolutionArgs> {
       public:
         static const LgTaskID TASK_ID = LG_DEFERRED_RESOLUTION_TRIGGER_ID;
       public:
-        Operation *proxy_this;
+        DeferredResolutionArgs(Operation *op)
+          : LgTaskArgs<DeferredResolutionArgs>(op->get_unique_op_id()),
+            proxy_this(op) { }
+      public:
+        Operation *const proxy_this;
       };
       struct DeferredExecuteArgs : public LgTaskArgs<DeferredExecuteArgs> {
       public:
         static const LgTaskID TASK_ID = LG_DEFERRED_EXECUTION_TRIGGER_ID;
       public:
-        Operation *proxy_this;
+        DeferredExecuteArgs(Operation *op)
+          : LgTaskArgs<DeferredExecuteArgs>(op->get_unique_op_id()),
+            proxy_this(op) { }
+      public:
+        Operation *const proxy_this;
       };
       struct DeferredExecArgs : public LgTaskArgs<DeferredExecArgs> {
       public:
         static const LgTaskID TASK_ID = LG_DEFERRED_EXECUTE_ID;
       public:
-        Operation *proxy_this;
+        DeferredExecArgs(Operation *op)
+          : LgTaskArgs<DeferredExecArgs>(op->get_unique_op_id()),
+            proxy_this(op) { }
+      public:
+        Operation *const proxy_this;
       };
       struct TriggerCompleteArgs : public LgTaskArgs<TriggerCompleteArgs> {
       public:
         static const LgTaskID TASK_ID = LG_TRIGGER_COMPLETE_ID;
       public:
-        Operation *proxy_this;
+        TriggerCompleteArgs(Operation *op)
+          : LgTaskArgs<TriggerCompleteArgs>(op->get_unique_op_id()),
+            proxy_this(op) { }
+      public:
+        Operation *const proxy_this;
       };
       struct DeferredCompleteArgs : public LgTaskArgs<DeferredCompleteArgs> {
       public:
         static const LgTaskID TASK_ID = LG_DEFERRED_COMPLETE_ID;
       public:
-        Operation *proxy_this;
+        DeferredCompleteArgs(Operation *op)
+          : LgTaskArgs<DeferredCompleteArgs>(op->get_unique_op_id()),
+            proxy_this(op) { }
+      public:
+        Operation *const proxy_this;
       };
       struct DeferredCommitTriggerArgs : 
         public LgTaskArgs<DeferredCommitTriggerArgs> {
       public:
         static const LgTaskID TASK_ID = LG_DEFERRED_COMMIT_TRIGGER_ID; 
       public:
-        Operation *proxy_this;
-        GenerationID gen;
+        DeferredCommitTriggerArgs(Operation *op)
+          : LgTaskArgs<DeferredCommitTriggerArgs>(op->get_unique_op_id()),
+            proxy_this(op), gen(op->get_generation()) { }
+      public:
+        Operation *const proxy_this;
+        const GenerationID gen;
       };
       struct DeferredCommitArgs : public LgTaskArgs<DeferredCommitArgs> {
       public:
         static const LgTaskID TASK_ID = LG_DEFERRED_COMMIT_ID;
+      public:
+        DeferredCommitArgs(Operation *op, bool d)
+          : LgTaskArgs<DeferredCommitArgs>(op->get_unique_op_id()),
+            proxy_this(op), deactivate(d) { }
       public:
         Operation *proxy_this;
         bool deactivate;
@@ -200,7 +239,7 @@ namespace Legion {
       virtual void activate(void) = 0;
       virtual void deactivate(void) = 0; 
       virtual const char* get_logging_name(void) const = 0;
-      virtual OpKind get_operation_kind(void) const  = 0;
+      virtual OpKind get_operation_kind(void) const = 0;
       virtual size_t get_region_count(void) const;
       virtual Mappable* get_mappable(void);
     protected:
@@ -261,11 +300,12 @@ namespace Legion {
       // Inherited from ReferenceMutator
       virtual void record_reference_mutation_effect(RtEvent event);
     public:
+      RtEvent execute_prepipeline_stage(GenerationID gen,
+                                        bool from_logical_analysis);
       // This is a virtual method because SpeculativeOp overrides
       // it to check for handling speculation before proceeding
       // with the analysis
       virtual void execute_dependence_analysis(void);
-      RtEvent issue_prepipeline_stage(void); 
     public:
       // The following calls may be implemented
       // differently depending on the operation, but we
@@ -364,7 +404,7 @@ namespace Legion {
       //
       // Add this to the list of ready operations
       void enqueue_ready_operation(RtEvent wait_on = RtEvent::NO_RT_EVENT,
-                            LgPriority priority = LG_THROUGHPUT_PRIORITY);
+                            LgPriority priority = LG_THROUGHPUT_WORK_PRIORITY);
       // Indicate that we are done mapping this operation
       void complete_mapping(RtEvent wait_on = RtEvent::NO_RT_EVENT); 
       // Indicate when this operation has finished executing
@@ -384,6 +424,33 @@ namespace Legion {
       // rest of the operations in the graph
       void quash_operation(GenerationID gen, bool restart);
     public:
+      // For operations that wish to complete early they can do so
+      // using this method which will allow them to immediately 
+      // chain an event to directly trigger the completion event
+      // Note that we don't support early completion if we're doing
+      // inorder program execution
+      inline bool request_early_complete(ApEvent chain_event) 
+        {
+          if (!runtime->program_order_execution)
+          {
+            need_completion_trigger = false;
+            Runtime::trigger_event(completion_event, chain_event);
+            return true;
+          }
+          else
+            return false;
+        }
+      inline bool request_early_complete_no_trigger(ApUserEvent &to_trigger)
+        {
+          if (!runtime->program_order_execution)
+          {
+            need_completion_trigger = false;
+            to_trigger = completion_event;
+            return true;
+          }
+          else
+            return false;
+        }
       // For operations that need to trigger commit early,
       // then they should use this call to avoid races
       // which could result in trigger commit being
@@ -462,10 +529,10 @@ namespace Legion {
       static void prepare_for_mapping(const InstanceSet &valid,
                            const std::set<Memory> &filter_memories,
                            std::vector<MappingInstance> &input_valid);
-      static void compute_ranking(
+      void compute_ranking(MapperManager            *mapper,
           const std::deque<MappingInstance>         &output,
           const InstanceSet                         &sources,
-          std::vector<unsigned>                     &ranking);
+          std::vector<unsigned>                     &ranking) const;
     public:
       // Perform the versioning analysis for a projection requirement
       void perform_projection_version_analysis(const ProjectionInfo &proj_info,
@@ -478,7 +545,7 @@ namespace Legion {
     public:
       Runtime *const runtime;
     protected:
-      Reservation op_lock;
+      mutable LocalLock op_lock;
       GenerationID gen;
       UniqueID unique_op_id;
       // The issue index of this operation in the context
@@ -495,6 +562,8 @@ namespace Legion {
       // For each of our regions, a map of operations to the regions
       // which we can verify for each operation
       std::map<Operation*,std::set<unsigned> > verify_regions;
+      // Whether this operation has executed its prepipeline stage yet
+      bool prepipelined;
 #ifdef DEBUG_LEGION
       // Whether this operation has mapped, once it has mapped then
       // the set of incoming dependences is fixed
@@ -526,12 +595,12 @@ namespace Legion {
       bool track_parent;
       // The enclosing context for this operation
       TaskContext *parent_ctx;
+      // The prepipeline event for this operation
+      RtUserEvent prepipelined_event;
       // The mapped event for this operation
       RtUserEvent mapped_event;
       // The resolved event for this operation
       RtUserEvent resolved_event;
-      // The event for when any children this operation has are mapped
-      //Event children_mapped;
       // The completion event for this operation
       ApUserEvent completion_event;
       // The commit event for this operation
@@ -548,11 +617,9 @@ namespace Legion {
       LegionList<LogicalUser,LOGICAL_REC_ALLOC>::track_aligned logical_records;
       // A set of advance operations recorded during logical traversal
       LegionList<LogicalUser,LOGICAL_REC_ALLOC>::track_aligned logical_advances;
-      // A dependence tracker for this operation
-      union {
-        MappingDependenceTracker *mapping;
-        CommitDependenceTracker  *commit;
-      } dependence_tracker;
+      // Dependence trackers for detecting when it is safe to map and commit
+      MappingDependenceTracker *mapping_tracker;
+      CommitDependenceTracker  *commit_tracker;
     };
 
     /**
@@ -822,18 +889,17 @@ namespace Legion {
       virtual UniqueID get_unique_id(void) const;
       virtual unsigned get_context_index(void) const;
       virtual int get_depth(void) const;
-      virtual const ProjectionInfo* get_projection_info(unsigned idx, bool src);
+      virtual const ProjectionInfo* get_projection_info(unsigned idx);
     protected:
-      void check_copy_privilege(const RegionRequirement &req, 
-                                unsigned idx, bool src,
+      void check_copy_privilege(const RegionRequirement &req, unsigned idx,
                                 bool permit_projection = false);
       void compute_parent_indexes(void);
       template<bool IS_SRC>
       int perform_conversion(unsigned idx, const RegionRequirement &req,
                              std::vector<MappingInstance> &output,
                              InstanceSet &targets, bool is_reduce = false);
-      inline void set_mapping_state(unsigned idx, bool is_src) 
-        { current_index = idx; current_src = is_src; }
+      inline void set_mapping_state(unsigned idx) 
+        { current_index = idx; }
       virtual void add_copy_profiling_request(
                                       Realm::ProfilingRequestSet &reqeusts);
       virtual void handle_profiling_response(
@@ -847,10 +913,18 @@ namespace Legion {
       std::vector<VersionInfo>    dst_versions;
       std::vector<RestrictInfo>   src_restrict_infos;
       std::vector<RestrictInfo>   dst_restrict_infos;
+    public: // These are only used for indirect copies
+      std::vector<RegionTreePath> gather_privilege_paths;
+      std::vector<RegionTreePath> scatter_privilege_paths;
+      std::vector<unsigned>       gather_parent_indexes;
+      std::vector<unsigned>       scatter_parent_indexes;
+      std::vector<VersionInfo>    gather_versions;
+      std::vector<VersionInfo>    scatter_versions;
+      std::vector<RestrictInfo>   gather_restrict_infos;
+      std::vector<RestrictInfo>   scatter_restrict_infos;
     protected: // for support with mapping
       MapperManager*              mapper;
       unsigned                    current_index;
-      bool                        current_src;
     protected:
       std::map<PhysicalManager*,std::pair<unsigned,bool> > acquired_instances;
       std::vector<std::map<Reservation,bool> > atomic_locks;
@@ -899,12 +973,14 @@ namespace Legion {
       void check_point_requirements(void);
 #endif
     public:
-      virtual const ProjectionInfo* get_projection_info(unsigned idx, bool src);
+      virtual const ProjectionInfo* get_projection_info(unsigned idx);
     public:
       IndexSpace                    launch_space;
     public:
       std::vector<ProjectionInfo>   src_projection_infos;
       std::vector<ProjectionInfo>   dst_projection_infos;
+      std::vector<ProjectionInfo>   gather_projection_infos;
+      std::vector<ProjectionInfo>   scatter_projection_infos;
     protected:
       std::vector<PointCopyOp*>     points;
       unsigned                      points_committed;
@@ -949,7 +1025,7 @@ namespace Legion {
       virtual const DomainPoint& get_domain_point(void) const;
       virtual void set_projection_result(unsigned idx,LogicalRegion result);
     public:
-      virtual const ProjectionInfo* get_projection_info(unsigned idx, bool src);
+      virtual const ProjectionInfo* get_projection_info(unsigned idx);
     protected:
       IndexCopyOp*              owner;
     };
@@ -981,7 +1057,6 @@ namespace Legion {
       FenceOp& operator=(const FenceOp &rhs);
     public:
       void initialize(TaskContext *ctx, FenceKind kind);
-      bool is_execution_fence(void) const;
     public:
       virtual void activate(void);
       virtual void deactivate(void);
@@ -992,9 +1067,7 @@ namespace Legion {
       virtual void trigger_mapping(void);
     protected:
       FenceKind fence_kind;
-#ifdef LEGION_SPY
       ApEvent execution_precondition;
-#endif
     };
 
     /**
@@ -1088,6 +1161,7 @@ namespace Legion {
       LogicalPartition logical_part;
       std::set<FieldID> free_fields;
       std::vector<unsigned> parent_req_indexes;
+      ApEvent completion_precondition;
     }; 
 
     /**
@@ -1274,9 +1348,14 @@ namespace Legion {
       public:
         static const LgTaskID TASK_ID = LG_DISJOINT_CLOSE_TASK_ID;
       public:
-        InterCloseOp *proxy_this;
-        RegionTreeNode *child_node;
-        InnerContext *context;
+        DisjointCloseArgs(InterCloseOp *op, 
+                          RegionTreeNode *child, InnerContext *ctx)
+          : LgTaskArgs<DisjointCloseArgs>(op->get_unique_op_id()),
+            proxy_this(op), child_node(child), context(ctx) { }
+      public:
+        InterCloseOp *const proxy_this;
+        RegionTreeNode *const child_node;
+        InnerContext *const context;
       };
     public:
       InterCloseOp(Runtime *runtime);
@@ -1666,7 +1745,11 @@ namespace Legion {
       public:
         static const LgTaskID TASK_ID = LG_RESOLVE_FUTURE_PRED_ID;
       public:
-        FuturePredOp *future_pred_op;
+        ResolveFuturePredArgs(FuturePredOp *op)
+          : LgTaskArgs<ResolveFuturePredArgs>(op->get_unique_op_id()),
+            future_pred_op(op) { }
+      public:
+        FuturePredOp *const future_pred_op;
       };
     public:
       FuturePredOp(Runtime *rt);
@@ -1822,8 +1905,6 @@ namespace Legion {
       virtual size_t get_region_count(void) const;
       virtual OpKind get_operation_kind(void) const;
     public:
-      virtual bool has_prepipeline_stage(void) const { return true; }
-      virtual void trigger_prepipeline_stage(void);
       virtual void trigger_dependence_analysis(void);
       virtual void trigger_mapping(void);
       virtual void trigger_complete(void);
@@ -1907,15 +1988,25 @@ namespace Legion {
       public:
         static const LgTaskID TASK_ID = LG_MUST_INDIV_ID;
       public:
-        MustEpochTriggerer *triggerer;
-        IndividualTask *task;
+        MustEpochIndivArgs(MustEpochTriggerer *trig, MustEpochOp *owner,
+                           IndividualTask *t)
+          : LgTaskArgs<MustEpochIndivArgs>(owner->get_unique_op_id()),
+            triggerer(trig), task(t) { }
+      public:
+        MustEpochTriggerer *const triggerer;
+        IndividualTask *const task;
       };
       struct MustEpochIndexArgs : public LgTaskArgs<MustEpochIndexArgs> {
       public:
         static const LgTaskID TASK_ID = LG_MUST_INDEX_ID;
       public:
-        MustEpochTriggerer *triggerer;
-        IndexTask *task;
+        MustEpochIndexArgs(MustEpochTriggerer *trig, MustEpochOp *owner,
+                           IndexTask *t)
+          : LgTaskArgs<MustEpochIndexArgs>(owner->get_unique_op_id()),
+            triggerer(trig), task(t) { }
+      public:
+        MustEpochTriggerer *const triggerer;
+        IndexTask *const task;
       };
     public:
       MustEpochTriggerer(MustEpochOp *owner);
@@ -1949,7 +2040,11 @@ namespace Legion {
       public:
         static const LgTaskID TASK_ID = LG_MUST_MAP_ID;
       public:
-        MustEpochMapper *mapper;
+        MustEpochMapArgs(MustEpochMapper *map, MustEpochOp *owner)
+          : LgTaskArgs<MustEpochMapArgs>(owner->get_unique_op_id()),
+            mapper(map) { }
+      public:
+        MustEpochMapper *const mapper;
         SingleTask *task;
       };
     public:
@@ -1975,12 +2070,18 @@ namespace Legion {
       public:
         static const LgTaskID TASK_ID = LG_MUST_DIST_ID;
       public:
+        MustEpochDistributorArgs(MustEpochOp *owner)
+          : LgTaskArgs<MustEpochDistributorArgs>(owner->get_unique_op_id()) { }
+      public:
         TaskOp *task;
       };
       struct MustEpochLauncherArgs : 
         public LgTaskArgs<MustEpochLauncherArgs> {
       public:
         static const LgTaskID TASK_ID = LG_MUST_LAUNCH_ID;
+      public:
+        MustEpochLauncherArgs(MustEpochOp *owner)
+          : LgTaskArgs<MustEpochLauncherArgs>(owner->get_unique_op_id()) { }
       public:
         TaskOp *task;
       };
@@ -2650,8 +2751,10 @@ namespace Legion {
       virtual void record_reference_mutation_effect(RtEvent event);
     public:
       PhysicalInstance create_instance(IndexSpaceNode *node,
-	const std::vector<FieldID> &field_set,
-        const std::vector<size_t> &field_sizes, LayoutConstraintSet &cons);
+                                       const std::vector<FieldID> &field_set,
+                                       const std::vector<size_t> &field_sizes,
+                                             LayoutConstraintSet &cons,
+                                             ApEvent &ready_event);
     protected:
       void check_privilege(void);
       void compute_parent_index(void);
@@ -2663,15 +2766,17 @@ namespace Legion {
       RestrictInfo restrict_info;
       const char *file_name;
       std::map<FieldID,const char*> field_map;
+      std::map<FieldID,void*> field_pointers_map;
       LegionFileMode file_mode;
       PhysicalRegion region;
       unsigned parent_req_index;
       std::set<RtEvent> map_applied_conditions;
-      InstanceManager *file_instance;
+      InstanceManager *external_instance;
+      LayoutConstraintSet layout_constraint_set;
     };
 
     /**
-     * \class Detach Op
+     * \class DetachOp
      * Operation for detaching a file from a physical instance
      */
     class DetachOp : public Operation, public LegionHeapify<DetachOp> {
@@ -2684,7 +2789,7 @@ namespace Legion {
     public:
       DetachOp& operator=(const DetachOp &rhs);
     public:
-      void initialize_detach(TaskContext *ctx, PhysicalRegion region);
+      Future initialize_detach(TaskContext *ctx, PhysicalRegion region);
     public:
       virtual void activate(void);
       virtual void deactivate(void);
@@ -2698,6 +2803,7 @@ namespace Legion {
       virtual void trigger_ready(void);
       virtual void trigger_mapping(void);
       virtual unsigned find_parent_index(unsigned idx);
+      virtual void trigger_complete(void);
       virtual void trigger_commit(void);
     protected:
       void compute_parent_index(void);
@@ -2708,6 +2814,7 @@ namespace Legion {
       VersionInfo version_info;
       RestrictInfo restrict_info;
       unsigned parent_req_index;
+      Future result;
     };
 
     /**

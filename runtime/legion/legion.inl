@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,10 +71,15 @@ namespace Legion {
                                     T *result)
         {
           size_t buffer_size = result->legion_buffer_size();
-          void *buffer = malloc(buffer_size);
-          result->legion_serialize(buffer);
-          end_helper(rt, ctx, buffer, buffer_size, true/*owned*/);
-          // No need to free the buffer, the Legion runtime owns it now
+          if (buffer_size > 0)
+          {
+            void *buffer = malloc(buffer_size);
+            result->legion_serialize(buffer);
+            end_helper(rt, ctx, buffer, buffer_size, true/*owned*/);
+            // No need to free the buffer, the Legion runtime owns it now
+          }
+          else
+            end_helper(rt, ctx, NULL, 0, false/*owned*/);
         }
         static inline Future from_value(Runtime *rt, const T *value)
         {
@@ -91,6 +96,54 @@ namespace Legion {
         }
       };
 
+      // Further specialization for deferred reductions
+      template<typename REDOP, bool EXCLUSIVE>
+      struct NonPODSerializer<DeferredReduction<REDOP,EXCLUSIVE>,false> {
+        static inline void end_task(Runtime *rt, InternalContext ctx,
+                                    DeferredReduction<REDOP,EXCLUSIVE> *result)
+        {
+          result->finalize(ctx);
+        }
+        static inline Future from_value(Runtime *rt, 
+            const DeferredReduction<REDOP,EXCLUSIVE> *value)
+        {
+          // Should never be called
+          assert(false);
+          return from_value_helper(rt, (const void*)value,
+            sizeof(DeferredReduction<REDOP,EXCLUSIVE>), false/*owned*/);
+        }
+        static inline DeferredReduction<REDOP,EXCLUSIVE> 
+          unpack(const void *result)
+        {
+          // Should never be called
+          assert(false);
+          return (*((const DeferredReduction<REDOP,EXCLUSIVE>*)result));
+        }
+      };
+
+      // Further specialization to see if this a deferred value
+      template<typename T>
+      struct NonPODSerializer<DeferredValue<T>,false> {
+        static inline void end_task(Runtime *rt, InternalContext ctx,
+                                    DeferredValue<T> *result)
+        {
+          result->finalize(ctx);
+        }
+        static inline Future from_value(Runtime *rt, const DeferredValue<T> *value)
+        {
+          // Should never be called
+          assert(false);
+          return from_value_helper(rt, (const void*)value,
+                                   sizeof(DeferredValue<T>), false/*owned*/);
+        }
+        static inline DeferredValue<T> unpack(const void *result)
+        {
+          // Should never be called
+          assert(false);
+          return (*((const DeferredValue<T>*)result));
+        }
+      }; 
+      
       template<typename T>
       struct NonPODSerializer<T,false> {
         static inline void end_task(Runtime *rt, InternalContext ctx,
@@ -292,10 +345,33 @@ namespace Legion {
     // Special namespace for providing multi-dimensional 
     // array syntax on accessors 
     namespace ArraySyntax {
+      // A helper class for handling reductions
+      template<typename A, typename FT, int N, typename T>
+      class ReductionHelper {
+      public:
+        __CUDA_HD__
+        ReductionHelper(const A &acc, const Point<N> &p)
+          : accessor(acc), point(p) { }
+      public:
+        __CUDA_HD__
+        inline void reduce(FT val) const
+        {
+          accessor.reduce(point, val);
+        }
+        __CUDA_HD__
+        inline void operator<<=(FT val) const
+        {
+          accessor.reduce(point, val);
+        }
+      public:
+        const A &accessor;
+        const Point<N,T> point;
+      };
+
       // A small helper class that helps provide some syntactic sugar for
       // indexing accessors like a multi-dimensional array for generic accessors
       template<typename A, typename FT, int N, typename T, 
-                int M, bool READ_ONLY>
+                int M, PrivilegeMode P>
       class GenericSyntaxHelper {
       public:
         GenericSyntaxHelper(const A &acc, const Point<M-1,T> &p)
@@ -305,18 +381,18 @@ namespace Legion {
             point[i] = p[i];
         }
       public:
-        inline GenericSyntaxHelper<A,FT,N,T,M+1,READ_ONLY> operator[](T val)
+        inline GenericSyntaxHelper<A,FT,N,T,M+1,P> operator[](T val)
         {
           point[M-1] = val;
-          return GenericSyntaxHelper<A,FT,N,T,M+1,READ_ONLY>(accessor, point);
+          return GenericSyntaxHelper<A,FT,N,T,M+1,P>(accessor, point);
         }
       public:
         const A &accessor;
         Point<M,T> point;
       };
       // Specialization for M = N
-      template<typename A, typename FT, int N, typename T, bool RO>
-      class GenericSyntaxHelper<A,FT,N,T,N,RO> {
+      template<typename A, typename FT, int N, typename T, PrivilegeMode P>
+      class GenericSyntaxHelper<A,FT,N,T,N,P> {
       public:
         GenericSyntaxHelper(const A &acc, const Point<N-1,T> &p)
           : accessor(acc)
@@ -336,7 +412,7 @@ namespace Legion {
       };
       // Further specialization for M = N and read-only
       template<typename A, typename FT, int N, typename T>
-      class GenericSyntaxHelper<A,FT,N,T,N,true> {
+      class GenericSyntaxHelper<A,FT,N,T,N,READ_ONLY> {
       public:
         GenericSyntaxHelper(const A &acc, const Point<N-1,T> &p)
           : accessor(acc)
@@ -354,11 +430,31 @@ namespace Legion {
         const A &accessor;
         Point<N,T> point;
       };
+      // Further specialization for M = N and reductions
+      template<typename A, typename FT, int N, typename T>
+      class GenericSyntaxHelper<A,FT,N,T,N,REDUCE> {
+      public:
+        GenericSyntaxHelper(const A &acc, const Point<N-1,T> &p)
+          : accessor(acc)
+        {
+          for (int i = 0; i < (N-1); i++)
+            point[i] = p[i];
+        }
+      public:
+        inline const ReductionHelper<A,FT,N,T> operator[](T val)
+        {
+          point[N-1] = val;
+          return ReductionHelper<A,FT,N,T>(accessor, point);
+        }
+      public:
+        const A &accessor;
+        Point<N,T> point;
+      };
 
       // A small helper class that helps provide some syntactic sugar for
       // indexing accessors like a multi-dimensional array for affine accessors
       template<typename A, typename FT, int N, typename T, 
-                int M, bool READ_ONLY>
+                int M, PrivilegeMode P>
       class AffineSyntaxHelper {
       public:
         __CUDA_HD__
@@ -370,18 +466,18 @@ namespace Legion {
         }
       public:
         __CUDA_HD__
-        inline AffineSyntaxHelper<A,FT,N,T,M+1,READ_ONLY> operator[](T val)
+        inline AffineSyntaxHelper<A,FT,N,T,M+1,P> operator[](T val)
         {
           point[M-1] = val;
-          return AffineSyntaxHelper<A,FT,N,T,M+1,READ_ONLY>(accessor, point);
+          return AffineSyntaxHelper<A,FT,N,T,M+1,P>(accessor, point);
         }
       public:
         const A &accessor;
         Point<M,T> point;
       };
       // Specialization for M = N
-      template<typename A, typename FT, int N, typename T, bool RO>
-      class AffineSyntaxHelper<A,FT,N,T,N,RO> {
+      template<typename A, typename FT, int N, typename T, PrivilegeMode P>
+      class AffineSyntaxHelper<A,FT,N,T,N,P> {
       public:
         __CUDA_HD__
         AffineSyntaxHelper(const A &acc, const Point<N-1,T> &p)
@@ -403,7 +499,7 @@ namespace Legion {
       };
       // Further specialization for M = N and read-only
       template<typename A, typename FT, int N, typename T>
-      class AffineSyntaxHelper<A,FT,N,T,N,true> {
+      class AffineSyntaxHelper<A,FT,N,T,N,READ_ONLY> {
       public:
         __CUDA_HD__
         AffineSyntaxHelper(const A &acc, const Point<N-1,T> &p)
@@ -422,6 +518,29 @@ namespace Legion {
       public:
         const A &accessor;
         Point<N,T> point;
+      }; 
+
+      // Further specialize for M = N and reductions
+      template<typename A, typename FT, int N, typename T>
+      class AffineSyntaxHelper<A,FT,N,T,N,REDUCE> {
+      public:
+        __CUDA_HD__
+        AffineSyntaxHelper(const A &acc, const Point<N-1,T> &p)
+          : accessor(acc)
+        {
+          for (int i = 0; i < (N-1); i++)
+            point[i] = p[i];
+        }
+      public:
+        __CUDA_HD__
+        inline const ReductionHelper<A,FT,N,T> operator[](T val)
+        {
+          point[N-1] = val;
+          return ReductionHelper<A,FT,N,T>(accessor, point);
+        }
+      public:
+        const A &accessor;
+        Point<N,T> point;
       };
     };
 
@@ -436,16 +555,17 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -461,11 +581,11 @@ namespace Legion {
           return accessor[p]; 
         }
       inline ArraySyntax::GenericSyntaxHelper<FieldAccessor<READ_ONLY,FT,N,T,
-            Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,true/*read only*/>
+            Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,READ_ONLY>
           operator[](T index) const
       {
         return ArraySyntax::GenericSyntaxHelper<FieldAccessor<READ_ONLY,FT,N,T,
-               Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,true/*read only*/>(
+               Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,READ_ONLY>(
               *this, Point<1,T>(index));
       }
     public:
@@ -480,10 +600,11 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -491,7 +612,7 @@ namespace Legion {
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -511,11 +632,11 @@ namespace Legion {
           return accessor[p]; 
         }
       inline ArraySyntax::GenericSyntaxHelper<FieldAccessor<READ_ONLY,FT,N,T,
-             Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,true/*read only*/>
+             Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,READ_ONLY>
           operator[](T index) const
       {
         return ArraySyntax::GenericSyntaxHelper<FieldAccessor<READ_ONLY,FT,N,T,
-              Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,true/*read only*/>(
+              Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,READ_ONLY>(
               *this, Point<1,T>(index));
       }
     public:
@@ -533,16 +654,17 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -570,10 +692,11 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -581,7 +704,7 @@ namespace Legion {
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -614,16 +737,17 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -643,11 +767,11 @@ namespace Legion {
           return accessor[p]; 
         }
       inline ArraySyntax::GenericSyntaxHelper<FieldAccessor<READ_WRITE,FT,N,T,
-             Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,false/*read only*/>
+             Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,READ_WRITE>
           operator[](T index) const
       {
         return ArraySyntax::GenericSyntaxHelper<FieldAccessor<READ_WRITE,FT,N,T,
-              Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,false/*read only*/>(
+              Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,READ_WRITE>(
               *this, Point<1,T>(index));
       }
       // No reductions since we can't handle atomicity correctly
@@ -663,10 +787,11 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -674,7 +799,7 @@ namespace Legion {
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -700,11 +825,11 @@ namespace Legion {
           return accessor[p]; 
         }
       inline ArraySyntax::GenericSyntaxHelper<FieldAccessor<READ_WRITE,FT,N,T,
-              Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,false/*read only*/>
+              Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,READ_WRITE>
           operator[](T index) const
       {
         return ArraySyntax::GenericSyntaxHelper<FieldAccessor<READ_WRITE,FT,N,T,
-              Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,false/*read only*/>(
+              Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,READ_WRITE>(
               *this, Point<1,T>(index));
       }
       // No reductions since we can't handle atomicity correctly
@@ -723,16 +848,17 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -764,10 +890,11 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -775,7 +902,7 @@ namespace Legion {
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -815,16 +942,17 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -844,11 +972,11 @@ namespace Legion {
           return accessor[p]; 
         }
       inline ArraySyntax::GenericSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,N,
-           T,Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,false/*read only*/>
+           T,Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,WRITE_DISCARD>
           operator[](T index) const
       {
         return ArraySyntax::GenericSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,
-          N,T,Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,false/*read only*/>(
+          N,T,Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,WRITE_DISCARD>(
               *this, Point<1,T>(index));
       }
     public:
@@ -864,10 +992,11 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -875,7 +1004,7 @@ namespace Legion {
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
@@ -901,11 +1030,11 @@ namespace Legion {
           return accessor[p]; 
         }
       inline ArraySyntax::GenericSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,N,
-           T,Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,false/*read only*/>
+           T,Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,WRITE_DISCARD>
           operator[](T index) const
       {
         return ArraySyntax::GenericSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,
-         N,T,Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,false/*read only*/>(
+         N,T,Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,WRITE_DISCARD>(
               *this, Point<1,T>(index));
       }
     public:
@@ -923,16 +1052,17 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -963,10 +1093,11 @@ namespace Legion {
     public:
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
         : field(fid), field_region(region), 
@@ -974,7 +1105,7 @@ namespace Legion {
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, true/*generic accessor*/, check_field_size);
         accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
@@ -1006,6 +1137,1126 @@ namespace Legion {
       DomainT<1,T> bounds;
     };
 
+    // Write-only FieldAccessor specialization
+    template<typename FT, int N, typename T, bool CB>
+    class FieldAccessor<WRITE_ONLY,FT,N,T,
+                        Realm::GenericAccessor<FT,N,T>,CB> {
+    public:
+      FieldAccessor(void) { }
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, true/*generic accessor*/, check_field_size);
+        accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
+      }
+    public:
+      inline void write(const Point<N,T>& p, FT val) const
+        { 
+          accessor.write(p, val); 
+        }
+      inline Realm::AccessorRefHelper<FT> 
+          operator[](const Point<N,T>& p) const
+        { 
+          return accessor[p]; 
+        }
+      inline ArraySyntax::GenericSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,N,
+           T,Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,WRITE_DISCARD>
+          operator[](T index) const
+      {
+        return ArraySyntax::GenericSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,
+          N,T,Realm::GenericAccessor<FT,N,T>,CB>,FT,N,T,2,WRITE_DISCARD>(
+              *this, Point<1,T>(index));
+      }
+    public:
+      mutable Realm::GenericAccessor<FT,N,T> accessor;
+    };
+
+    // Write-only FieldAccessor specialization
+    // with bounds checks
+    template<typename FT, int N, typename T>
+    class FieldAccessor<WRITE_ONLY,FT,N,T,
+                        Realm::GenericAccessor<FT,N,T>,true> {
+    public:
+      // No CUDA support due to PhysicalRegion constructor
+      FieldAccessor(void) { }
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region), 
+          bounds(region.template get_bounds<N,T>())
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, true/*generic accessor*/, check_field_size);
+        accessor = Realm::GenericAccessor<FT,N,T>(instance, fid, is.bounds);
+      }
+    public:
+      inline void write(const Point<N,T>& p, FT val) const
+        { 
+          if (!bounds.contains(p)) 
+            field_region.fail_bounds_check(DomainPoint(p), field,WRITE_DISCARD);
+          accessor.write(p, val); 
+        }
+      inline Realm::AccessorRefHelper<FT> 
+          operator[](const Point<N,T>& p) const
+        { 
+          if (!bounds.contains(p)) 
+            field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
+          return accessor[p]; 
+        }
+      inline ArraySyntax::GenericSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,N,
+           T,Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,WRITE_DISCARD>
+          operator[](T index) const
+      {
+        return ArraySyntax::GenericSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,
+         N,T,Realm::GenericAccessor<FT,N,T>,true>,FT,N,T,2,WRITE_DISCARD>(
+              *this, Point<1,T>(index));
+      }
+    public:
+      mutable Realm::GenericAccessor<FT,N,T> accessor;
+      FieldID field;
+      PhysicalRegion field_region;
+      DomainT<N,T> bounds;
+    };
+
+    // Write-only FieldAccessor specialization with
+    // N == 1 to avoid array ambiguity
+    template<typename FT, typename T, bool CB>
+    class FieldAccessor<WRITE_ONLY,FT,1,T,
+                        Realm::GenericAccessor<FT,1,T>,CB> {
+    public:
+      FieldAccessor(void) { }
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, true/*generic accessor*/, check_field_size);
+        accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
+      }
+    public:
+      inline void write(const Point<1,T>& p, FT val) const
+        { 
+          accessor.write(p, val); 
+        }
+      inline Realm::AccessorRefHelper<FT> 
+          operator[](const Point<1,T>& p) const
+        { 
+          return accessor[p]; 
+        }
+    public:
+      mutable Realm::GenericAccessor<FT,1,T> accessor;
+    };
+
+    // Write-only FieldAccessor specialization with
+    // N == 1 to avoid array ambiguity and bounds checks
+    template<typename FT, typename T>
+    class FieldAccessor<WRITE_ONLY,FT,1,T,
+                        Realm::GenericAccessor<FT,1,T>,true> {
+    public:
+      FieldAccessor(void) { }
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region), 
+          bounds(region.template get_bounds<1,T>())
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, true/*generic accessor*/, check_field_size);
+        accessor = Realm::GenericAccessor<FT,1,T>(instance, fid, is.bounds);
+      }
+    public:
+      inline void write(const Point<1,T>& p, FT val) const
+        { 
+          if (!bounds.contains(p)) 
+            field_region.fail_bounds_check(DomainPoint(p), field,WRITE_DISCARD);
+          accessor.write(p, val); 
+        }
+      inline Realm::AccessorRefHelper<FT> 
+          operator[](const Point<1,T>& p) const
+        { 
+          if (!bounds.contains(p)) 
+            field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
+          return accessor[p]; 
+        }
+    public:
+      mutable Realm::GenericAccessor<FT,1,T> accessor;
+      FieldID field;
+      PhysicalRegion field_region;
+      DomainT<1,T> bounds;
+    };
+
+    // Special namespace for providing bounds check help for affine accessors
+    namespace AffineBounds {
+      // A helper method for testing bounds for affine accessors
+      // which might have a transform associated with them
+      // We should never use the base version of this, only the specializations
+      template<int N, typename T>
+      class Tester {
+      public:
+        Tester(const DomainT<N,T> b) { assert(false); }
+        Tester(const DomainT<N,T> b, const Rect<N,T> s) { assert(false); }
+        template<int M2>
+        Tester(const DomainT<M2,T> b,
+               const AffineTransform<M2,N,T> t) { assert(false); }
+        template<int M2>
+        Tester(const DomainT<M2,T> b, const Rect<N,T> s,
+               const AffineTransform<M2,N,T> t) { assert(false); }
+      public:
+        __CUDA_HD__
+        inline bool contains(const Point<N,T> &p) const 
+        { assert(false); return false; }
+        __CUDA_HD__
+        inline bool contains_all(const Rect<N,T> &r) const
+        { assert(false); return false; }
+      };
+      // Specialization for 1
+      template<typename T>
+      class Tester<1,T> {
+      public:
+        static const int MAX_M_DIMS = 3;
+      public:
+        Tester(void) : M(0) { }
+        Tester(const DomainT<1,T> b) 
+          : M(1), has_source(false), has_transform(false), gpu_warning(true)
+        { 
+          new (bounds) DomainT<1,T>(b);
+        }
+        Tester(const DomainT<1,T> b, const Rect<1,T> s)
+          : source(s), M(1), has_source(true), 
+            has_transform(false), gpu_warning(true)
+        {
+          new (bounds) DomainT<1,T>(b);
+        }
+        template<int M2>
+        Tester(const DomainT<M2,T> b,
+               const AffineTransform<M2,1,T> t) 
+          : M(M2), has_source(false), 
+            has_transform(!t.is_identity()), gpu_warning(true)
+        { 
+          LEGION_STATIC_ASSERT(M2 <= MAX_M_DIMS);
+          new (bounds) DomainT<M2,T>(b);
+          new (transform) AffineTransform<M2,1,T>(t);
+        }
+        template<int M2>
+        Tester(const DomainT<M2,T> b, const Rect<1,T> s,
+               const AffineTransform<M2,1,T> t) 
+          : source(s), M(M2), has_source(true), 
+            has_transform(!t.is_identity()), gpu_warning(true)
+        { 
+          LEGION_STATIC_ASSERT(M2 <= MAX_M_DIMS);
+          new (bounds) DomainT<M2,T>(b);
+          new (transform) AffineTransform<M2,1,T>(t);
+        }
+        ~Tester(void)
+        {
+          switch (M)
+          {
+            case 0:
+              break;
+            case 1:
+              {
+                reinterpret_cast<DomainT<1,T>*>(bounds)->~DomainT<1,T>();
+                if (has_transform)
+                  reinterpret_cast<AffineTransform<1,1,T>*>(transform)->
+                    ~AffineTransform<1,1,T>();
+                break;
+              }
+            case 2:
+              {
+                reinterpret_cast<DomainT<2,T>*>(bounds)->~DomainT<2,T>();
+                if (has_transform)
+                  reinterpret_cast<AffineTransform<2,1,T>*>(transform)->
+                    ~AffineTransform<2,1,T>();
+                break;
+              }
+            case 3:
+              {
+                reinterpret_cast<DomainT<3,T>*>(bounds)->~DomainT<3,T>();
+                if (has_transform)
+                  reinterpret_cast<AffineTransform<3,1,T>*>(transform)->
+                    ~AffineTransform<3,1,T>();
+                break;
+              }
+            default:
+              assert(false);
+          }
+        }
+      public:
+        __CUDA_HD__
+        inline bool contains(const Point<1,T> &p) const
+        {
+          if (has_source && !source.contains(p))
+            return false;
+#ifdef __CUDA_ARCH__
+          if (gpu_warning)
+            check_gpu_warning();
+          if (!has_transfrom)
+            return reinterpret_cast<const DomainT<1,T>*>(bounds)->
+              bounds.contains(p);
+          switch (M)
+          {
+            case 1:
+              {
+                const DomainT<1,T> &b = 
+                  *reinterpret_cast<const DomainT<1,T>*>(bounds);
+                const AffineTransform<1,1,T> &t = 
+                  *reinterpret_cast<const AffineTransform<1,1,T>*>(transform);
+                return b.bounds.contains(t[p]);
+              }
+            case 2:
+              {
+                const DomainT<2,T> &b = 
+                  *reinterpret_cast<const DomainT<2,T>*>(bounds);
+                const AffineTransform<2,1,T> &t = 
+                  *reinterpret_cast<const AffineTransform<2,1,T>*>(transform);
+                return b.bounds.contains(t[p]);
+              }
+            case 3:
+              {
+                const DomainT<3,T> &b = 
+                  *reinterpret_cast<const DomainT<3,T>*>(bounds);
+                const AffineTransform<3,1,T> &t = 
+                  *reinterpret_cast<const AffineTransform<3,1,T>*>(transform);
+                return b.bounds.contains(t[p]);
+              }
+            default:
+              assert(false);
+          }
+#else
+          if (!has_transform)
+            return reinterpret_cast<const DomainT<1,T>*>(bounds)->contains(p);
+          switch (M)
+          {
+            case 1:
+              {
+                const DomainT<1,T> &b = 
+                  *reinterpret_cast<const DomainT<1,T>*>(bounds);
+                const AffineTransform<1,1,T> &t = 
+                  *reinterpret_cast<const AffineTransform<1,1,T>*>(transform);
+                return b.contains(t[p]);
+              }
+            case 2:
+              {
+                const DomainT<2,T> &b = 
+                  *reinterpret_cast<const DomainT<2,T>*>(bounds);
+                const AffineTransform<2,1,T> &t = 
+                  *reinterpret_cast<const AffineTransform<2,1,T>*>(transform);
+                return b.contains(t[p]);
+              }
+            case 3:
+              {
+                const DomainT<3,T> &b = 
+                  *reinterpret_cast<const DomainT<3,T>*>(bounds);
+                const AffineTransform<3,1,T> &t = 
+                  *reinterpret_cast<const AffineTransform<3,1,T>*>(transform);
+                return b.contains(t[p]);
+              }
+            default:
+              assert(false);
+          }
+#endif
+          return false;
+        }
+        __CUDA_HD__
+        inline bool contains_all(const Rect<1,T> &r) const
+        {
+          if (has_source && !source.contains(r))
+            return false;
+#ifdef __CUDA_ARCH__
+          if (gpu_warning)
+            check_gpu_warning();
+          if (!has_transform)
+            return reinterpret_cast<const DomainT<1,T>*>(bounds)->
+              bounds.contains(r);
+          // If we have a transform then we have to do each point separately
+          switch (M)
+          {
+            case 1:
+              {
+                const DomainT<1,T> &b = 
+                  *reinterpret_cast<const DomainT<1,T>*>(bounds);
+                const AffineTransform<1,1,T> &t = 
+                  *reinterpret_cast<const AffineTransform<1,1,T>*>(transform);
+                for (PointInRectIterator<1,T> itr(r); itr(); itr++)
+                  if (!b.bounds.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            case 2:
+              {
+                const DomainT<2,T> &b = 
+                  *reinterpret_cast<const DomainT<2,T>*>(bounds);
+                const AffineTransform<2,1,T> &t = 
+                  *reinterpret_cast<const AffineTransform<2,1,T>*>(transform);
+                for (PointInRectIterator<1,T> itr(r); itr(); itr++)
+                  if (!b.bounds.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            case 3:
+              {
+                const DomainT<3,T> &b = 
+                  *reinterpret_cast<const DomainT<3,T>*>(bounds);
+                const AffineTransform<3,1,T> &t = 
+                  *reinterpret_cast<const AffineTransform<3,1,T>*>(transform);
+                for (PointInRectIterator<1,T> itr(r); itr(); itr++)
+                  if (!b.bounds.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            default:
+              assert(false);
+          }
+#else
+          if (!has_transform)
+            return reinterpret_cast<const DomainT<1,T>*>(bounds)->
+              contains_all(r);
+          // If we have a transform then we have to do each point separately
+          switch (M)
+          {
+            case 1:
+              {
+                const DomainT<1,T> &b = 
+                  *reinterpret_cast<const DomainT<1,T>*>(bounds);
+                const AffineTransform<1,1,T> &t = 
+                  *reinterpret_cast<const AffineTransform<1,1,T>*>(transform);
+                for (PointInRectIterator<1,T> itr(r); itr(); itr++)
+                  if (!b.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            case 2:
+              {
+                const DomainT<2,T> &b = 
+                  *reinterpret_cast<const DomainT<2,T>*>(bounds);
+                const AffineTransform<2,1,T> &t = 
+                  *reinterpret_cast<const AffineTransform<2,1,T>*>(transform);
+                for (PointInRectIterator<1,T> itr(r); itr(); itr++)
+                  if (!b.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            case 3:
+              {
+                const DomainT<3,T> &b = 
+                  *reinterpret_cast<const DomainT<3,T>*>(bounds);
+                const AffineTransform<3,1,T> &t = 
+                  *reinterpret_cast<const AffineTransform<3,1,T>*>(transform);
+                for (PointInRectIterator<1,T> itr(r); itr(); itr++)
+                  if (!b.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            default:
+              assert(false);
+          }
+#endif
+          return false;
+        }
+      private:
+        __CUDA_HD__
+        inline void check_gpu_warning(void) const
+        {
+#ifdef __CUDA_ARCH__
+          bool need_warning = false;
+          if (has_transform)
+          {
+            switch (M)
+            {
+              case 1:
+                need_warning = !bounds.one.dense();
+                break;
+              case 2:
+                need_warning = !bounds.two.dense();
+                break;
+              case 3:
+                need_warning = !bounds.three.dense();
+                break;
+              default:
+                assert(false);
+            }
+          }
+          else if (!bounds.one.dense())
+            need_warning = true;
+          if (need_warning)
+            printf("WARNING: GPU bounds check is imprecise!\n");
+          gpu_warning = false;
+#endif
+        }
+      private:
+        // Use unsafe buffers for these since we can't have virtual 
+        // methods on the GPU for objects created on the CPU
+        char bounds[sizeof(DomainT<MAX_M_DIMS,T>)];
+        char transform[sizeof(AffineTransform<MAX_M_DIMS,1,T>)];
+        Rect<1,T> source;
+        int M;
+        bool has_source;
+        bool has_transform;
+        mutable bool gpu_warning;
+      };
+      // Specialization for 2
+      template<typename T>
+      class Tester<2,T> {
+      public:
+        static const int MAX_M_DIMS = 3;
+      public:
+        Tester(void) : M(0) { }
+        Tester(const DomainT<2,T> b) 
+          : M(2), has_source(false), has_transform(false), gpu_warning(true)
+        { 
+          new (bounds) DomainT<2,T>(b);
+        }
+        Tester(const DomainT<2,T> b, const Rect<2,T> s) 
+          : source(s), M(2), has_source(true), 
+            has_transform(false), gpu_warning(true)
+        { 
+          new (bounds) DomainT<2,T>(b);
+        }
+        template<int M2>
+        Tester(const DomainT<M2,T> b,
+               const AffineTransform<M2,2,T> t) 
+          : M(M2), has_source(false), has_transform(true), gpu_warning(true)
+        { 
+          LEGION_STATIC_ASSERT(M2 <= MAX_M_DIMS);
+          new (bounds) DomainT<M2,T>(b);
+          new (transform) AffineTransform<M2,2,T>(t);
+        }
+        template<int M2>
+        Tester(const DomainT<M2,T> b, const Rect<2,T> s,
+               const AffineTransform<M2,2,T> t) 
+          : source(s), M(M2), has_source(true), 
+            has_transform(true), gpu_warning(true)
+        { 
+          LEGION_STATIC_ASSERT(M2 <= MAX_M_DIMS);
+          new (bounds) DomainT<M2,T>(b);
+          new (transform) AffineTransform<M2,2,T>(t);
+        }
+        ~Tester(void)
+        {
+          switch (M)
+          {
+            case 0:
+              break;
+            case 1:
+              {
+                reinterpret_cast<DomainT<1,T>*>(bounds)->~DomainT<1,T>();
+                if (has_transform)
+                  reinterpret_cast<AffineTransform<1,2,T>*>(transform)->
+                    ~AffineTransform<1,2,T>();
+                break;
+              }
+            case 2:
+              {
+                reinterpret_cast<DomainT<2,T>*>(bounds)->~DomainT<2,T>();
+                if (has_transform)
+                  reinterpret_cast<AffineTransform<2,2,T>*>(transform)->
+                    ~AffineTransform<2,2,T>();
+                break;
+              }
+            case 3:
+              {
+                reinterpret_cast<DomainT<3,T>*>(bounds)->~DomainT<3,T>();
+                if (has_transform)
+                  reinterpret_cast<AffineTransform<3,2,T>*>(transform)->
+                    ~AffineTransform<3,2,T>();
+                break;
+              }
+            default:
+              assert(false);
+          }
+        }
+      public:
+        __CUDA_HD__
+        inline bool contains(const Point<2,T> &p) const
+        {
+          if (has_source && !source.contains(p))
+            return false;
+#ifdef __CUDA_ARCH__
+          if (gpu_warning)
+            check_gpu_warning();
+          if (!has_transfrom)
+            return reinterpret_cast<const DomainT<2,T>*>(bounds)->
+              bounds.contains(p);
+          switch (M)
+          {
+            case 1:
+              {
+                const DomainT<1,T> &b = 
+                  *reinterpret_cast<const DomainT<1,T>*>(bounds);
+                const AffineTransform<1,2,T> &t = 
+                  *reinterpret_cast<const AffineTransform<1,2,T>*>(transform);
+                return b.bounds.contains(t[p]);
+              }
+            case 2:
+              {
+                const DomainT<2,T> &b = 
+                  *reinterpret_cast<const DomainT<2,T>*>(bounds);
+                const AffineTransform<2,2,T> &t = 
+                  *reinterpret_cast<const AffineTransform<2,2,T>*>(transform);
+                return b.bounds.contains(t[p]);
+              }
+            case 3:
+              {
+                const DomainT<3,T> &b = 
+                  *reinterpret_cast<const DomainT<3,T>*>(bounds);
+                const AffineTransform<3,2,T> &t = 
+                  *reinterpret_cast<const AffineTransform<3,2,T>*>(transform);
+                return b.bounds.contains(t[p]);
+              }
+            default:
+              assert(false);
+          }
+#else
+          if (!has_transform)
+            return reinterpret_cast<const DomainT<2,T>*>(bounds)->contains(p);
+          switch (M)
+          {
+            case 1:
+              {
+                const DomainT<1,T> &b = 
+                  *reinterpret_cast<const DomainT<1,T>*>(bounds);
+                const AffineTransform<1,2,T> &t = 
+                  *reinterpret_cast<const AffineTransform<1,2,T>*>(transform);
+                return b.contains(t[p]);
+              }
+            case 2:
+              {
+                const DomainT<2,T> &b = 
+                  *reinterpret_cast<const DomainT<2,T>*>(bounds);
+                const AffineTransform<2,2,T> &t = 
+                  *reinterpret_cast<const AffineTransform<2,2,T>*>(transform);
+                return b.contains(t[p]);
+              }
+            case 3:
+              {
+                const DomainT<3,T> &b = 
+                  *reinterpret_cast<const DomainT<3,T>*>(bounds);
+                const AffineTransform<3,2,T> &t = 
+                  *reinterpret_cast<const AffineTransform<3,2,T>*>(transform);
+                return b.contains(t[p]);
+              }
+            default:
+              assert(false);
+          }
+#endif
+          return false;
+        }
+        __CUDA_HD__
+        inline bool contains_all(const Rect<2,T> &r) const
+        {
+          if (has_source && !source.contains(r))
+            return false;
+#ifdef __CUDA_ARCH__
+          if (gpu_warning)
+            check_gpu_warning();
+          if (!has_transform)
+            return reinterpret_cast<const DomainT<2,T>*>(bounds)->
+              bounds.contains(r);
+          // If we have a transform then we have to do each point separately
+          switch (M)
+          {
+            case 1:
+              {
+                const DomainT<1,T> &b = 
+                  *reinterpret_cast<const DomainT<1,T>*>(bounds);
+                const AffineTransform<1,2,T> &t = 
+                  *reinterpret_cast<const AffineTransform<1,2,T>*>(transform);
+                for (PointInRectIterator<2,T> itr(r); itr(); itr++)
+                  if (!b.bounds.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            case 2:
+              {
+                const DomainT<2,T> &b = 
+                  *reinterpret_cast<const DomainT<2,T>*>(bounds);
+                const AffineTransform<2,2,T> &t = 
+                  *reinterpret_cast<const AffineTransform<2,2,T>*>(transform);
+                for (PointInRectIterator<2,T> itr(r); itr(); itr++)
+                  if (!b.bounds.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            case 3:
+              {
+                const DomainT<3,T> &b = 
+                  *reinterpret_cast<const DomainT<3,T>*>(bounds);
+                const AffineTransform<3,2,T> &t = 
+                  *reinterpret_cast<const AffineTransform<3,2,T>*>(transform);
+                for (PointInRectIterator<2,T> itr(r); itr(); itr++)
+                  if (!b.bounds.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            default:
+              assert(false);
+          }
+#else
+          if (!has_transform)
+            return reinterpret_cast<const DomainT<2,T>*>(bounds)->
+              contains_all(r);
+          // If we have a transform then we have to do each point separately
+          switch (M)
+          {
+            case 1:
+              {
+                const DomainT<1,T> &b = 
+                  *reinterpret_cast<const DomainT<1,T>*>(bounds);
+                const AffineTransform<1,2,T> &t = 
+                  *reinterpret_cast<const AffineTransform<1,2,T>*>(transform);
+                for (PointInRectIterator<2,T> itr(r); itr(); itr++)
+                  if (!b.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            case 2:
+              {
+                const DomainT<2,T> &b = 
+                  *reinterpret_cast<const DomainT<2,T>*>(bounds);
+                const AffineTransform<2,2,T> &t = 
+                  *reinterpret_cast<const AffineTransform<2,2,T>*>(transform);
+                for (PointInRectIterator<2,T> itr(r); itr(); itr++)
+                  if (!b.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            case 3:
+              {
+                const DomainT<3,T> &b = 
+                  *reinterpret_cast<const DomainT<3,T>*>(bounds);
+                const AffineTransform<3,2,T> &t = 
+                  *reinterpret_cast<const AffineTransform<3,2,T>*>(transform);
+                for (PointInRectIterator<2,T> itr(r); itr(); itr++)
+                  if (!b.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            default:
+              assert(false);
+          }
+#endif
+          return false;
+        }
+      private:
+        __CUDA_HD__
+        inline void check_gpu_warning(void) const
+        {
+#ifdef __CUDA_ARCH__
+          bool need_warning = false;
+          if (has_transform)
+          {
+            switch (M)
+            {
+              case 1:
+                need_warning = !bounds.one.dense();
+                break;
+              case 2:
+                need_warning = !bounds.two.dense();
+                break;
+              case 3:
+                need_warning = !bounds.three.dense();
+                break;
+              default:
+                assert(false);
+            }
+          }
+          else if (!bounds.one.dense())
+            need_warning = true;
+          if (need_warning)
+            printf("WARNING: GPU bounds check is imprecise!\n");
+          gpu_warning = false;
+#endif
+        }
+      private:
+        // Use unsafe buffers for these since we can't have virtual 
+        // methods on the GPU for objects created on the CPU
+        char bounds[sizeof(DomainT<MAX_M_DIMS,T>)];
+        char transform[sizeof(AffineTransform<MAX_M_DIMS,2,T>)];
+        Rect<2,T> source;
+        int M;
+        bool has_source;
+        bool has_transform;
+        mutable bool gpu_warning;
+      };
+      // Specialization for 3
+      template<typename T>
+      class Tester<3,T> {
+      public:
+        static const int MAX_M_DIMS = 3;
+      public:
+        Tester(void) : M(0) { }
+        Tester(const DomainT<3,T> b) 
+          : M(3), has_source(false), has_transform(false), gpu_warning(true)
+        { 
+          new (bounds) DomainT<3,T>(b);
+        }
+        Tester(const DomainT<3,T> b, Rect<3,T> s) 
+          : source(s), M(3), has_source(true), 
+            has_transform(false), gpu_warning(true)
+        { 
+          new (bounds) DomainT<3,T>(b);
+        }
+        template<int M2>
+        Tester(const DomainT<M2,T> b,
+               const AffineTransform<M2,3,T> t) 
+          : M(M2), has_source(false), has_transform(true), gpu_warning(true)
+        { 
+          LEGION_STATIC_ASSERT(M2 <= MAX_M_DIMS);
+          new (bounds) DomainT<M2,T>(b);
+          new (transform) AffineTransform<M2,3,T>(t);
+        }
+        template<int M2>
+        Tester(const DomainT<M2,T> b, const Rect<3,T> s,
+               const AffineTransform<M2,3,T> t) 
+          : source(s), M(M2), has_source(true), 
+            has_transform(true), gpu_warning(true)
+        { 
+          LEGION_STATIC_ASSERT(M2 <= MAX_M_DIMS);
+          new (bounds) DomainT<M2,T>(b);
+          new (transform) AffineTransform<M2,3,T>(t);
+        }
+        ~Tester(void)
+        {
+          switch (M)
+          {
+            case 0:
+              break;
+            case 1:
+              {
+                reinterpret_cast<DomainT<1,T>*>(bounds)->~DomainT<1,T>();
+                if (has_transform)
+                  reinterpret_cast<AffineTransform<1,3,T>*>(transform)->
+                    ~AffineTransform<1,3,T>();
+                break;
+              }
+            case 2:
+              {
+                reinterpret_cast<DomainT<2,T>*>(bounds)->~DomainT<2,T>();
+                if (has_transform)
+                  reinterpret_cast<AffineTransform<2,3,T>*>(transform)->
+                    ~AffineTransform<2,3,T>();
+                break;
+              }
+            case 3:
+              {
+                reinterpret_cast<DomainT<3,T>*>(bounds)->~DomainT<3,T>();
+                if (has_transform)
+                  reinterpret_cast<AffineTransform<3,3,T>*>(transform)->
+                    ~AffineTransform<3,3,T>();
+                break;
+              }
+#if 0
+            case 4:
+              {
+                reinterpret_cast<DomainT<4,T>*>(bounds)->~DomainT<4,T>();
+                if (has_transform)
+                  reinterpret_cast<AffineTransform<4,3,T>*>(transform)->
+                    ~AffineTransform<4,3,T>();
+                break;
+              }
+#endif
+            default:
+              assert(false);
+          }
+        }
+      public:
+        __CUDA_HD__
+        inline bool contains(const Point<3,T> &p) const
+        {
+          if (has_source && !source.contains(p))
+            return false;
+#ifdef __CUDA_ARCH__
+          if (gpu_warning)
+            check_gpu_warning();
+          if (!has_transfrom)
+            return reinterpret_cast<const DomainT<3,T>*>(bounds)->
+              bounds.contains(p);
+          switch (M)
+          {
+            case 1:
+              {
+                const DomainT<1,T> &b = 
+                  *reinterpret_cast<const DomainT<1,T>*>(bounds);
+                const AffineTransform<1,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<1,3,T>*>(transform);
+                return b.bounds.contains(t[p]);
+              }
+            case 2:
+              {
+                const DomainT<2,T> &b = 
+                  *reinterpret_cast<const DomainT<2,T>*>(bounds);
+                const AffineTransform<2,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<2,3,T>*>(transform);
+                return b.bounds.contains(t[p]);
+              }
+            case 3:
+              {
+                const DomainT<3,T> &b = 
+                  *reinterpret_cast<const DomainT<3,T>*>(bounds);
+                const AffineTransform<3,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<3,3,T>*>(transform);
+                return b.bounds.contains(t[p]);
+              }
+#if 0
+            case 4:
+              {
+                const DomainT<4,T> &b = 
+                  *reinterpret_cast<const DomainT<4,T>*>(bounds);
+                const AffineTransform<4,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<4,3,T>*>(transform);
+                return b.bounds.contains(t[p]);
+              }
+#endif
+            default:
+              assert(false);
+          }
+#else
+          if (!has_transform)
+            return reinterpret_cast<const DomainT<3,T>*>(bounds)->contains(p);
+          switch (M)
+          {
+            case 1:
+              {
+                const DomainT<1,T> &b = 
+                  *reinterpret_cast<const DomainT<1,T>*>(bounds);
+                const AffineTransform<1,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<1,3,T>*>(transform);
+                return b.contains(t[p]);
+              }
+            case 2:
+              {
+                const DomainT<2,T> &b = 
+                  *reinterpret_cast<const DomainT<2,T>*>(bounds);
+                const AffineTransform<2,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<2,3,T>*>(transform);
+                return b.contains(t[p]);
+              }
+            case 3:
+              {
+                const DomainT<3,T> &b = 
+                  *reinterpret_cast<const DomainT<3,T>*>(bounds);
+                const AffineTransform<3,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<3,3,T>*>(transform);
+                return b.contains(t[p]);
+              }
+#if 0
+            case 4:
+              {
+                const DomainT<4,T> &b = 
+                  *reinterpret_cast<const DomainT<4,T>*>(bounds);
+                const AffineTransform<4,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<4,3,T>*>(transform);
+                return b.contains(t[p]);
+              }
+#endif
+            default:
+              assert(false);
+          }
+#endif
+          return false;
+        }
+        __CUDA_HD__
+        inline bool contains_all(const Rect<3,T> &r) const
+        {
+          if (has_source && !source.contains(r))
+            return false;
+#ifdef __CUDA_ARCH__
+          if (gpu_warning)
+            check_gpu_warning();
+          if (!has_transform)
+            return reinterpret_cast<const DomainT<3,T>*>(bounds)->
+              bounds.contains(r);
+          // If we have a transform then we have to do each point separately
+          switch (M)
+          {
+            case 1:
+              {
+                const DomainT<1,T> &b = 
+                  *reinterpret_cast<const DomainT<1,T>*>(bounds);
+                const AffineTransform<1,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<1,3,T>*>(transform);
+                for (PointInRectIterator<3,T> itr(r); itr(); itr++)
+                  if (!b.bounds.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            case 2:
+              {
+                const DomainT<2,T> &b = 
+                  *reinterpret_cast<const DomainT<2,T>*>(bounds);
+                const AffineTransform<2,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<2,3,T>*>(transform);
+                for (PointInRectIterator<3,T> itr(r); itr(); itr++)
+                  if (!b.bounds.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            case 3:
+              {
+                const DomainT<3,T> &b = 
+                  *reinterpret_cast<const DomainT<3,T>*>(bounds);
+                const AffineTransform<3,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<3,3,T>*>(transform);
+                for (PointInRectIterator<3,T> itr(r); itr(); itr++)
+                  if (!b.bounds.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+#if 0
+            case 4:
+              {
+                const DomainT<4,T> &b = 
+                  *reinterpret_cast<const DomainT<4,T>*>(bounds);
+                const AffineTransform<4,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<4,3,T>*>(transform);
+                for (PointInRectIterator<3,T> itr(r); itr(); itr++)
+                  if (!b.bounds.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+#endif
+            default:
+              assert(false);
+          }
+#else
+          if (!has_transform)
+            return reinterpret_cast<const DomainT<3,T>*>(bounds)->
+              contains_all(r);
+          // If we have a transform then we have to do each point separately
+          switch (M)
+          {
+            case 1:
+              {
+                const DomainT<1,T> &b = 
+                  *reinterpret_cast<const DomainT<1,T>*>(bounds);
+                const AffineTransform<1,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<1,3,T>*>(transform);
+                for (PointInRectIterator<3,T> itr(r); itr(); itr++)
+                  if (!b.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            case 2:
+              {
+                const DomainT<2,T> &b = 
+                  *reinterpret_cast<const DomainT<2,T>*>(bounds);
+                const AffineTransform<2,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<2,3,T>*>(transform);
+                for (PointInRectIterator<3,T> itr(r); itr(); itr++)
+                  if (!b.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+            case 3:
+              {
+                const DomainT<3,T> &b = 
+                  *reinterpret_cast<const DomainT<3,T>*>(bounds);
+                const AffineTransform<3,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<3,3,T>*>(transform);
+                for (PointInRectIterator<3,T> itr(r); itr(); itr++)
+                  if (!b.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+#if 0
+            case 4:
+              {
+                const DomainT<4,T> &b = 
+                  *reinterpret_cast<const DomainT<4,T>*>(bounds);
+                const AffineTransform<4,3,T> &t = 
+                  *reinterpret_cast<const AffineTransform<4,3,T>*>(transform);
+                for (PointInRectIterator<4,T> itr(r); itr(); itr++)
+                  if (!b.contains(t[*itr]))
+                    return false;
+                return true;
+              }
+#endif
+            default:
+              assert(false);
+          }
+#endif
+          return false;
+        }
+      private:
+        __CUDA_HD__
+        inline void check_gpu_warning(void) const
+        {
+#ifdef __CUDA_ARCH__
+          bool need_warning = false;
+          if (has_transform)
+          {
+            switch (M)
+            {
+              case 1:
+                need_warning = !bounds.one.dense();
+                break;
+              case 2:
+                need_warning = !bounds.two.dense();
+                break;
+              case 3:
+                need_warning = !bounds.three.dense();
+                break;
+              case 4:
+                need_warning = !bounds.four.dense();
+                break;
+              default:
+                assert(false);
+            }
+          }
+          else if (!bounds.one.dense())
+            need_warning = true;
+          if (need_warning)
+            printf("WARNING: GPU bounds check is imprecise!\n");
+          gpu_warning = false;
+#endif
+        }
+      private:
+        // Use unsafe buffers for these since we can't have virtual 
+        // methods on the GPU for objects created on the CPU
+        char bounds[sizeof(DomainT<MAX_M_DIMS,T>)];
+        char transform[sizeof(AffineTransform<MAX_M_DIMS,3,T>)];
+        Rect<3,T> source;
+        int M;
+        bool has_source;
+        bool has_transform;
+        mutable bool gpu_warning;
+      };
+    };
+
     ////////////////////////////////////////////////////////////
     // Specializations for Affine Accessors
     ////////////////////////////////////////////////////////////
@@ -1018,19 +2269,79 @@ namespace Legion {
       __CUDA_HD__
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
       }
     public:
       __CUDA_HD__
@@ -1044,17 +2355,44 @@ namespace Legion {
           return accessor.ptr(p); 
         }
       __CUDA_HD__
+      inline const FT* ptr(const Rect<N,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline const FT* ptr(const Rect<N,T>& r, size_t strides[N]) const
+        {
+          for (int i = 0; i < N; i++)
+            strides[i] = accessor.strides[i] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
       inline const FT& operator[](const Point<N,T>& p) const
         { 
           return accessor[p]; 
         }
       __CUDA_HD__
       inline ArraySyntax::AffineSyntaxHelper<FieldAccessor<READ_ONLY,FT,N,T,
-            Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,true/*read only*/>
+            Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,READ_ONLY>
           operator[](T index) const
       {
         return ArraySyntax::AffineSyntaxHelper<FieldAccessor<READ_ONLY,FT,N,T,
-               Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,true/*read only*/>(
+               Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,READ_ONLY>(
               *this, Point<1,T>(index));
       }
     public:
@@ -1070,35 +2408,92 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
-        : field(fid), field_region(region), 
-          bounds(region.template get_bounds<N,T>()),
-          gpu_warning(!silence_warnings)
+        : field(fid), field_region(region)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
+        bounds = AffineBounds::Tester<N,T>(is);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, source_bounds);
+        bounds = AffineBounds::Tester<N,T>(is, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid);
+        bounds = AffineBounds::Tester<N,T>(is, transform);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
+        bounds = AffineBounds::Tester<N,T>(is, source_bounds, transform);
       }
     public:
       __CUDA_HD__
       inline FT read(const Point<N,T>& p) const 
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_ONLY);
@@ -1109,13 +2504,7 @@ namespace Legion {
       inline const FT* ptr(const Point<N,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_ONLY);
@@ -1123,16 +2512,49 @@ namespace Legion {
           return accessor.ptr(p); 
         }
       __CUDA_HD__
+      inline const FT* ptr(const Rect<N,T>& r) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_ONLY);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline const FT* ptr(const Rect<N,T>& r, size_t strides[N]) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_ONLY);
+#endif
+          for (int i = 0; i < N; i++)
+            strides[i] = accessor.strides[i] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
       inline const FT& operator[](const Point<N,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_ONLY);
@@ -1141,19 +2563,18 @@ namespace Legion {
         }
       __CUDA_HD__
       inline ArraySyntax::AffineSyntaxHelper<FieldAccessor<READ_ONLY,FT,N,T,
-             Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,true/*read only*/>
+             Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,READ_ONLY>
           operator[](T index) const
       {
         return ArraySyntax::AffineSyntaxHelper<FieldAccessor<READ_ONLY,FT,N,T,
-              Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,true/*read only*/>(
+              Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,READ_ONLY>(
               *this, Point<1,T>(index));
       }
     public:
       Realm::AffineAccessor<FT,N,T> accessor;
       FieldID field;
       PhysicalRegion field_region;
-      DomainT<N,T> bounds;
-      mutable bool gpu_warning;
+      AffineBounds::Tester<N,T> bounds;
     };
 
     // Read-only FieldAccessor specialization 
@@ -1165,19 +2586,79 @@ namespace Legion {
       __CUDA_HD__
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
       }
     public:
       __CUDA_HD__
@@ -1189,6 +2670,32 @@ namespace Legion {
       inline const FT* ptr(const Point<1,T>& p) const
         { 
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline const FT* ptr(const Rect<1,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo); 
+        }
+      __CUDA_HD__
+      inline const FT* ptr(const Rect<1,T>& r, size_t strides[1]) const
+        {
+          strides[0] = accessor.strides[0] / sizeof(FT);
+          return accessor.ptr(r.lo); 
         }
       __CUDA_HD__
       inline const FT& operator[](const Point<1,T>& p) const
@@ -1208,35 +2715,94 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
-        : field(fid), field_region(region), 
-          bounds(region.template get_bounds<1,T>()), 
-          gpu_warning(!silence_warnings)
+        : field(fid), field_region(region) 
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_ONLY, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
+        bounds = AffineBounds::Tester<1,T>(is);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region) 
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, source_bounds);
+        bounds = AffineBounds::Tester<1,T>(is, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region) 
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid);
+        bounds = AffineBounds::Tester<1,T>(is, transform);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region) 
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_ONLY, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
+        bounds = AffineBounds::Tester<1,T>(is, source_bounds, transform);
       }
     public:
       __CUDA_HD__
       inline FT read(const Point<1,T>& p) const 
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_ONLY);
@@ -1247,13 +2813,7 @@ namespace Legion {
       inline const FT* ptr(const Point<1,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_ONLY);
@@ -1261,16 +2821,48 @@ namespace Legion {
           return accessor.ptr(p); 
         }
       __CUDA_HD__
+      inline const FT* ptr(const Rect<1,T>& r) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_ONLY);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline const FT* ptr(const Rect<1,T>& r, size_t strides[1]) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_ONLY);
+#endif
+          strides[0] = accessor.strides[0] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
       inline const FT& operator[](const Point<1,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_ONLY);
@@ -1281,8 +2873,7 @@ namespace Legion {
       Realm::AffineAccessor<FT,1,T> accessor;
       FieldID field;
       PhysicalRegion field_region;
-      DomainT<1,T> bounds;
-      mutable bool gpu_warning;
+      AffineBounds::Tester<1,T> bounds;
     };
 
     // Read-write FieldAccessor specialization
@@ -1293,19 +2884,79 @@ namespace Legion {
       __CUDA_HD__
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
       }
     public:
       __CUDA_HD__
@@ -1324,17 +2975,44 @@ namespace Legion {
           return accessor.ptr(p); 
         }
       __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r, size_t strides[N]) const
+        {
+          for (int i = 0; i < N; i++)
+            strides[i] = accessor.strides[i] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
       inline FT& operator[](const Point<N,T>& p) const
         { 
           return accessor[p]; 
         }
       __CUDA_HD__
       inline ArraySyntax::AffineSyntaxHelper<FieldAccessor<READ_WRITE,FT,N,T,
-             Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,false/*read only*/>
+             Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,READ_WRITE>
           operator[](T index) const
       {
         return ArraySyntax::AffineSyntaxHelper<FieldAccessor<READ_WRITE,FT,N,T,
-              Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,false/*read only*/>(
+              Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,READ_WRITE>(
               *this, Point<1,T>(index));
       }
       template<typename REDOP, bool EXCLUSIVE> __CUDA_HD__
@@ -1356,35 +3034,94 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
-        : field(fid), field_region(region), 
-          bounds(region.template get_bounds<N,T>()),
-          gpu_warning(!silence_warnings)
+        : field(fid), field_region(region)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
+        bounds = AffineBounds::Tester<N,T>(is);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, source_bounds);
+        bounds = AffineBounds::Tester<N,T>(is, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform, 
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid);
+        bounds = AffineBounds::Tester<N,T>(is, transform);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform, 
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
+        bounds = AffineBounds::Tester<N,T>(is, source_bounds, transform);
       }
     public:
       __CUDA_HD__
       inline FT read(const Point<N,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_ONLY);
@@ -1395,13 +3132,7 @@ namespace Legion {
       inline void write(const Point<N,T>& p, FT val) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field,WRITE_DISCARD);
@@ -1412,13 +3143,7 @@ namespace Legion {
       inline FT* ptr(const Point<N,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
@@ -1426,16 +3151,49 @@ namespace Legion {
           return accessor.ptr(p); 
         }
       __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r, size_t strides[N]) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          for (int i = 0; i < N; i++)
+            strides[i] = accessor.strides[i] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
       inline FT& operator[](const Point<N,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
@@ -1444,11 +3202,11 @@ namespace Legion {
         }
       __CUDA_HD__
       inline ArraySyntax::AffineSyntaxHelper<FieldAccessor<READ_WRITE,FT,N,T,
-              Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,false/*read only*/>
+              Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,READ_WRITE>
           operator[](T index) const
       {
         return ArraySyntax::AffineSyntaxHelper<FieldAccessor<READ_WRITE,FT,N,T,
-               Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,false/*read only*/>(
+               Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,READ_WRITE>(
               *this, Point<1,T>(index));
       }
       template<typename REDOP, bool EXCLUSIVE> __CUDA_HD__ 
@@ -1456,13 +3214,7 @@ namespace Legion {
                          typename REDOP::RHS val) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, REDUCE);
@@ -1473,8 +3225,7 @@ namespace Legion {
       Realm::AffineAccessor<FT,N,T> accessor;
       FieldID field;
       PhysicalRegion field_region;
-      DomainT<N,T> bounds;
-      mutable bool gpu_warning;
+      AffineBounds::Tester<N,T> bounds;
     };
 
     // Read-write FieldAccessor specialization 
@@ -1486,19 +3237,79 @@ namespace Legion {
       __CUDA_HD__
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
       }
     public:
       __CUDA_HD__
@@ -1515,6 +3326,32 @@ namespace Legion {
       inline FT* ptr(const Point<1,T>& p) const
         { 
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r, size_t strides[1]) const
+        {
+          strides[0] = accessor.strides[0] / sizeof(FT);
+          return accessor.ptr(r.lo);
         }
       __CUDA_HD__
       inline FT& operator[](const Point<1,T>& p) const
@@ -1540,35 +3377,94 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
-        : field(fid), field_region(region), 
-          bounds(region.template get_bounds<1,T>()),
-          gpu_warning(!silence_warnings)
+        : field(fid), field_region(region)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(READ_WRITE, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
+        bounds = AffineBounds::Tester<1,T>(is);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, source_bounds);
+        bounds = AffineBounds::Tester<1,T>(is, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid);
+        bounds = AffineBounds::Tester<1,T>(is, transform);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(READ_WRITE, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
+        bounds = AffineBounds::Tester<1,T>(is, source_bounds, transform);
       }
     public:
       __CUDA_HD__
       inline FT read(const Point<1,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_ONLY);
@@ -1579,13 +3475,7 @@ namespace Legion {
       inline void write(const Point<1,T>& p, FT val) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field,WRITE_DISCARD);
@@ -1596,13 +3486,7 @@ namespace Legion {
       inline FT* ptr(const Point<1,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
@@ -1610,16 +3494,48 @@ namespace Legion {
           return accessor.ptr(p); 
         }
       __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r, size_t strides[1]) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          strides[0] = accessor.strides[0] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
       inline FT& operator[](const Point<1,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
@@ -1631,13 +3547,7 @@ namespace Legion {
                          typename REDOP::RHS val) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, REDUCE);
@@ -1648,8 +3558,7 @@ namespace Legion {
       Realm::AffineAccessor<FT,1,T> accessor;
       FieldID field;
       PhysicalRegion field_region;
-      DomainT<1,T> bounds;
-      mutable bool gpu_warning;
+      AffineBounds::Tester<1,T> bounds;
     };
 
     // Write-discard FieldAccessor specialization
@@ -1660,19 +3569,79 @@ namespace Legion {
       __CUDA_HD__
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
       }
     public:
       __CUDA_HD__
@@ -1691,17 +3660,44 @@ namespace Legion {
           return accessor.ptr(p); 
         }
       __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r, size_t strides[N]) const
+        {
+          for (int i = 0; i < N; i++)
+            strides[i] = accessor.strides[i] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
       inline FT& operator[](const Point<N,T>& p) const
         { 
           return accessor[p]; 
         }
       __CUDA_HD__
       inline ArraySyntax::AffineSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,N,T,
-             Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,false/*read only*/>
+             Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,WRITE_DISCARD>
           operator[](T index) const
       {
         return ArraySyntax::AffineSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,N,
-          T,Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,false/*read only*/>(
+          T,Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,WRITE_DISCARD>(
               *this, Point<1,T>(index));
       }
     public:
@@ -1717,35 +3713,94 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
-        : field(fid), field_region(region), 
-          bounds(region.template get_bounds<N,T>()),
-          gpu_warning(!silence_warnings)
+        : field(fid), field_region(region)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
+        bounds = AffineBounds::Tester<N,T>(is);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, source_bounds);
+        bounds = AffineBounds::Tester<N,T>(is, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid);
+        bounds = AffineBounds::Tester<N,T>(is, transform);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
+        bounds = AffineBounds::Tester<N,T>(is, source_bounds, transform);
       }
     public:
       __CUDA_HD__
       inline FT read(const Point<N,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_ONLY);
@@ -1756,13 +3811,7 @@ namespace Legion {
       inline void write(const Point<N,T>& p, FT val) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field,WRITE_DISCARD);
@@ -1773,13 +3822,7 @@ namespace Legion {
       inline FT* ptr(const Point<N,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
@@ -1787,16 +3830,49 @@ namespace Legion {
           return accessor.ptr(p); 
         }
       __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r) const 
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r, size_t strides[N]) const 
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          for (int i = 0; i < N; i++)
+            strides[i] = accessor.strides[i] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
       inline FT& operator[](const Point<N,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
@@ -1805,19 +3881,18 @@ namespace Legion {
         }
       __CUDA_HD__
       inline ArraySyntax::AffineSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,N,T,
-             Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,false/*read only*/>
+             Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,WRITE_DISCARD>
           operator[](T index) const
       {
         return ArraySyntax::AffineSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,N,
-          T,Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,false/*read only*/>(
+          T,Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,WRITE_DISCARD>(
               *this, Point<1,T>(index));
       }
     public:
       Realm::AffineAccessor<FT,N,T> accessor;
       FieldID field;
       PhysicalRegion field_region;
-      DomainT<N,T> bounds;
-      mutable bool gpu_warning;
+      AffineBounds::Tester<N,T> bounds;
     };
 
     // Write-discard FieldAccessor specialization with
@@ -1829,19 +3904,79 @@ namespace Legion {
       __CUDA_HD__
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
       }
     public:
       __CUDA_HD__
@@ -1858,6 +3993,32 @@ namespace Legion {
       inline FT* ptr(const Point<1,T>& p) const
         { 
           return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r, size_t strides[1]) const
+        {
+          strides[0] = accessor.strides[0] / sizeof(FT);
+          return accessor.ptr(r.lo);
         }
       __CUDA_HD__
       inline FT& operator[](const Point<1,T>& p) const
@@ -1877,35 +4038,94 @@ namespace Legion {
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
 #ifdef DEBUG_LEGION
-                    size_t elems = 1, bool check_field_size = true,
+                    bool check_field_size = true,
 #else
-                    size_t elems = 1, bool check_field_size = false,
+                    bool check_field_size = false,
 #endif
                     bool silence_warnings = false)
-        : field(fid), field_region(region), 
-          bounds(region.template get_bounds<1,T>()),
-          gpu_warning(!silence_warnings)
+        : field(fid), field_region(region)
       {
         DomainT<1,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(WRITE_DISCARD, fid, elems * sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<1,T>(), 
               silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
+        bounds = AffineBounds::Tester<1,T>(is);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, source_bounds);
+        bounds = AffineBounds::Tester<1,T>(is, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid);
+        bounds = AffineBounds::Tester<1,T>(is, transform);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
+        bounds = AffineBounds::Tester<1,T>(is, source_bounds, transform);
       }
     public:
       __CUDA_HD__
       inline FT read(const Point<1,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_ONLY);
@@ -1916,13 +4136,7 @@ namespace Legion {
       inline void write(const Point<1,T>& p, FT val) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field,WRITE_DISCARD);
@@ -1933,13 +4147,7 @@ namespace Legion {
       inline FT* ptr(const Point<1,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
@@ -1947,16 +4155,48 @@ namespace Legion {
           return accessor.ptr(p); 
         }
       __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r, size_t strides[1]) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          strides[0] = accessor.strides[0] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
       inline FT& operator[](const Point<1,T>& p) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
@@ -1967,85 +4207,1203 @@ namespace Legion {
       Realm::AffineAccessor<FT,1,T> accessor;
       FieldID field;
       PhysicalRegion field_region;
-      DomainT<1,T> bounds;
-      mutable bool gpu_warning;
+      AffineBounds::Tester<1,T> bounds;
     };
 
-    // Reduce FieldAccessor specialization
+    // Write-only FieldAccessor specialization
     template<typename FT, int N, typename T, bool CB>
-    class FieldAccessor<REDUCE,FT,N,T,
+    class FieldAccessor<WRITE_ONLY,FT,N,T,
                         Realm::AffineAccessor<FT,N,T>,CB> {
     public:
       __CUDA_HD__
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
-                    ReductionOpID redop, bool silence_warnings = false)
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(REDUCE, fid, sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
-              silence_warnings, false/*generic accessor*/, 
-              false/*check field size*/, redop);
+              silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
       }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
+      }
     public:
-      template<typename REDOP, bool EXCLUSIVE> __CUDA_HD__
-      inline void reduce(const Point<N,T>& p, 
-                         typename REDOP::RHS val) const
+      __CUDA_HD__
+      inline void write(const Point<N,T>& p, FT val) const
         { 
-          REDOP::template fold<EXCLUSIVE>(accessor[p], val);
+          accessor.write(p, val); 
         }
+      __CUDA_HD__
+      inline FT* ptr(const Point<N,T>& p) const
+        { 
+          return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r, size_t strides[N]) const
+        {
+          for (int i = 0; i < N; i++)
+            strides[i] = accessor.strides[i] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT& operator[](const Point<N,T>& p) const
+        { 
+          return accessor[p]; 
+        }
+      __CUDA_HD__
+      inline ArraySyntax::AffineSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,N,T,
+             Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,WRITE_DISCARD>
+          operator[](T index) const
+      {
+        return ArraySyntax::AffineSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,N,
+          T,Realm::AffineAccessor<FT,N,T>,CB>,FT,N,T,2,WRITE_DISCARD>(
+              *this, Point<1,T>(index));
+      }
     public:
       Realm::AffineAccessor<FT,N,T> accessor;
     };
 
-    // Reduce FieldAccessor specialization with bounds checks
+    // Write-only FieldAccessor specialization
+    // with bounds checks
     template<typename FT, int N, typename T>
-    class FieldAccessor<REDUCE,FT,N,T,
+    class FieldAccessor<WRITE_ONLY,FT,N,T,
                         Realm::AffineAccessor<FT,N,T>,true> {
     public:
       // No CUDA support due to PhysicalRegion constructor
       FieldAccessor(void) { }
       FieldAccessor(const PhysicalRegion &region, FieldID fid,
-                    ReductionOpID redop, bool silence_warnings = false)
-        : field(fid), field_region(region), 
-          bounds(region.template get_bounds<N,T>()),
-          gpu_warning(!silence_warnings)
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
       {
         DomainT<N,T> is;
         const Realm::RegionInstance instance = 
-          region.get_instance_info(REDUCE, fid, sizeof(FT), &is,
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
               Internal::NT_TemplateHelper::encode_tag<N,T>(), 
-              silence_warnings, false/*generic accessor*/, 
-              false/*check field size*/, redop);
+              silence_warnings, false/*generic accessor*/, check_field_size);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
+        bounds = AffineBounds::Tester<N,T>(is);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, source_bounds);
+        bounds = AffineBounds::Tester<N,T>(is, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid);
+        bounds = AffineBounds::Tester<N,T>(is, transform);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,N,T> transform,
+                    const Rect<N,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
+        bounds = AffineBounds::Tester<N,T>(is, source_bounds, transform);
       }
     public:
-      template<typename REDOP, bool EXCLUSIVE> __CUDA_HD__ 
+      __CUDA_HD__
+      inline void write(const Point<N,T>& p, FT val) const
+        { 
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains(p));
+#else
+          if (!bounds.contains(p)) 
+            field_region.fail_bounds_check(DomainPoint(p), field,WRITE_DISCARD);
+#endif
+          accessor.write(p, val); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Point<N,T>& p) const
+        { 
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains(p));
+#else
+          if (!bounds.contains(p)) 
+            field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
+#endif
+          return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r) const 
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r, size_t strides[N]) const 
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          for (int i = 0; i < N; i++)
+            strides[i] = accessor.strides[i] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT& operator[](const Point<N,T>& p) const
+        { 
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains(p));
+#else
+          if (!bounds.contains(p)) 
+            field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
+#endif
+          return accessor[p]; 
+        }
+      __CUDA_HD__
+      inline ArraySyntax::AffineSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,N,T,
+             Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,WRITE_DISCARD>
+          operator[](T index) const
+      {
+        return ArraySyntax::AffineSyntaxHelper<FieldAccessor<WRITE_DISCARD,FT,N,
+          T,Realm::AffineAccessor<FT,N,T>,true>,FT,N,T,2,WRITE_DISCARD>(
+              *this, Point<1,T>(index));
+      }
+    public:
+      Realm::AffineAccessor<FT,N,T> accessor;
+      FieldID field;
+      PhysicalRegion field_region;
+      AffineBounds::Tester<N,T> bounds;
+    };
+
+    // Write-only FieldAccessor specialization with
+    // N == 1 to avoid array ambiguity
+    template<typename FT, typename T, bool CB>
+    class FieldAccessor<WRITE_ONLY,FT,1,T,
+                        Realm::AffineAccessor<FT,1,T>,CB> {
+    public:
+      __CUDA_HD__
+      FieldAccessor(void) { }
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
+      }
+    public:
+      __CUDA_HD__
+      inline void write(const Point<1,T>& p, FT val) const
+        { 
+          accessor.write(p, val); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Point<1,T>& p) const
+        { 
+          return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r, size_t strides[1]) const
+        {
+          strides[0] = accessor.strides[0] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT& operator[](const Point<1,T>& p) const
+        { 
+          return accessor[p]; 
+        }
+    public:
+      Realm::AffineAccessor<FT,1,T> accessor;
+    };
+
+    // Write-only FieldAccessor specialization with
+    // N == 1 to avoid array ambiguity and bounds checks
+    template<typename FT, typename T>
+    class FieldAccessor<WRITE_ONLY,FT,1,T,
+                        Realm::AffineAccessor<FT,1,T>,true> {
+    public:
+      // No CUDA support due to PhysicalRegion constructor
+      FieldAccessor(void) { }
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
+        bounds = AffineBounds::Tester<1,T>(is);
+      }
+      // With explicit bounds
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, source_bounds);
+        bounds = AffineBounds::Tester<1,T>(is, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid);
+        bounds = AffineBounds::Tester<1,T>(is, transform);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      FieldAccessor(const PhysicalRegion &region, FieldID fid,
+                    const AffineTransform<M,1,T> transform,
+                    const Rect<1,T> source_bounds,
+                    size_t actual_field_size = sizeof(FT),
+#ifdef DEBUG_LEGION
+                    bool check_field_size = true,
+#else
+                    bool check_field_size = false,
+#endif
+                    bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(WRITE_DISCARD, fid, actual_field_size, &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, check_field_size);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
+        bounds = AffineBounds::Tester<1,T>(is, source_bounds, transform);
+      }
+    public:
+      __CUDA_HD__
+      inline void write(const Point<1,T>& p, FT val) const
+        { 
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains(p));
+#else
+          if (!bounds.contains(p)) 
+            field_region.fail_bounds_check(DomainPoint(p), field,WRITE_DISCARD);
+#endif
+          accessor.write(p, val); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Point<1,T>& p) const
+        { 
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains(p));
+#else
+          if (!bounds.contains(p)) 
+            field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
+#endif
+          return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<1,T>& r, size_t strides[1]) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, READ_WRITE);
+#endif
+          strides[0] = accessor.strides[0] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT& operator[](const Point<1,T>& p) const
+        { 
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains(p));
+#else
+          if (!bounds.contains(p)) 
+            field_region.fail_bounds_check(DomainPoint(p), field, READ_WRITE);
+#endif
+          return accessor[p]; 
+        }
+    public:
+      Realm::AffineAccessor<FT,1,T> accessor;
+      FieldID field;
+      PhysicalRegion field_region;
+      AffineBounds::Tester<1,T> bounds;
+    };
+
+    // Reduce FieldAccessor specialization
+    template<typename REDOP, bool EXCLUSIVE, int N, typename T, bool CB>
+    class ReductionAccessor<REDOP,EXCLUSIVE,N,T,
+                        Realm::AffineAccessor<typename REDOP::RHS,N,T>,CB> {
+    public:
+      __CUDA_HD__
+      ReductionAccessor(void) { }
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, bool silence_warnings = false)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS), 
+              &is, Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,N,T>(
+            instance, fid, is.bounds);
+      }
+      // With explicit bounds
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, 
+                        const Rect<N,T> source_bounds,
+                        bool silence_warnings = false)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS), 
+              &is, Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,N,T>(
+            instance, fid, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, 
+                        const AffineTransform<M,N,T> transform,
+                        bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS),
+              &is, Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,N,T>(instance, 
+            transform.transform, transform.offset, fid);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, 
+                        const AffineTransform<M,N,T> transform,
+                        const Rect<N,T> source_bounds,
+                        bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS),
+              &is, Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,N,T>(instance, 
+            transform.transform, transform.offset, fid, source_bounds);
+      }
+    public:
+      __CUDA_HD__
+      inline void reduce(const Point<N,T>& p, 
+                         typename REDOP::RHS val) const
+        { 
+          REDOP::template fold<EXCLUSIVE>(accessor[p], val);
+        }
+      __CUDA_HD__
+      inline typename REDOP::RHS* ptr(const Point<N,T>& p) const
+        {
+          return accessor.ptr(p);
+        }
+      __CUDA_HD__
+      inline typename REDOP::RHS* ptr(const Rect<N,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline typename REDOP::RHS* ptr(const Rect<N,T>& r, 
+                                      size_t strides[N]) const
+        {
+          for (int i = 0; i < N; i++)
+            strides[i] = accessor.strides[i] / sizeof(typename REDOP::RHS);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline ArraySyntax::ReductionHelper<ReductionAccessor<REDOP,EXCLUSIVE,N,
+             T,Realm::AffineAccessor<typename REDOP::RHS,N,T>,CB>,
+             typename REDOP::RHS,N,T>
+               operator[](const Point<N,T>& p) const
+        { 
+          return ArraySyntax::ReductionHelper<ReductionAccessor<REDOP,EXCLUSIVE,
+            N,T,Realm::AffineAccessor<typename REDOP::RHS,N,T>,CB>,
+            typename REDOP::RHS,N,T>(*this, p);
+        }
+      __CUDA_HD__
+      inline ArraySyntax::AffineSyntaxHelper<ReductionAccessor<REDOP,EXCLUSIVE,
+         N,T,Realm::AffineAccessor<typename REDOP::RHS,N,T>,CB>,
+         typename REDOP::RHS,N,T,2,REDUCE>
+          operator[](T index) const
+      {
+        return ArraySyntax::AffineSyntaxHelper<ReductionAccessor<REDOP,
+          EXCLUSIVE,N,T,Realm::AffineAccessor<typename REDOP::RHS,N,T>,CB>,
+          typename REDOP::RHS,N,T,2,REDUCE>(
+              *this, Point<1,T>(index));
+      }
+    public:
+      Realm::AffineAccessor<typename REDOP::RHS,N,T> accessor;
+    };
+
+    // Reduce ReductionAccessor specialization with bounds checks
+    template<typename REDOP, bool EXCLUSIVE, int N, typename T>
+    class ReductionAccessor<REDOP,EXCLUSIVE,N,T,
+                          Realm::AffineAccessor<typename REDOP::RHS,N,T>,true> {
+    public:
+      // No CUDA support due to PhysicalRegion constructor
+      ReductionAccessor(void) { }
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS),
+              &is, Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,N,T>(
+            instance, fid, is.bounds);
+        bounds = AffineBounds::Tester<N,T>(is);
+      }
+      // With explicit bounds
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, 
+                        const Rect<N,T> source_bounds,
+                        bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS), 
+              &is, Internal::NT_TemplateHelper::encode_tag<N,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,N,T>(
+            instance, fid, source_bounds);
+        bounds = AffineBounds::Tester<N,T>(is, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, 
+                        const AffineTransform<M,N,T> transform,
+                        bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS),
+              &is, Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,N,T>(
+            instance, transform.transform,
+                                                transform.offset, fid);
+        bounds = AffineBounds::Tester<N,T>(is, transform);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, 
+                        const AffineTransform<M,N,T> transform,
+                        const Rect<N,T> source_bounds,
+                        bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS),
+              &is, Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = 
+          Realm::AffineAccessor<typename REDOP::RHS,N,T>(instance, 
+              transform.transform, transform.offset, fid, source_bounds);
+        bounds = AffineBounds::Tester<N,T>(is, source_bounds, transform);
+      }
+    public:
+      __CUDA_HD__ 
       inline void reduce(const Point<N,T>& p, 
                          typename REDOP::RHS val) const
         { 
 #ifdef __CUDA_ARCH__
-          if (gpu_warning)
-          {
-            if (!bounds.dense())
-              printf("WARNING: GPU bounds check is imprecise\n");
-            gpu_warning = false;
-          }
-          assert(bounds.bounds.contains(p));
+          assert(bounds.contains(p));
 #else
           if (!bounds.contains(p)) 
             field_region.fail_bounds_check(DomainPoint(p), field, REDUCE);
 #endif
           REDOP::template fold<EXCLUSIVE>(accessor[p], val);
         }
+      __CUDA_HD__
+      inline typename REDOP::RHS* ptr(const Point<N,T>& p) const
+        { 
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains(p));
+#else
+          if (!bounds.contains(p)) 
+            field_region.fail_bounds_check(DomainPoint(p), field, REDUCE);
+#endif
+          return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline typename REDOP::RHS* ptr(const Rect<N,T>& r) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, REDUCE);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline typename REDOP::RHS* ptr(const Rect<N,T>& r,
+                                      size_t strides[N]) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, REDUCE);
+#endif
+          for (int i = 0; i < N; i++)
+            strides[i] = accessor.strides[i] / sizeof(typename REDOP::RHS);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline ArraySyntax::ReductionHelper<ReductionAccessor<REDOP,EXCLUSIVE,N,
+             T,Realm::AffineAccessor<typename REDOP::RHS,N,T>,true>,
+             typename REDOP::RHS,N,T>
+               operator[](const Point<N,T>& p) const
+        { 
+          return ArraySyntax::ReductionHelper<ReductionAccessor<REDOP,EXCLUSIVE,
+            N,T,Realm::AffineAccessor<typename REDOP::RHS,N,T>,true>,
+            typename REDOP::RHS,N,T>(*this, p);
+        }
+      __CUDA_HD__
+      inline ArraySyntax::AffineSyntaxHelper<ReductionAccessor<REDOP,EXCLUSIVE,
+             N,T, Realm::AffineAccessor<typename REDOP::RHS,N,T>,true>,
+             typename REDOP::RHS,N,T,2,REDUCE>
+          operator[](T index) const
+      {
+        return ArraySyntax::AffineSyntaxHelper<ReductionAccessor<REDOP,
+          EXCLUSIVE,N,T,Realm::AffineAccessor<typename REDOP::RHS,N,T>,true>,
+          typename REDOP::RHS,N,T,2,REDUCE>(
+              *this, Point<1,T>(index));
+      }
     public:
-      Realm::AffineAccessor<FT,N,T> accessor;
+      Realm::AffineAccessor<typename REDOP::RHS,N,T> accessor;
       FieldID field;
       PhysicalRegion field_region;
-      DomainT<N,T> bounds;
-      mutable bool gpu_warning;
+      AffineBounds::Tester<N,T> bounds;
+    };
+    
+    // Reduce Field Accessor specialization with N==1
+    // to avoid array ambiguity
+    template<typename REDOP, bool EXCLUSIVE, typename T, bool CB>
+    class ReductionAccessor<REDOP,EXCLUSIVE,1,T,
+                        Realm::AffineAccessor<typename REDOP::RHS,1,T>,CB> {
+    public:
+      __CUDA_HD__
+      ReductionAccessor(void) { }
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, bool silence_warnings = false)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS),
+              &is, Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,1,T>(
+            instance, fid, is.bounds);
+      }
+      // With explicit bounds
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, 
+                        const Rect<1,T> source_bounds,
+                        bool silence_warnings = false)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS),
+              &is, Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,1,T>(
+            instance, fid, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, 
+                        const AffineTransform<M,1,T> transform,
+                        bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS),
+              &is, Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,1,T>(
+            instance, transform.transform, transform.offset, fid);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, 
+                        const AffineTransform<M,1,T> transform,
+                        const Rect<1,T> source_bounds,
+                        bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS),
+              &is, Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,1,T>(instance, 
+            transform.transform, transform.offset, fid, source_bounds);
+      }
+    public:
+      __CUDA_HD__
+      inline void reduce(const Point<1,T>& p, 
+                         typename REDOP::RHS val) const
+        { 
+          REDOP::template fold<EXCLUSIVE>(accessor[p], val);
+        }
+      __CUDA_HD__
+      inline typename REDOP::RHS* ptr(const Point<1,T>& p) const
+        {
+          return accessor.ptr(p);
+        }
+      __CUDA_HD__
+      inline typename REDOP::RHS* ptr(const Rect<1,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline typename REDOP::RHS* ptr(const Rect<1,T>& r, 
+                                      size_t strides[1]) const
+        {
+          strides[0] = accessor.strides[0] / sizeof(typename REDOP::RHS);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline ArraySyntax::ReductionHelper<ReductionAccessor<REDOP,EXCLUSIVE,1,
+             T,Realm::AffineAccessor<typename REDOP::RHS,1,T>,CB>,
+             typename REDOP::RHS,1,T>
+               operator[](const Point<1,T>& p) const
+        { 
+          return ArraySyntax::ReductionHelper<ReductionAccessor<REDOP,EXCLUSIVE,
+            1,T,Realm::AffineAccessor<typename REDOP::RHS,1,T>,CB>,
+            typename REDOP::RHS,1,T>(*this, p);
+        }
+    public:
+      Realm::AffineAccessor<typename REDOP::RHS,1,T> accessor;
+    };
+
+    // Reduce Field Accessor specialization with N==1
+    // to avoid array ambiguity and bounds checks
+    template<typename REDOP, bool EXCLUSIVE, typename T>
+    class ReductionAccessor<REDOP,EXCLUSIVE,1,T,
+                        Realm::AffineAccessor<typename REDOP::RHS,1,T>,true> {
+    public:
+      // No CUDA support due to PhysicalRegion constructor
+      ReductionAccessor(void) { }
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS),
+              &is, Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,1,T>(
+            instance, fid, is.bounds);
+        bounds = AffineBounds::Tester<1,T>(is);
+      }
+      // With explicit bounds
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, 
+                        const Rect<1,T> source_bounds,
+                        bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS),
+              &is, Internal::NT_TemplateHelper::encode_tag<1,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = 
+          Realm::AffineAccessor<typename REDOP::RHS,1,T>(
+              instance, fid, source_bounds);
+        bounds = AffineBounds::Tester<1,T>(is, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, 
+                        const AffineTransform<M,1,T> transform,
+                        bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS),
+              &is, Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,1,T>(instance,
+            transform.transform, transform.offset, fid);
+        bounds = AffineBounds::Tester<1,T>(is, transform);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      ReductionAccessor(const PhysicalRegion &region, FieldID fid,
+                        ReductionOpID redop, 
+                        const AffineTransform<M,1,T> transform,
+                        const Rect<1,T> source_bounds,
+                        bool silence_warnings = false)
+        : field(fid), field_region(region)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(REDUCE, fid, sizeof(typename REDOP::RHS),
+              &is, Internal::NT_TemplateHelper::encode_tag<M,T>(), 
+              silence_warnings, false/*generic accessor*/, 
+              false/*check field size*/, redop);
+        accessor = Realm::AffineAccessor<typename REDOP::RHS,1,T>(instance, 
+            transform.transform, transform.offset, fid, source_bounds);
+        bounds = AffineBounds::Tester<1,T>(is, source_bounds, transform);
+      }
+    public:
+      __CUDA_HD__
+      inline void reduce(const Point<1,T>& p, 
+                         typename REDOP::RHS val) const
+        { 
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains(p));
+#else
+          if (!bounds.contains(p)) 
+            field_region.fail_bounds_check(DomainPoint(p), field, REDUCE);
+#endif
+          REDOP::template fold<EXCLUSIVE>(accessor[p], val);
+        }
+      __CUDA_HD__
+      inline typename REDOP::RHS* ptr(const Point<1,T>& p) const
+        { 
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains(p));
+#else
+          if (!bounds.contains(p)) 
+            field_region.fail_bounds_check(DomainPoint(p), field, REDUCE);
+#endif
+          return accessor.ptr(p); 
+        }
+      __CUDA_HD__
+      inline typename REDOP::RHS* ptr(const Rect<1,T>& r) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, REDUCE);
+#endif
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline typename REDOP::RHS* ptr(const Rect<1,T>& r,
+                                      size_t strides[1]) const
+        {
+#ifdef __CUDA_ARCH__
+          assert(bounds.contains_all(r));
+#else
+          if (!bounds.contains_all(r)) 
+            field_region.fail_bounds_check(Domain(r), field, REDUCE);
+#endif
+          strides[0] = accessor.strides[0] / sizeof(typename REDOP::RHS);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline ArraySyntax::ReductionHelper<ReductionAccessor<REDOP,EXCLUSIVE,1,
+             T,Realm::AffineAccessor<typename REDOP::RHS,1,T>,true>,
+             typename REDOP::RHS,1,T>
+               operator[](const Point<1,T>& p) const
+        { 
+          return ArraySyntax::ReductionHelper<ReductionAccessor<REDOP,EXCLUSIVE,
+            1,T,Realm::AffineAccessor<typename REDOP::RHS,1,T>,true>,
+            typename REDOP::RHS,1,T>(*this, p);
+        }
+    public:
+      Realm::AffineAccessor<typename REDOP::RHS,1,T> accessor;
+      FieldID field;
+      PhysicalRegion field_region;
+      AffineBounds::Tester<1,T> bounds;
     };
 
     // A hidden class for users that really know what they are doing
@@ -2087,11 +5445,11 @@ namespace Legion {
           return accessor[p];
         }
       inline ArraySyntax::GenericSyntaxHelper<UnsafeFieldAccessor<FT,N,T,
-              Realm::GenericAccessor<FT,N,T> >,FT,N,T,2,false/*read only*/>
+              Realm::GenericAccessor<FT,N,T> >,FT,N,T,2,READ_WRITE>
           operator[](T index) const
         {
           return ArraySyntax::GenericSyntaxHelper<UnsafeFieldAccessor<FT,N,T,
-              Realm::GenericAccessor<FT,N,T> >,FT,N,T,2,false/*read only*/>(
+              Realm::GenericAccessor<FT,N,T> >,FT,N,T,2,READ_WRITE>(
                   *this, Point<1,T>(index));
         }
     public:
@@ -2145,6 +5503,47 @@ namespace Legion {
               false/*generic accessor*/, false/*check field size*/);
         accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, is.bounds);
       }
+      // With explicit bounds
+      UnsafeFieldAccessor(const PhysicalRegion &region, FieldID fid,
+                          const Rect<N,T> source_bounds,
+                          bool silence_warnings = false)
+      {
+        DomainT<N,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(NO_ACCESS, fid, sizeof(FT), &is,
+              Internal::NT_TemplateHelper::encode_tag<N,T>(), silence_warnings,
+              false/*generic accessor*/, false/*check field size*/);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, fid, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      UnsafeFieldAccessor(const PhysicalRegion &region, FieldID fid,
+                          const AffineTransform<M,N,T> transform,
+                          bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(NO_ACCESS, fid, sizeof(FT), &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), silence_warnings,
+              false/*generic accessor*/, false/*check field size*/);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      UnsafeFieldAccessor(const PhysicalRegion &region, FieldID fid,
+                          const AffineTransform<M,N,T> transform,
+                          const Rect<N,T> source_bounds,
+                          bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(NO_ACCESS, fid, sizeof(FT), &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), silence_warnings,
+              false/*generic accessor*/, false/*check field size*/);
+        accessor = Realm::AffineAccessor<FT,N,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
+      }
     public:
       __CUDA_HD__
       inline FT read(const Point<N,T> &p) const
@@ -2162,6 +5561,33 @@ namespace Legion {
           return accessor.ptr(p);
         }
       __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r) const
+        {
+          if (!accessor.is_dense_arbitrary(r))
+          {
+#ifdef __CUDA_ARCH__
+            printf(
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+            assert(false);
+#else
+            fprintf(stderr, 
+                "ERROR: Illegal request for pointer of non-dense rectangle\n");
+#ifdef DEBUG_LEGION
+            assert(false);
+#endif
+            exit(ERROR_NON_DENSE_RECTANGLE);
+#endif
+          }
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
+      inline FT* ptr(const Rect<N,T>& r, size_t strides[N]) const
+        {
+          for (int i = 0; i < N; i++)
+            strides[i] = accessor.strides[i] / sizeof(FT);
+          return accessor.ptr(r.lo);
+        }
+      __CUDA_HD__
       inline FT& operator[](const Point<N,T> &p) const
         {
           return accessor[p];
@@ -2170,7 +5596,7 @@ namespace Legion {
       inline FT& operator[](T index) const
         {
           return ArraySyntax::AffineSyntaxHelper<UnsafeFieldAccessor<FT,N,T,
-                 Realm::AffineAccessor<FT,N,T> >,FT,N,T,2,false/*read only*/>(
+                 Realm::AffineAccessor<FT,N,T> >,FT,N,T,2,READ_WRITE>(
                 *this, Point<1,T>(index));
         }
     public:
@@ -2192,6 +5618,47 @@ namespace Legion {
               Internal::NT_TemplateHelper::encode_tag<1,T>(), silence_warnings,
               false/*generic accessor*/, false/*check field size*/);
         accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, is.bounds);
+      }
+      // With explicit bounds
+      UnsafeFieldAccessor(const PhysicalRegion &region, FieldID fid,
+                          const Rect<1,T> source_bounds,
+                          bool silence_warnings = false)
+      {
+        DomainT<1,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(NO_ACCESS, fid, sizeof(FT), &is,
+              Internal::NT_TemplateHelper::encode_tag<1,T>(), silence_warnings,
+              false/*generic accessor*/, false/*check field size*/);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, fid, source_bounds);
+      }
+      // With explicit transform
+      template<int M>
+      UnsafeFieldAccessor(const PhysicalRegion &region, FieldID fid,
+                          const AffineTransform<M,1,T> transform,
+                          bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(NO_ACCESS, fid, sizeof(FT), &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), silence_warnings,
+              false/*generic accessor*/, false/*check field size*/);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid);
+      }
+      // With explicit transform and bounds
+      template<int M>
+      UnsafeFieldAccessor(const PhysicalRegion &region, FieldID fid,
+                          const AffineTransform<M,1,T> transform,
+                          const Rect<1,T> source_bounds,
+                          bool silence_warnings = false)
+      {
+        DomainT<M,T> is;
+        const Realm::RegionInstance instance = 
+          region.get_instance_info(NO_ACCESS, fid, sizeof(FT), &is,
+              Internal::NT_TemplateHelper::encode_tag<M,T>(), silence_warnings,
+              false/*generic accessor*/, false/*check field size*/);
+        accessor = Realm::AffineAccessor<FT,1,T>(instance, transform.transform,
+            transform.offset, fid, source_bounds);
       }
     public:
       __CUDA_HD__
@@ -2217,6 +5684,122 @@ namespace Legion {
     public:
       Realm::AffineAccessor<FT,1,T> accessor;
     }; 
+
+    //--------------------------------------------------------------------------
+    template<typename T>
+    inline DeferredValue<T>::DeferredValue(T initial_value)
+    //--------------------------------------------------------------------------
+    {
+      // Construct a Region of size 1 in the zero copy memory for now
+      Machine machine = Realm::Machine::get_machine();
+      Machine::MemoryQuery finder(machine);
+      finder.has_affinity_to(Processor::get_executing_processor());
+      finder.only_kind(Memory::Z_COPY_MEM);
+      if (finder.count() == 0)
+      {
+        fprintf(stderr,"Deferred Values currently need a local allocation "
+                       "of zero-copy memory to work correctly. Please provide "
+                       "a non-zero amount with the -ll:zsize flag");
+        assert(false);
+      }
+      const Realm::Memory memory = finder.first();
+      const Realm::Point<1,coord_t> zero(0);
+      Realm::IndexSpace<1,coord_t> is = Realm::Rect<1,coord_t>(zero, zero);
+      const std::vector<size_t> field_sizes(1,sizeof(T));
+      Realm::ProfilingRequestSet no_requests; 
+      Internal::LgEvent wait_on(Realm::RegionInstance::create_instance(instance,
+                    memory, is, field_sizes, 0/*blocing factor*/, no_requests));
+      if (wait_on.exists())
+        wait_on.wait();
+      // We can make the accessor
+      accessor = Realm::AffineAccessor<T,1,coord_t>(instance, 0/*field id*/);
+      // Initialize the value
+      accessor[zero] = initial_value;
+    }
+
+    //--------------------------------------------------------------------------
+    template<typename T> __CUDA_HD__
+    inline T DeferredValue<T>::read(void) const
+    //--------------------------------------------------------------------------
+    {
+      return accessor.read(Point<1,coord_t>(0));
+    }
+
+    //--------------------------------------------------------------------------
+    template<typename T> __CUDA_HD__
+    inline void DeferredValue<T>::write(T value)
+    //--------------------------------------------------------------------------
+    {
+      accessor.write(Point<1,coord_t>(0), value);
+    }
+
+    //--------------------------------------------------------------------------
+    template<typename T> __CUDA_HD__
+    inline T* DeferredValue<T>::ptr(void)
+    //--------------------------------------------------------------------------
+    {
+      return accessor.ptr(Point<1,coord_t>(0));
+    }
+
+    //--------------------------------------------------------------------------
+    template<typename T> __CUDA_HD__
+    inline T& DeferredValue<T>::ref(void)
+    //--------------------------------------------------------------------------
+    {
+      return accessor[Point<1,coord_t>(0)];
+    }
+
+    //--------------------------------------------------------------------------
+    template<typename T> __CUDA_HD__
+    inline DeferredValue<T>::operator T(void) const
+    //--------------------------------------------------------------------------
+    {
+      return accessor[Point<1,coord_t>(0)];
+    }
+
+    //--------------------------------------------------------------------------
+    template<typename T> __CUDA_HD__
+    inline DeferredValue<T>& DeferredValue<T>::operator=(T value)
+    //--------------------------------------------------------------------------
+    {
+      accessor[Point<1,coord_t>(0)] = value;
+      return *this;
+    }
+
+    //--------------------------------------------------------------------------
+    template<typename T>
+    inline void DeferredValue<T>::finalize(InternalContext ctx) const
+    //--------------------------------------------------------------------------
+    {
+      ctx->end_task(accessor.ptr(Point<1,coord_t>(0)), sizeof(T),
+                    false/*owner*/, instance);
+    }
+
+    //--------------------------------------------------------------------------
+    template<typename REDOP, bool EXCLUSIVE>
+    inline DeferredReduction<REDOP,EXCLUSIVE>::DeferredReduction(void)
+      : DeferredValue<typename REDOP::LHS>(REDOP::identity)
+    //--------------------------------------------------------------------------
+    {
+    }
+
+    //--------------------------------------------------------------------------
+    template<typename REDOP, bool EXCLUSIVE> __CUDA_HD__
+    inline void DeferredReduction<REDOP,EXCLUSIVE>::reduce(
+                                                      typename REDOP::RHS value)
+    //--------------------------------------------------------------------------
+    {
+      REDOP::fold<EXCLUSIVE>(this->accessor[Point<1,coord_t>(0)], value);
+    }
+
+    //--------------------------------------------------------------------------
+    template<typename REDOP, bool EXCLUSIVE> __CUDA_HD__
+    inline void DeferredReduction<REDOP,EXCLUSIVE>::operator<<=(
+                                                      typename REDOP::RHS value)
+    //--------------------------------------------------------------------------
+    {
+      REDOP::fold<EXCLUSIVE>(this->accessor[Point<1,coord_t>(0)], value);
+    }
 
     //--------------------------------------------------------------------------
     inline IndexSpace& IndexSpace::operator=(const IndexSpace &rhs)
@@ -2274,6 +5857,13 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    inline int IndexSpace::get_dim(void) const
+    //--------------------------------------------------------------------------
+    {
+      return Internal::NT_TemplateHelper::get_dim(type_tag);
+    }
+
+    //--------------------------------------------------------------------------
     template<int DIM, typename T>
     IndexSpaceT<DIM,T>::IndexSpaceT(IndexSpaceID id, IndexTreeID tid)
       : IndexSpace(id, tid, 
@@ -2285,7 +5875,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     template<int DIM, typename T>
     IndexSpaceT<DIM,T>::IndexSpaceT(void)
-      : IndexSpace()
+     : IndexSpace(0,0,Internal::NT_TemplateHelper::template encode_tag<DIM,T>())
     //--------------------------------------------------------------------------
     {
     }
@@ -2390,9 +5980,17 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    inline int IndexPartition::get_dim(void) const
+    //--------------------------------------------------------------------------
+    {
+      return Internal::NT_TemplateHelper::get_dim(type_tag);
+    }
+
+    //--------------------------------------------------------------------------
     template<int DIM, typename T>
     IndexPartitionT<DIM,T>::IndexPartitionT(IndexPartitionID id,IndexTreeID tid)
-      : IndexPartition(id, tid,Internal::NT_TemplateHelper::encode_tag<DIM,T>())
+      : IndexPartition(id, tid,
+          Internal::NT_TemplateHelper::template encode_tag<DIM,T>())
     //--------------------------------------------------------------------------
     {
     }
@@ -2400,7 +5998,8 @@ namespace Legion {
     //--------------------------------------------------------------------------
     template<int DIM, typename T>
     IndexPartitionT<DIM,T>::IndexPartitionT(void)
-      : IndexPartition()
+      : IndexPartition(0,0,
+          Internal::NT_TemplateHelper::template encode_tag<DIM,T>())
     //--------------------------------------------------------------------------
     {
     }
@@ -3221,6 +6820,24 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    inline void CopyLauncher::add_gather_field(const RegionRequirement &req,
+                                               FieldID gather_field, bool inst)
+    //--------------------------------------------------------------------------
+    {
+      gather_requirements.push_back(req);
+      gather_requirements.back().add_field(gather_field, inst);
+    }
+
+    //--------------------------------------------------------------------------
+    inline void CopyLauncher::add_scatter_field(const RegionRequirement &req,
+                                                FieldID scatter_field,bool inst)
+    //--------------------------------------------------------------------------
+    {
+      scatter_requirements.push_back(req);
+      scatter_requirements.back().add_field(scatter_field, inst);
+    }
+
+    //--------------------------------------------------------------------------
     inline void CopyLauncher::add_grant(Grant g)
     //--------------------------------------------------------------------------
     {
@@ -3292,6 +6909,24 @@ namespace Legion {
       assert(idx < dst_requirements.size());
 #endif
       dst_requirements[idx].add_field(fid, inst);
+    }
+
+    //--------------------------------------------------------------------------
+    inline void IndexCopyLauncher::add_gather_field(const RegionRequirement &r,
+                                               FieldID gather_field, bool inst)
+    //--------------------------------------------------------------------------
+    {
+      gather_requirements.push_back(r);
+      gather_requirements.back().add_field(gather_field, inst);
+    }
+
+    //--------------------------------------------------------------------------
+    inline void IndexCopyLauncher::add_scatter_field(const RegionRequirement &r,
+                                                FieldID scatter_field,bool inst)
+    //--------------------------------------------------------------------------
+    {
+      scatter_requirements.push_back(r);
+      scatter_requirements.back().add_field(scatter_field, inst);
     }
 
     //--------------------------------------------------------------------------
@@ -3550,6 +7185,9 @@ namespace Legion {
                                             LegionFileMode m)
     //--------------------------------------------------------------------------
     {
+#ifdef DEBUG_LEGION
+      assert(resource == EXTERNAL_POSIX_FILE);
+#endif
       file_name = name;
       mode = m;
       file_fields = fields;
@@ -3561,25 +7199,84 @@ namespace Legion {
                                 LegionFileMode m)
     //--------------------------------------------------------------------------
     {
+#ifdef DEBUG_LEGION
+      assert(resource == EXTERNAL_HDF5_FILE);
+#endif
       file_name = name;
       mode = m;
       field_files = field_map;
     }
 
     //--------------------------------------------------------------------------
-    inline void AttachLauncher::add_field_pointer(FieldID fid, void *ptr)
+    inline void AttachLauncher::attach_array_aos(void *base, bool column_major,
+                                            const std::vector<FieldID> &fields,
+                                            Memory mem, size_t alignment)
     //--------------------------------------------------------------------------
     {
-      field_pointers[fid] = ptr;
+#ifdef DEBUG_LEGION
+      assert(resource == EXTERNAL_INSTANCE);
+#endif
+      constraints.add_constraint(PointerConstraint(mem, uintptr_t(base)));
+      constraints.add_constraint(MemoryConstraint(mem.kind()));
+      constraints.add_constraint(
+          FieldConstraint(fields, true/*contiugous*/, true/*inorder*/));
+      std::vector<DimensionKind> dim_order(4);
+      // Field dimension first for AOS
+      dim_order[0] = DIM_F;
+      if (column_major)
+      {
+        dim_order[1] = DIM_X;
+        dim_order[2] = DIM_Y;
+        dim_order[3] = DIM_Z;
+      }
+      else
+      {
+        dim_order[1] = DIM_Z;
+        dim_order[2] = DIM_Y;
+        dim_order[3] = DIM_X;
+      }
+      constraints.add_constraint(
+          OrderingConstraint(dim_order, false/*contiguous*/));
+      for (std::vector<FieldID>::const_iterator it = fields.begin();
+            it != fields.end(); it++)
+        constraints.add_constraint(AlignmentConstraint(*it, GE_EK, alignment));
+      privilege_fields.insert(fields.begin(), fields.end());
     }
-
+    
     //--------------------------------------------------------------------------
-    inline void AttachLauncher::set_pitch(unsigned dim, size_t pitch)
+    inline void AttachLauncher::attach_array_soa(void *base, bool column_major,
+                                            const std::vector<FieldID> &fields,
+                                            Memory mem, size_t alignment)
     //--------------------------------------------------------------------------
     {
-      if (pitches.size() <= dim)
-        pitches.resize(dim+1, 0);
-      pitches[dim] = pitch;
+#ifdef DEBUG_LEGION
+      assert(resource == EXTERNAL_INSTANCE);
+#endif
+      constraints.add_constraint(PointerConstraint(mem, uintptr_t(base)));
+      constraints.add_constraint(MemoryConstraint(mem.kind()));
+      constraints.add_constraint(
+          FieldConstraint(fields, true/*contiugous*/, true/*inorder*/));
+      std::vector<DimensionKind> dim_order(4);
+      if (column_major)
+      {
+        dim_order[0] = DIM_X;
+        dim_order[1] = DIM_Y;
+        dim_order[2] = DIM_Z;
+      }
+      else
+      {
+        dim_order[0] = DIM_Z;
+        dim_order[1] = DIM_Y;
+        dim_order[2] = DIM_X;
+      }
+      // Field dimension last for SOA 
+      dim_order[3] = DIM_F;
+      constraints.add_constraint(
+          OrderingConstraint(dim_order, false/*contiguous*/));
+      for (std::vector<FieldID>::const_iterator it = fields.begin();
+            it != fields.end(); it++)
+        constraints.add_constraint(AlignmentConstraint(*it, GE_EK, alignment));
+      privilege_fields.insert(fields.begin(), fields.end());
     }
 
     //--------------------------------------------------------------------------
@@ -3767,6 +7464,20 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       idempotent_variant = is_idemp;
+    }
+
+    //--------------------------------------------------------------------------
+    inline void TaskVariantRegistrar::set_replicable(bool is_repl/*= true*/)
+    //--------------------------------------------------------------------------
+    {
+      replicable_variant = is_repl;
+    }
+
+    //--------------------------------------------------------------------------
+    inline void TaskVariantRegistrar::add_generator_task(TaskID tid)
+    //--------------------------------------------------------------------------
+    {
+      generator_tasks.insert(tid); 
     }
 
     //--------------------------------------------------------------------------
@@ -4665,11 +8376,11 @@ namespace Legion {
     //--------------------------------------------------------------------------
     template<int DIM, typename T>
     LogicalRegionT<DIM,T> Runtime::create_logical_region(Context ctx,
-                                    IndexSpaceT<DIM,T> index, FieldSpace fields)
+                   IndexSpaceT<DIM,T> index, FieldSpace fields, bool task_local)
     //--------------------------------------------------------------------------
     {
       return LogicalRegionT<DIM,T>(create_logical_region(ctx, 
-                                  IndexSpace(index), fields));
+                                  IndexSpace(index), fields, task_local));
     }
 
     //--------------------------------------------------------------------------
@@ -4989,11 +8700,12 @@ namespace Legion {
 
     public:
       // Do-it-yourself pre/post-ambles for code generators
+      // These are deprecated and are just here for backwards compatibility
       static void legion_task_preamble(const void *data,
 				       size_t datalen,
 				       Processor p,
 				       const Task *& task,
-				       const std::vector<PhysicalRegion> *& regionsptr,
+				       const std::vector<PhysicalRegion> *& ptr,
 				       Context& ctx,
 				       Runtime *& runtime);
       static void legion_task_postamble(Runtime *runtime, Context ctx,
@@ -5017,15 +8729,13 @@ namespace Legion {
       LEGION_STATIC_ASSERT((LegionTypeInequality<T,FutureMap>::value));
       // Assert that the return type size is within the required size
       LEGION_STATIC_ASSERT(sizeof(T) <= MAX_RETURN_SIZE);
-      // Get the high level runtime
-      Runtime *runtime = Runtime::get_runtime(p);
       // Read the context out of the buffer
 #ifdef DEBUG_LEGION
       assert(arglen == sizeof(InternalContext));
 #endif
       InternalContext ctx = *((const InternalContext*)args);
-
-      const std::vector<PhysicalRegion> &regions = ctx->begin_task();
+      Runtime *runtime;
+      const std::vector<PhysicalRegion> &regions = ctx->begin_task(runtime);
 
       // Invoke the task with the given context
       T return_value = 
@@ -5046,16 +8756,13 @@ namespace Legion {
                                                 Processor p)
     //--------------------------------------------------------------------------
     {
-      // Get the high level runtime
-      Runtime *runtime = Runtime::get_runtime(p);
-
       // Read the context out of the buffer
 #ifdef DEBUG_LEGION
       assert(arglen == sizeof(InternalContext));
 #endif
       InternalContext ctx = *((const InternalContext*)args);
-
-      const std::vector<PhysicalRegion> &regions = ctx->begin_task(); 
+      Runtime *runtime;
+      const std::vector<PhysicalRegion> &regions = ctx->begin_task(runtime); 
 
       (*TASK_PTR)(ctx->get_task(), regions, ctx->as_context(), runtime);
 
@@ -5079,8 +8786,6 @@ namespace Legion {
       LEGION_STATIC_ASSERT((LegionTypeInequality<T,FutureMap>::value));
       // Assert that the return type size is within the required size
       LEGION_STATIC_ASSERT(sizeof(T) <= MAX_RETURN_SIZE);
-      // Get the high level runtime
-      Runtime *runtime = Runtime::get_runtime(p);
 
       // Read the context out of the buffer
 #ifdef DEBUG_LEGION
@@ -5089,8 +8794,8 @@ namespace Legion {
       InternalContext ctx = *((const InternalContext*)args);
 
       const UDT *user_data = reinterpret_cast<const UDT*>(userdata);
-
-      const std::vector<PhysicalRegion> &regions = ctx->begin_task(); 
+      Runtime *runtime;
+      const std::vector<PhysicalRegion> &regions = ctx->begin_task(runtime);
 
       // Invoke the task with the given context
       T return_value = (*TASK_PTR)(ctx->get_task(), regions, 
@@ -5111,9 +8816,6 @@ namespace Legion {
                                                     Processor p)
     //--------------------------------------------------------------------------
     {
-      // Get the high level runtime
-      Runtime *runtime = Runtime::get_runtime(p);
-
       // Read the context out of the buffer
 #ifdef DEBUG_LEGION
       assert(arglen == sizeof(InternalContext));
@@ -5121,14 +8823,39 @@ namespace Legion {
       InternalContext ctx = *((const InternalContext*)args);
 
       const UDT *user_data = reinterpret_cast<const UDT*>(userdata);
-
-      const std::vector<PhysicalRegion> &regions = ctx->begin_task(); 
+      Runtime *runtime;
+      const std::vector<PhysicalRegion> &regions = ctx->begin_task(runtime);
 
       (*TASK_PTR)(ctx->get_task(), regions, 
                   ctx->as_context(), runtime, *user_data);
 
       // Send an empty return value back
       ctx->end_task(NULL, 0, false);
+    }
+
+    //--------------------------------------------------------------------------
+    inline void LegionTaskWrapper::legion_task_preamble(
+                  const void *data,
+		  size_t datalen,
+		  Processor p,
+		  const Task *& task,
+		  const std::vector<PhysicalRegion> *& regionsptr,
+		  Context& ctx,
+		  Runtime *& runtime)
+    //--------------------------------------------------------------------------
+    {
+      Runtime::legion_task_preamble(data, datalen, p, task, 
+                                    regionsptr, ctx, runtime);
+    }
+
+    //--------------------------------------------------------------------------
+    inline void LegionTaskWrapper::legion_task_postamble(
+                  Runtime *runtime, Context ctx,
+		  const void *retvalptr /*= NULL*/,
+		  size_t retvalsize /*= 0*/)
+    //--------------------------------------------------------------------------
+    {
+      Runtime::legion_task_postamble(runtime, ctx, retvalptr, retvalsize);
     }
 
     //--------------------------------------------------------------------------
@@ -5696,8 +9423,6 @@ namespace LegionRuntime {
     LEGION_DEPRECATED("Use the Legion namespace instance instead.")
     typedef Legion::CObjectWrapper CObjectWrapper;
     LEGION_DEPRECATED("Use the Legion namespace instance instead.")
-    typedef Legion::ImmovableAutoLock AutoLock;
-    LEGION_DEPRECATED("Use the Legion namespace instance instead.")
     typedef Legion::ISAConstraint ISAConstraint;
     LEGION_DEPRECATED("Use the Legion namespace instance instead.")
     typedef Legion::ProcessorConstraint ProcessorConstraint;
@@ -5819,7 +9544,7 @@ namespace LegionRuntime {
     LEGION_DEPRECATED("Use the Legion namespace instance instead.")
     typedef ::legion_distributed_id_t DistributedID;
     LEGION_DEPRECATED("Use the Legion namespace instance instead.")
-    typedef ::legion_address_space_id_t AddressSpaceID;
+    typedef ::legion_address_space_t AddressSpaceID;
     LEGION_DEPRECATED("Use the Legion namespace instance instead.")
     typedef ::legion_tunable_id_t TunableID;
     LEGION_DEPRECATED("Use the Legion namespace instance instead.")

@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,10 +14,10 @@
  */
 
 #include "legion.h"
-#include "region_tree.h"
-#include "legion_mapping.h"
-#include "mapper_manager.h"
-#include "legion_instances.h"
+#include "legion/region_tree.h"
+#include "legion/legion_mapping.h"
+#include "legion/mapper_manager.h"
+#include "legion/legion_instances.h"
 
 namespace Legion {
   namespace Mapping {
@@ -174,10 +174,19 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    bool PhysicalInstance::is_external_instance(void) const
+    //--------------------------------------------------------------------------
+    {
+      if (impl == NULL)
+        return false;
+      return impl->is_external_instance();
+    }
+
+    //--------------------------------------------------------------------------
     /*static*/ PhysicalInstance PhysicalInstance::get_virtual_instance(void)
     //--------------------------------------------------------------------------
     {
-      return PhysicalInstance(Internal::VirtualManager::get_virtual_instance());
+      return PhysicalInstance(Internal::implicit_runtime->virtual_manager);
     }
 
     //--------------------------------------------------------------------------
@@ -349,6 +358,22 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    void MapperRuntime::update_mappable_tag(MapperContext ctx,
+                               const Mappable &mappable, MappingTagID tag) const
+    //--------------------------------------------------------------------------
+    {
+      ctx->manager->update_mappable_tag(ctx, mappable, tag);
+    }
+
+    //--------------------------------------------------------------------------
+    void MapperRuntime::update_mappable_data(MapperContext ctx,
+      const Mappable &mappable, const void *mapper_data, size_t data_size) const
+    //--------------------------------------------------------------------------
+    {
+      ctx->manager->update_mappable_data(ctx, mappable, mapper_data, data_size);
+    }
+
+    //--------------------------------------------------------------------------
     void MapperRuntime::send_message(MapperContext ctx, Processor target,
           const void *message, size_t message_size, unsigned message_kind) const
     //--------------------------------------------------------------------------
@@ -367,7 +392,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void MapperRuntime::pack_physical_instance(MapperContext ctx, 
-                               Serializer &rez, PhysicalInstance instance) const 
+                               Serializer &rez, PhysicalInstance instance) const
     //--------------------------------------------------------------------------
     {
       ctx->manager->pack_physical_instance(ctx, rez, instance);
@@ -819,6 +844,14 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    bool MapperRuntime::has_index_partition(MapperContext ctx,
+                                           IndexSpace parent, Color color) const
+    //--------------------------------------------------------------------------
+    {
+      return ctx->manager->has_index_partition(ctx, parent, color);
+    }
+
+    //--------------------------------------------------------------------------
     IndexPartition MapperRuntime::get_index_partition(MapperContext ctx,
                                            IndexSpace parent, Color color) const
     //--------------------------------------------------------------------------
@@ -888,6 +921,14 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       return ctx->manager->is_index_partition_disjoint(ctx, p);
+    }
+
+    //--------------------------------------------------------------------------
+    bool MapperRuntime::is_index_partition_complete(MapperContext ctx,
+                                                    IndexPartition p) const
+    //--------------------------------------------------------------------------
+    {
+      return ctx->manager->is_index_partition_complete(ctx, p);
     }
 
     //--------------------------------------------------------------------------

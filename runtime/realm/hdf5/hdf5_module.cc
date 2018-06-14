@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,16 +13,16 @@
  * limitations under the License.
  */
 
-#include "hdf5_module.h"
+#include "realm/hdf5/hdf5_module.h"
 
-#include "hdf5_internal.h"
+#include "realm/hdf5/hdf5_internal.h"
 
-#include "logging.h"
-#include "cmdline.h"
-#include "threads.h"
-#include "runtime_impl.h"
-#include "utils.h"
-#include "inst_impl.h"
+#include "realm/logging.h"
+#include "realm/cmdline.h"
+#include "realm/threads.h"
+#include "realm/runtime_impl.h"
+#include "realm/utils.h"
+#include "realm/inst_impl.h"
 
 namespace Realm {
 
@@ -153,8 +153,8 @@ namespace Realm {
     {
       Module::create_dma_channels(runtime);
 
-      runtime->add_dma_channel(new HDF5WriteChannel(hdf5mem));
-      runtime->add_dma_channel(new HDF5ReadChannel(hdf5mem));
+      //runtime->add_dma_channel(new HDF5WriteChannel(hdf5mem));
+      //runtime->add_dma_channel(new HDF5ReadChannel(hdf5mem));
     }
 
     // create any code translators provided by the module (default == do nothing)

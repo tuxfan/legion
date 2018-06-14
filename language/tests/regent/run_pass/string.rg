@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -16,8 +16,19 @@ import "regent"
 
 local cstdio = terralib.includec("stdio.h")
 
+task needs_string(x : regentlib.string)
+  cstdio.printf("from subtask: %s", [rawstring](x))
+end
+
 task main()
-  var x = "hello, world!\n"
+  -- A Terra rawstring
+  var x = "hello, rawstring!\n"
   cstdio.printf(x)
+
+  -- A Regent string
+  var y : regentlib.string = "hello, string!\n"
+  cstdio.printf([rawstring](y))
+
+  needs_string(y)
 end
 regentlib.start(main)

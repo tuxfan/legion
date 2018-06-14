@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 -- limitations under the License.
 
 -- fails-with:
--- type_mismatch_dynamic_cast1.rg:24: dynamic_cast requires ptr type as argument 1, got int32
+-- type_mismatch_dynamic_cast1.rg:24: dynamic_cast requires ptr type or partition type as argument 1, got int32
 --   var y = dynamic_cast(int, x)
 --                      ^
 

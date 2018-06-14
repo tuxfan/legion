@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,11 @@
 #ifndef REALM_METADATA_H
 #define REALM_METADATA_H
 
-#include "event.h"
-#include "id.h"
-#include "nodeset.h"
+#include "realm/event.h"
+#include "realm/id.h"
+#include "realm/nodeset.h"
 
-#include <realm/activemsg.h>
+#include "realm/activemsg.h"
 
 namespace Realm {
 

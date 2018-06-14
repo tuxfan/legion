@@ -11,7 +11,7 @@
 //  by any other parts of Realm, or it will mess up the ability to let an app link
 //  against the real libcudart.so
 
-#include "cudart_hijack.h"
+#include "realm/cuda/cudart_hijack.h"
 
 #include "realm/cuda/cuda_module.h"
 #include "realm/logging.h"
@@ -54,7 +54,8 @@ namespace Realm {
 	std::cout << "unregistering fat binary " << fat_bin << ", handle = " << handle << std::endl;
 #endif
 	GlobalRegistrations::unregister_fat_binary(fat_bin);
-	// TODO: free storage for handle?
+
+	delete handle;
       }
 
       void __cudaRegisterVar(void **handle,
@@ -107,7 +108,7 @@ namespace Realm {
 
 	// don't care - return 1 to make caller happy
 	return 1;
-      }
+      } 
 
       // All the following methods are cuda runtime API calls that we 
       // intercept and then either execute using the driver API or 
@@ -124,6 +125,34 @@ namespace Realm {
 	  assert(false);
 	}
 	return p;
+      }
+
+      unsigned __cudaPushCallConfiguration(dim3 gridDim,
+                                           dim3 blockDim,
+                                           size_t sharedSize = 0,
+                                           void *stream = 0)
+      {
+        // mark that the hijack code is active
+	cudart_hijack_active = true;
+
+        GPUProcessor *p = get_gpu_or_die("__cudaPushCallConfigration");
+        p->push_call_configuration(gridDim, blockDim, sharedSize, stream);
+        // This should always succeed so return 0
+        return 0;
+      }
+
+      cudaError_t __cudaPopCallConfiguration(dim3 *gridDim,
+                                             dim3 *blockDim,
+                                             size_t *sharedSize,
+                                             void *stream)
+      {
+        // mark that the hijack code is active
+	cudart_hijack_active = true;
+
+        GPUProcessor *p = get_gpu_or_die("__cudaPopCallConfigration");
+        p->pop_call_configuration(gridDim, blockDim, sharedSize, stream);
+        // If this failed it would have died with an assertion internally
+        return cudaSuccess;
       }
 
       cudaError_t cudaEventCreate(cudaEvent_t *event)
@@ -171,17 +200,18 @@ namespace Realm {
 
       cudaError_t cudaStreamCreate(cudaStream_t *stream)
       {
-	/*GPUProcessor *p =*/ get_gpu_or_die("cudaStreamCreate");
-	// TODO: actually create sub-streams and connect them up - for now we provide a dummy stream
-	CUstream s = 0;
-	*stream = s;
+	GPUProcessor *p = get_gpu_or_die("cudaStreamCreate");
+        // For now we always return the stream for this task in case the user actually uses it
+	// TODO: actually create sub-streams and connect them up
+	*stream = p->gpu->get_current_task_stream()->get_stream();
 	return cudaSuccess;
       }
 
       cudaError_t cudaStreamDestroy(cudaStream_t stream)
       {
 	/*GPUProcessor *p =*/ get_gpu_or_die("cudaStreamDestroy");
-	assert(stream == 0);
+        // Ignore this for now
+        // TODO: Do the right thing if we are making substreams
 	return cudaSuccess;
       }
 
@@ -225,6 +255,18 @@ namespace Realm {
 	GPUProcessor *p = get_gpu_or_die("cudaLaunch");
 	p->launch(func);
 	return cudaSuccess;
+      }
+
+      cudaError_t cudaLaunchKernel(const void *func,
+                                   dim3 grid_dim,
+                                   dim3 block_dim,
+                                   void **args,
+                                   size_t shared_memory,
+                                   cudaStream_t stream)
+      {
+        GPUProcessor *p = get_gpu_or_die("cudaLaunchKernel");
+        p->launch_kernel(func, grid_dim, block_dim, args, shared_memory, stream);
+        return cudaSuccess;
       }
 
       cudaError_t cudaMalloc(void **ptr, size_t size)

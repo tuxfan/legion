@@ -1,5 +1,5 @@
 #------------------------------------------------------------------------------#
-# Copyright 2017 Stanford University
+# Copyright 2018 Stanford University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,5 +28,5 @@ target_compile_definitions(realm_stencil PRIVATE RESTRICT=__restrict__)
 target_compile_definitions(realm_stencil PRIVATE RADIUS=2)
 target_link_libraries(realm_stencil Legion::Legion)
 if(Legion_ENABLE_TESTING)
-  add_test(NAME realm_stencil COMMAND $<TARGET_FILE:realm_stenil> -ll:cpu 4)
+  add_test(NAME realm_stencil COMMAND ${Legion_TEST_LAUNCHER} $<TARGET_FILE:realm_stencil> -ll:cpu 4)
 endif()

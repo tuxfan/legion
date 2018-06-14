@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,11 @@
 
 // Realm object metadata base implementation
 
-#include "metadata.h"
+#include "realm/metadata.h"
 
-#include "event_impl.h"
-#include "inst_impl.h"
-#include "runtime_impl.h"
+#include "realm/event_impl.h"
+#include "realm/inst_impl.h"
+#include "realm/runtime_impl.h"
 
 namespace Realm {
 
@@ -401,6 +401,8 @@ namespace Realm {
     if(id.is_instance()) {
       RegionInstanceImpl *impl = get_runtime()->get_instance_impl(args.id);
       last_ack = impl->metadata.handle_inval_ack(args.node);
+      if(last_ack)
+	impl->recycle_instance();
     } else {
       assert(0);
     }

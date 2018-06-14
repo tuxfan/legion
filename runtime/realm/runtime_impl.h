@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,28 +18,28 @@
 #ifndef REALM_RUNTIME_IMPL_H
 #define REALM_RUNTIME_IMPL_H
 
-#include "runtime.h"
-#include "id.h"
+#include "realm/runtime.h"
+#include "realm/id.h"
 
-#include <realm/activemsg.h>
-#include "operation.h"
-#include "profiling.h"
+#include "realm/activemsg.h"
+#include "realm/operation.h"
+#include "realm/profiling.h"
 
-#include "dynamic_table.h"
-#include "proc_impl.h"
-#include "deppart/partitions.h"
+#include "realm/dynamic_table.h"
+#include "realm/proc_impl.h"
+#include "realm/deppart/partitions.h"
 
 // event and reservation impls are included directly in the node's dynamic tables,
 //  so we need their definitions here (not just declarations)
-#include "event_impl.h"
-#include "rsrv_impl.h"
+#include "realm/event_impl.h"
+#include "realm/rsrv_impl.h"
 
-#include "machine_impl.h"
+#include "realm/machine_impl.h"
 
-#include "threads.h"
-#include "sampling.h"
+#include "realm/threads.h"
+#include "realm/sampling.h"
 
-#include "module.h"
+#include "realm/module.h"
 
 #if __cplusplus >= 201103L
 #define typeof decltype
@@ -53,8 +53,8 @@ namespace Realm {
   class RegionInstanceImpl;
   class Module;
 
-  class MemPairCopierFactory;
-  typedef MemPairCopierFactory DMAChannel;
+  class Channel; // from transfer/channel.h
+  typedef Channel DMAChannel;
 
     template <typename _ET, size_t _INNER_BITS, size_t _LEAF_BITS>
     class DynamicTableAllocator {
@@ -118,6 +118,7 @@ namespace Realm {
       std::vector<MemoryImpl *> memories;
       std::vector<MemoryImpl *> ib_memories;
       std::vector<ProcessorImpl *> processors;
+      std::vector<DMAChannel *> dma_channels;
 
       DynamicTable<EventTableAllocator> events;
       DynamicTable<BarrierTableAllocator> barriers;
@@ -178,7 +179,6 @@ namespace Realm {
     protected:
       int num_cpu_procs, num_util_procs, num_io_procs;
       int concurrent_io_threads;
-      bool force_kernel_threads;
       size_t sysmem_size_in_mb, stack_size_in_mb;
     };
 
@@ -189,7 +189,11 @@ namespace Realm {
       RuntimeImpl(void);
       ~RuntimeImpl(void);
 
-      bool init(int *argc, char ***argv);
+      bool network_init(int *argc, char ***argv);
+
+      bool configure_from_command_line(std::vector<std::string> &cmdline);
+
+      void start(void);
 
       bool register_task(Processor::TaskFuncID taskid, Processor::TaskFuncPtr taskptr);
       bool register_reduction(ReductionOpID redop_id, const ReductionOpUntyped *redop);
@@ -209,9 +213,10 @@ namespace Realm {
 	       const void *args = 0, size_t arglen = 0, bool background = false);
 
       // requests a shutdown of the runtime
-      void shutdown(bool local_request);
+      void shutdown(bool local_request, int result_code);
 
-      void wait_for_shutdown(void);
+      // returns value of result_code passed to shutdown()
+      int wait_for_shutdown(void);
 
       // three event-related impl calls - get_event_impl() will give you either
       //  a normal event or a barrier, but you won't be able to do specific things
@@ -236,8 +241,8 @@ namespace Realm {
     public:
       MachineImpl *machine;
 
-      std::map<ReductionOpID, const ReductionOpUntyped *> reduce_op_table;
-      std::map<CustomSerdezID, const CustomSerdezUntyped *> custom_serdez_table;
+      std::map<ReductionOpID, ReductionOpUntyped *> reduce_op_table;
+      std::map<CustomSerdezID, CustomSerdezUntyped *> custom_serdez_table;
 
 #ifdef NODE_LOGGING
       std::string prefix;
@@ -264,6 +269,7 @@ namespace Realm {
       unsigned thread_counts[MAX_NUM_THREADS];
 #endif
       volatile bool shutdown_requested;
+      int shutdown_result_code;
       GASNetHSL shutdown_mutex;
       GASNetCondVar shutdown_condvar;
 
@@ -290,16 +296,19 @@ namespace Realm {
       Processor next_local_processor_id(void);
       CoreReservationSet& core_reservation_set(void);
 
-      const std::vector<DMAChannel *>& get_dma_channels(void) const;
-
       const std::vector<CodeTranslator *>& get_code_translators(void) const;
 
     protected:
       ID::IDType num_local_memories, num_local_ib_memories, num_local_processors;
 
+#ifndef USE_GASNET
+      // without gasnet, we fake registered memory with a normal malloc
+      void *nongasnet_regmem_base;
+      void *nongasnet_reg_ib_mem_base;
+#endif
+
       ModuleRegistrar module_registrar;
       std::vector<Module *> modules;
-      std::vector<DMAChannel *> dma_channels;
       std::vector<CodeTranslator *> code_translators;
     };
 
@@ -350,7 +359,7 @@ namespace Realm {
     struct RuntimeShutdownMessage {
       struct RequestArgs {
 	int initiating_node;
-	int dummy; // needed to get sizeof() >= 8
+	int result_code;
       };
 
       static void handle_request(RequestArgs args);
@@ -359,7 +368,7 @@ namespace Realm {
 				        RequestArgs,
 				        handle_request> Message;
 
-      static void send_request(NodeID target);
+      static void send_request(NodeID target, int result_code);
     };
       
 }; // namespace Realm

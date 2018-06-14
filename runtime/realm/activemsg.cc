@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-#include <realm/realm_config.h>
+#include "realm/realm_config.h"
 
 // include gasnet header files before activemsg.h to make sure we have
 //  definitions for gasnet_hsl_t and gasnett_cond_t
@@ -52,19 +52,21 @@ static const void *ignore_gasnet_warning2 __attribute__((unused)) = (void *)_gas
 
 #endif
 
-#include <realm/activemsg.h>
-
-#ifndef __GNUC__
-#include "atomics.h" // for __sync_add_and_fetch
-#endif
+#include "realm/activemsg.h"
+#include "realm/cmdline.h"
 
 #include <queue>
-#include <cassert>
+#include <assert.h>
 #ifdef REALM_PROFILE_AM_HANDLERS
 #include <math.h>
 #endif
 
-#include <realm/threads.h>
+#ifdef DETAILED_MESSAGE_TIMING
+#include <sys/stat.h>
+#include <fcntl.h>
+#endif
+
+#include "realm/threads.h"
 #include "realm/timers.h"
 #include "realm/logging.h"
 
@@ -179,7 +181,7 @@ void record_activemsg_profiling(int msgid,
 NodeID get_message_source(token_t token)
 {
   gasnet_node_t src;
-  CHECK_GASNET( gasnet_AMGetMsgSource(token, &src) );
+  CHECK_GASNET( gasnet_AMGetMsgSource(reinterpret_cast<gasnet_token_t>(token), &src) );
 #ifdef DEBUG_AMREQUESTS
   printf("%d: source = %d\n", gasnet_mynode(), src);
 #endif
@@ -188,7 +190,7 @@ NodeID get_message_source(token_t token)
 
 void send_srcptr_release(token_t token, uint64_t srcptr)
 {
-  CHECK_GASNET( gasnet_AMReplyShort2(token, MSGID_RELEASE_SRCPTR, (handlerarg_t)srcptr, (handlerarg_t)(srcptr >> 32)) );
+  CHECK_GASNET( gasnet_AMReplyShort2(reinterpret_cast<gasnet_token_t>(token), MSGID_RELEASE_SRCPTR, (handlerarg_t)srcptr, (handlerarg_t)(srcptr >> 32)) );
 }
 
 #ifdef DEBUG_MEM_REUSE
@@ -203,7 +205,7 @@ Realm::Logger log_amsg_trace("amtrace");
 
 void record_am_handler(int handler_id, const char *description, bool reply)
 {
-  log_amsg_trace.info("AM Handler: %d %s %s\n", handler_id, description,
+  log_amsg_trace.info("AM Handler: %d %s %s", handler_id, description,
 		      (reply ? "Reply" : "Request"));
 }
 #endif
@@ -896,13 +898,22 @@ struct CurrentTime {
 public:
   CurrentTime(void)
   {
+#define USE_REALM_TIMER
+#ifdef USE_REALM_TIMER
+    now = Realm::Clock::current_time_in_nanoseconds();
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     sec = ts.tv_sec;
     nsec = ts.tv_nsec;
+#endif
   }
 
+#ifdef USE_REALM_TIMER
+  long long now;
+#else
   unsigned sec, nsec;
+#endif
 };
 
 struct MessageTimingData {
@@ -910,7 +921,9 @@ public:
   unsigned char msg_id;
   char write_lmb;
   unsigned short target;
-  unsigned msg_size, start_sec, start_nsec, dur_nsec;
+  unsigned msg_size;
+  long long start;
+  unsigned dur_nsec;
   unsigned queue_depth;
 };
 
@@ -956,9 +969,14 @@ public:
       mtd.write_lmb = write_lmb;
       mtd.target = peer;
       mtd.msg_size = msg_size;
-      mtd.start_sec = t_start.sec;
-      mtd.start_nsec = t_start.nsec;
+#ifdef USE_REALM_TIMER
+      mtd.start = t_start.now;
+      unsigned long long delta = t_end.now - t_start.now;
+#else
+      long long now = (1000000000LL * t_start.sec) + t_start.nsec;
+      mtd.start = now;
       unsigned long long delta = (t_end.sec - t_start.sec) * 1000000000ULL + t_end.nsec - t_start.nsec;
+#endif
       mtd.dur_nsec = (delta > (unsigned)-1) ? ((unsigned)-1) : delta;
       mtd.queue_depth = queue_depth;
     }
@@ -2417,51 +2435,35 @@ void init_endpoints(int gasnet_mem_size_in_mb,
 		    int registered_mem_size_in_mb,
 		    int registered_ib_mem_size_in_mb,
 		    Realm::CoreReservationSet& crs,
-		    int argc, const char *argv[])
+		    std::vector<std::string>& cmdline)
 {
-  size_t srcdatapool_size = 64 << 20;
+  size_t lmbsize_in_kb = 0;
+  size_t sdpsize_in_mb = 64;
+  size_t spillwarn_in_mb = 0;
+  size_t spillstep_in_mb = 0;
+  size_t spillstall_in_mb = 0;
 
-  for(int i = 1; i < argc; i++) {
-    if(!strcmp(argv[i], "-ll:numlmbs")) {
-      num_lmbs = atoi(argv[++i]);
-      continue;
-    }
+  Realm::CommandLineParser cp;
+  cp.add_option_int("-ll:numlmbs", num_lmbs)
+    .add_option_int("-ll:lmbsize", lmbsize_in_kb)
+    .add_option_int("-ll:forcelong", force_long_messages)
+    .add_option_int("-ll:sdpsize", sdpsize_in_mb)
+    .add_option_int("-ll:maxsend", max_msgs_to_send)
+    .add_option_int("-ll:spillwarn", spillwarn_in_mb)
+    .add_option_int("-ll:spillstep", spillstep_in_mb)
+    .add_option_int("-ll:spillstall", spillstep_in_mb);
 
-    if(!strcmp(argv[i], "-ll:lmbsize")) {
-      lmb_size = ((size_t)atoi(argv[++i])) << 10; // convert KB to bytes
-      continue;
-    }
+  bool ok = cp.parse_command_line(cmdline);
+  assert(ok);
 
-    if(!strcmp(argv[i], "-ll:forcelong")) {
-      force_long_messages = atoi(argv[++i]) != 0;
-      continue;
-    }
-
-    if(!strcmp(argv[i], "-ll:sdpsize")) {
-      srcdatapool_size = ((size_t)atoi(argv[++i])) << 20; // convert MB to bytes
-      continue;
-    }
-
-    if(!strcmp(argv[i], "-ll:maxsend")) {
-      max_msgs_to_send = atoi(argv[++i]);
-      continue;
-    }
-
-    if(!strcmp(argv[i], "-ll:spillwarn")) {
-      SrcDataPool::print_spill_threshold = ((size_t)atoi(argv[++i])) << 20; // convert MB to bytes
-      continue;
-    }
-
-    if(!strcmp(argv[i], "-ll:spillstep")) {
-      SrcDataPool::print_spill_step = ((size_t)atoi(argv[++i])) << 20; // convert MB to bytes
-      continue;
-    }
-
-    if(!strcmp(argv[i], "-ll:spillstall")) {
-      SrcDataPool::max_spill_bytes = ((size_t)atoi(argv[++i])) << 20; // convert MB to bytes
-      continue;
-    }
-  }
+  size_t srcdatapool_size = sdpsize_in_mb << 20;
+  if(lmbsize_in_kb) lmb_size = lmbsize_in_kb << 10;
+  if(spillwarn_in_mb)
+    SrcDataPool::print_spill_threshold = spillwarn_in_mb << 20;
+  if(spillstep_in_mb)
+    SrcDataPool::print_spill_step = spillstep_in_mb << 20;
+  if(spillstall_in_mb)
+    SrcDataPool::max_spill_bytes = spillstall_in_mb << 20;
 
   size_t total_lmb_size = (gasnet_nodes() * 
 			   num_lmbs *
@@ -2977,7 +2979,7 @@ void init_endpoints(int gasnet_mem_size_in_mb,
 		    int registered_mem_size_in_mb,
 		    int registered_ib_mem_size_in_mb,
 		    Realm::CoreReservationSet& crs,
-		    int argc, const char *argv[])
+		    std::vector<std::string>& cmdline)
 {
   // nothing to do without GASNet
 }

@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -19,10 +19,10 @@
 
 local tasklib = {}
 
-terralib.linklibrary("liblegion_terra.so")
+terralib.linklibrary("libregent.so")
 
 local c = terralib.includecstring([[
-#include "legion_c.h"
+#include "legion.h"
 #include "legion_terra.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,7 +41,7 @@ local function legion_task_wrapper(body)
   local rt = ft.returntype
   local wrapper = nil
   if terralib.sizeof(rt) > 0 then
-    wrapper = terra(data : &opaque, datalen : c.size_t, userdata : &opaque, userlen : c.size_t, proc_id : c.legion_lowlevel_id_t)
+    wrapper = terra(data : &opaque, datalen : c.size_t, userdata : &opaque, userlen : c.size_t, proc_id : c.legion_proc_id_t)
       var task : c.legion_task_t,
           regions : &c.legion_physical_region_t,
           num_regions : uint32,
@@ -52,7 +52,7 @@ local function legion_task_wrapper(body)
       c.legion_task_postamble(runtime, ctx, [&opaque](&rv), terralib.sizeof(rt))
     end
   else
-    wrapper = terra(data : &opaque, datalen : c.size_t, userdata : &opaque, userlen : c.size_t, proc_id : c.legion_lowlevel_id_t)
+    wrapper = terra(data : &opaque, datalen : c.size_t, userdata : &opaque, userlen : c.size_t, proc_id : c.legion_proc_id_t)
       var task : c.legion_task_t,
           regions : &c.legion_physical_region_t,
           num_regions : uint32,

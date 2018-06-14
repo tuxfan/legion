@@ -1,4 +1,4 @@
-/* Copyright 2015 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,9 @@
 // sparsity maps for Realm
 
 // nop, but helps IDEs
-#include "sparsity.h"
+#include "realm/sparsity.h"
 
-#include "serialize.h"
+#include "realm/serialize.h"
 
 TEMPLATE_TYPE_IS_SERIALIZABLE2(int N, typename T, Realm::SparsityMap<N,T>);
 

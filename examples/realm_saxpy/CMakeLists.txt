@@ -1,5 +1,5 @@
 #------------------------------------------------------------------------------#
-# Copyright 2017 Kitware, Inc.
+# Copyright 2018 Kitware, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,5 +32,5 @@ else()
 endif()
 target_link_libraries(realm_saxpy Legion::Legion)
 if(Legion_ENABLE_TESTING)
-  add_test(NAME realm_saxpy COMMAND $<TARGET_FILE:realm_saxpy>) 
+  add_test(NAME realm_saxpy COMMAND ${Legion_TEST_LAUNCHER} $<TARGET_FILE:realm_saxpy>)
 endif()

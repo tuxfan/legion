@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,16 +13,16 @@
  * limitations under the License.
  */
 
-#include "python_module.h"
-#include "python_internal.h"
+#include "realm/python/python_module.h"
+#include "realm/python/python_internal.h"
 
-#include "../numa/numasysif.h"
-#include "logging.h"
-#include "cmdline.h"
-#include "proc_impl.h"
-#include "threads.h"
-#include "runtime_impl.h"
-#include "utils.h"
+#include "realm/numa/numasysif.h"
+#include "realm/logging.h"
+#include "realm/cmdline.h"
+#include "realm/proc_impl.h"
+#include "realm/threads.h"
+#include "realm/runtime_impl.h"
+#include "realm/utils.h"
 
 #include <dlfcn.h>
 #include <link.h>
@@ -47,13 +47,14 @@ namespace Realm {
     get_symbol(this->PyByteArray_FromStringAndSize, "PyByteArray_FromStringAndSize");
 
     get_symbol(this->PyEval_InitThreads, "PyEval_InitThreads");
+    get_symbol(this->PyEval_RestoreThread, "PyEval_RestoreThread");
+    get_symbol(this->PyEval_SaveThread, "PyEval_SaveThread");
+
     get_symbol(this->PyThreadState_New, "PyThreadState_New");
     get_symbol(this->PyThreadState_Clear, "PyThreadState_Clear");
     get_symbol(this->PyThreadState_Delete, "PyThreadState_Delete");
     get_symbol(this->PyThreadState_Get, "PyThreadState_Get");
     get_symbol(this->PyThreadState_Swap, "PyThreadState_Swap");
-    get_symbol(this->PyEval_RestoreThread, "PyEval_RestoreThread");
-    get_symbol(this->PyEval_SaveThread, "PyEval_SaveThread");
 
     get_symbol(this->PyErr_PrintEx, "PyErr_PrintEx");
 
@@ -274,6 +275,7 @@ namespace Realm {
 						       CoreReservation& _core_rsrv)
     : KernelThreadTaskScheduler(_pyproc->me, _core_rsrv)
     , pyproc(_pyproc)
+    , interpreter_ready(false)
   {}
 
   void PythonThreadTaskScheduler::enqueue_taskreg(LocalPythonProcessor::TaskRegistration *treg)
@@ -286,13 +288,11 @@ namespace Realm {
 
   void PythonThreadTaskScheduler::python_scheduler_loop(void)
   {
-    // hold scheduler lock for whole thing
-    AutoHSLLock al(lock);
-
     // global startup of python interpreter if needed
-    if(pyproc->interpreter == 0) {
+    if(!interpreter_ready) {
       log_py.info() << "creating interpreter";
       pyproc->create_interpreter();
+      interpreter_ready = true;
     }
 
     // always create and remember our own python thread - does NOT require GIL
@@ -303,30 +303,14 @@ namespace Realm {
     assert(pythreads.count(Thread::self()) == 0);
     pythreads[Thread::self()] = pythread;
 
-    // now go into main scheduler loop
+    // now go into main scheduler loop, holding scheduler lock for whole thing
+    AutoHSLLock al(lock);
     while(true) {
       // remember the work counter value before we start so that we don't iterate
       //   unnecessarily
       long long old_work_counter = work_counter.read_counter();
 
-      // first rule - always yield to a resumable worker
-      while(!resumable_workers.empty()) {
-	Thread *yield_to = resumable_workers.get(0); // priority is irrelevant
-	assert(yield_to != Thread::self());
-
-	// this should only happen if we're at the max active worker count (otherwise
-	//  somebody should have just woken this guy up earlier), and reduces the 
-	// unassigned worker count by one
-	update_worker_count(0, -1);
-
-	idle_workers.push_back(Thread::self());
-	worker_sleep(yield_to);
-
-	// we're awake again, but still looking for work...
-	old_work_counter = work_counter.read_counter();  // re-read - may have changed while we slept
-      }
-
-      // next priority - task registration
+      // first priority - task registration
       while(!taskreg_queue.empty()) {
 	LocalPythonProcessor::TaskRegistration *treg = taskreg_queue.front();
 	taskreg_queue.pop_front();
@@ -355,11 +339,21 @@ namespace Realm {
 	update_worker_count(0, +1);
       }
 
+      // if we have both resumable and new ready tasks, we want the one that
+      //  is the highest priority, with ties going to resumable tasks - we
+      //  can do this cleanly by taking advantage of the fact that the
+      //  resumable_workers queue uses the scheduler lock, so can't change
+      //  during this call
+      // peek at the top thing (if any) in that queue, and then try to find
+      //  a ready task with higher priority
+      int resumable_priority = ResumableQueue::PRI_NEG_INF;
+      resumable_workers.peek(&resumable_priority);
+
       // try to get a new task then
       // remember where a task has come from in case we want to put it back
       Task *task = 0;
       TaskQueue *task_source = 0;
-      int task_priority = TaskQueue::PRI_NEG_INF;
+      int task_priority = resumable_priority;
       for(std::vector<TaskQueue *>::const_iterator it = task_queues.begin();
 	  it != task_queues.end();
 	  it++) {
@@ -410,8 +404,29 @@ namespace Realm {
 
 	// and we're back to being unassigned
 	update_worker_count(0, +1);
-      } else {
-	// no?  thumb twiddling time
+	continue;
+      }
+
+      // having checked for higher-priority ready tasks, we can always
+      //  take the highest-priority resumable task, if any, and run it
+      if(!resumable_workers.empty()) {
+	Thread *yield_to = resumable_workers.get(0); // priority is irrelevant
+	assert(yield_to != Thread::self());
+
+	// this should only happen if we're at the max active worker count (otherwise
+	//  somebody should have just woken this guy up earlier), and reduces the 
+	// unassigned worker count by one
+	update_worker_count(0, -1);
+
+	idle_workers.push_back(Thread::self());
+	worker_sleep(yield_to);
+
+	// loop around and check both queues again
+	continue;
+      }
+
+      {
+	// no ready or resumable tasks?  thumb twiddling time
 
 	// are we shutting down?
 	if(shutdown_flag) {
@@ -474,6 +489,31 @@ namespace Realm {
   //   should release the GIL)
   void PythonThreadTaskScheduler::thread_blocking(Thread *thread)
   {
+    // if this gets called before we're done initializing the interpreter,
+    //  we need a simple blocking wait
+    if(!interpreter_ready) {
+      AutoHSLLock al(lock);
+
+      log_py.debug() << "waiting during initialization";
+      bool really_blocked = try_update_thread_state(thread,
+						    Thread::STATE_BLOCKING,
+						    Thread::STATE_BLOCKED);
+      if(!really_blocked) return;
+
+      while(true) {
+	long long old_work_counter = work_counter.read_counter();
+
+	if(!resumable_workers.empty()) {
+	  Thread *t = resumable_workers.get(0);
+	  assert(t == thread);
+	  log_py.debug() << "awake again";
+	  return;
+	}
+
+	wait_for_work(old_work_counter);
+      }
+    }
+
     // if we got here through a cffi call, the GIL has already been released,
     //  so try to handle that case here - a call PyEval_SaveThread
     //  if the GIL is not held will assert-fail, and while a call to
@@ -499,6 +539,17 @@ namespace Realm {
       (pyproc->interpreter->api->PyEval_RestoreThread)(saved);
     } else
       log_py.info() << "python worker awake - not acquiring GIL";
+  }
+
+  void PythonThreadTaskScheduler::thread_ready(Thread *thread)
+  {
+    // handle the wakening of the initialization thread specially
+    if(!interpreter_ready) {
+      AutoHSLLock al(lock);
+      resumable_workers.put(thread, 0);
+    } else {
+      KernelThreadTaskScheduler::thread_ready(thread);
+    }
   }
 
   void PythonThreadTaskScheduler::worker_terminate(Thread *switch_to)
@@ -567,13 +618,19 @@ namespace Realm {
 
     sched = new PythonThreadTaskScheduler(this, *core_rsrv);
     sched->add_task_queue(&task_queue);
-    sched->start();
   }
 
   LocalPythonProcessor::~LocalPythonProcessor(void)
   {
     delete core_rsrv;
     delete sched;
+  }
+
+  // starts worker threads and performs any per-processor initialization
+  void LocalPythonProcessor::start_threads(void)
+  {
+    // finally, fire up the scheduler
+    sched->start();
   }
 
   void LocalPythonProcessor::shutdown(void)

@@ -1,5 +1,5 @@
-/* Copyright 2016 Stanford University
- * Copyright 2016 Los Alamos National Laboratory
+/* Copyright 2018 Stanford University
+ * Copyright 2018 Los Alamos National Laboratory
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "channel_disk.h"
+#include "realm/transfer/channel_disk.h"
 
 namespace Realm {
 
@@ -30,6 +30,7 @@ namespace Realm {
 			     RegionInstance inst,
 			     Memory _src_mem, Memory _dst_mem,
 			     TransferIterator *_src_iter, TransferIterator *_dst_iter,
+			     CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
 			     uint64_t _max_req_size,
 			     long max_nr,
 			     int _priority,
@@ -41,6 +42,7 @@ namespace Realm {
 		mark_started,
 		//_src_buf, _dst_buf, _domain, _oas_vec,
 		_src_mem, _dst_mem, _src_iter, _dst_iter,
+		_src_serdez_id, _dst_serdez_id,
 		_max_req_size, _priority,
                 _order, _kind, _complete_fence)
       , fd(-1) // defer file open
@@ -170,6 +172,7 @@ namespace Realm {
 			     bool mark_started,
 			     Memory _src_mem, Memory _dst_mem,
 			     TransferIterator *_src_iter, TransferIterator *_dst_iter,
+			     CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
 			     uint64_t _max_req_size,
 			     long max_nr,
 			     int _priority,
@@ -181,6 +184,7 @@ namespace Realm {
 		mark_started,
 		//_src_buf, _dst_buf, _domain, _oas_vec,
 		_src_mem, _dst_mem, _src_iter, _dst_iter,
+		_src_serdez_id, _dst_serdez_id,
 		_max_req_size, _priority,
                 _order, _kind, _complete_fence)
     {
@@ -262,9 +266,26 @@ namespace Realm {
       fsync(fd);
     }
 
+      static const Memory::Kind cpu_mem_kinds[] = { Memory::SYSTEM_MEM,
+						    Memory::REGDMA_MEM,
+						    Memory::Z_COPY_MEM };
+      static const size_t num_cpu_mem_kinds = sizeof(cpu_mem_kinds) / sizeof(cpu_mem_kinds[0]);
+
     FileChannel::FileChannel(long max_nr, XferDes::XferKind _kind)
+      : Channel(_kind)
     {
-      kind = _kind;
+      unsigned bw = 0; // TODO
+      unsigned latency = 0;
+      // any combination of SYSTEM/REGDMA/Z_COPY_MEM
+      for(size_t i = 0; i < num_cpu_mem_kinds; i++)
+	if(_kind == XferDes::XFER_FILE_READ)
+	  add_path(Memory::FILE_MEM, false,
+		   cpu_mem_kinds[i], false,
+		   bw, latency, false, false);
+	else
+	  add_path(cpu_mem_kinds[i], false,
+		   Memory::FILE_MEM, false,
+		   bw, latency, false, false);
     }
 
     FileChannel::~FileChannel()
@@ -276,6 +297,7 @@ namespace Realm {
       AsyncFileIOContext* aio_ctx = AsyncFileIOContext::get_singleton();
       for (long i = 0; i < nr; i++) {
         FileRequest* req = (FileRequest*) requests[i];
+	assert(!req->xd->src_serdez_op && !req->xd->dst_serdez_op); // no serdez support
         switch (kind) {
           case XferDes::XFER_FILE_READ:
             aio_ctx->enqueue_read(req->fd, req->file_off,
@@ -303,8 +325,20 @@ namespace Realm {
     }
 
     DiskChannel::DiskChannel(long max_nr, XferDes::XferKind _kind)
+      : Channel(_kind)
     {
-      kind = _kind;
+      unsigned bw = 0; // TODO
+      unsigned latency = 0;
+      // any combination of SYSTEM/REGDMA/Z_COPY_MEM
+      for(size_t i = 0; i < num_cpu_mem_kinds; i++)
+	if(_kind == XferDes::XFER_DISK_READ)
+	  add_path(Memory::DISK_MEM, false,
+		   cpu_mem_kinds[i], false,
+		   bw, latency, false, false);
+	else
+	  add_path(cpu_mem_kinds[i], false,
+		   Memory::DISK_MEM, false,
+		   bw, latency, false, false);
     }
 
     DiskChannel::~DiskChannel()
@@ -316,6 +350,7 @@ namespace Realm {
       AsyncFileIOContext* aio_ctx = AsyncFileIOContext::get_singleton();
       for (long i = 0; i < nr; i++) {
         DiskRequest* req = (DiskRequest*) requests[i];
+	assert(!req->xd->src_serdez_op && !req->xd->dst_serdez_op); // no serdez support
         switch (kind) {
           case XferDes::XFER_DISK_READ:
             aio_ctx->enqueue_read(req->fd, req->disk_off,

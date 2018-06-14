@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,15 +18,15 @@
 #ifndef REALM_RSRV_IMPL_H
 #define REALM_RSRV_IMPL_H
 
-#include "reservation.h"
+#include "realm/reservation.h"
 
-#include "id.h"
-#include <realm/activemsg.h>
-#include "nodeset.h"
+#include "realm/id.h"
+#include "realm/activemsg.h"
+#include "realm/nodeset.h"
 
 #define REALM_RSRV_USE_CIRCQUEUE
 #ifdef REALM_RSRV_USE_CIRCQUEUE
-#include "circ_queue.h"
+#include "realm/circ_queue.h"
 #endif
 
 namespace Realm {
@@ -47,6 +47,10 @@ namespace Realm {
       unsigned time_units, lock_id, owner, action;
     };
 #endif
+
+    namespace Config {
+      extern bool use_fast_reservation_fallback;
+    };
 
     class ReservationImpl {
     public:
@@ -257,7 +261,7 @@ namespace Realm {
 
 }; // namespace Realm
 
-#include "rsrv_impl.inl"
+#include "realm/rsrv_impl.inl"
 
 #endif // ifndef REALM_RSRV_IMPL_H
 

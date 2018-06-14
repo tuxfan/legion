@@ -1,4 +1,4 @@
-/* Copyright 2015 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,9 @@
 #define REALM_DEPPART_SPARSITY_IMPL_INL
 
 // NOP, but useful for IDEs
-#include "sparsity_impl.h"
+#include "realm/deppart/sparsity_impl.h"
 
-#include "../runtime_impl.h"
+#include "realm/runtime_impl.h"
 
 namespace Realm {
 

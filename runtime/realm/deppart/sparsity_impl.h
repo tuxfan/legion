@@ -1,4 +1,4 @@
-/* Copyright 2015 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,12 @@
 #ifndef REALM_DEPPART_SPARSITY_IMPL_H
 #define REALM_DEPPART_SPARSITY_IMPL_H
 
-#include <realm/indexspace.h>
-#include <realm/sparsity.h>
-#include <realm/id.h>
+#include "realm/indexspace.h"
+#include "realm/sparsity.h"
+#include "realm/id.h"
 
-#include <realm/activemsg.h>
-#include "nodeset.h"
+#include "realm/activemsg.h"
+#include "realm/nodeset.h"
 
 namespace Realm {
 
@@ -196,4 +196,4 @@ namespace Realm {
 
 #endif // REALM_DEPPART_SPARSITY_IMPL_H
 
-#include "sparsity_impl.inl"
+#include "realm/deppart/sparsity_impl.inl"

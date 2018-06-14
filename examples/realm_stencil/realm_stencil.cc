@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University
+/* Copyright 2018 Stanford University
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -516,7 +516,6 @@ void shard_task(const void *args, size_t arglen,
   Event xm_copy_done = Event::NO_EVENT;
   Event yp_copy_done = Event::NO_EVENT;
   Event ym_copy_done = Event::NO_EVENT;
-  long long start;
   for (coord_t t = 0; t < a.tsteps; t++) {
     {
       StencilArgs args;
@@ -534,7 +533,6 @@ void shard_task(const void *args, size_t arglen,
         (ym_full_in.exists() ? ym_full_in.get_previous_phase() : Event::NO_EVENT));
       if (t == a.tprune) {
         precondition.wait();
-        start = Realm::Clock::current_time_in_microseconds();
       }
       stencil_done = p.spawn(STENCIL_TASK, &args, sizeof(args), precondition);
       if (xp_empty_out.exists()) xp_empty_out.arrive(1, stencil_done);
@@ -601,12 +599,17 @@ void shard_task(const void *args, size_t arglen,
     if (ym_full_out.exists()) ym_full_out = ym_full_out.advance_barrier();
   }
 
+  // This task hasn't blocked, so no subtasks have executed yet.
+  // Only time subtask execution
+  long long start = Realm::Clock::current_time_in_microseconds();
   increment_done.wait();
   long long stop = Realm::Clock::current_time_in_microseconds();
 
   // Send start and stop times back to top level task
-  a.start.arrive(1, Event::NO_EVENT, &start, sizeof(start));
-  a.stop.arrive(1, Event::NO_EVENT, &stop, sizeof(stop));
+  a.first_start.arrive(1, Event::NO_EVENT, &start, sizeof(start));
+  a.last_start.arrive(1, Event::NO_EVENT, &start, sizeof(start));
+  a.first_stop.arrive(1, Event::NO_EVENT, &stop, sizeof(stop));
+  a.last_stop.arrive(1, Event::NO_EVENT, &stop, sizeof(stop));
 
   {
     CheckArgs check_args;
@@ -617,6 +620,10 @@ void shard_task(const void *args, size_t arglen,
     Event check_done = p.spawn(CHECK_TASK, &check_args, sizeof(check_args), increment_done);
     check_done.wait();
   }
+
+  // Make sure all operations are done before returning
+  Event::merge_events(
+    xp_copy_done, xm_copy_done, yp_copy_done, ym_copy_done).wait();
 }
 
 void top_level_task(const void *args, size_t arglen,
@@ -786,8 +793,10 @@ void top_level_task(const void *args, size_t arglen,
 
   // Create barrier to keep shard launch synchronized
   Barrier sync_bar = Barrier::create_barrier(nshards);
-  Barrier start_bar = Barrier::create_barrier(nshards, REDOP_MIN, &RedopMin::identity, sizeof(RedopMin::identity));
-  Barrier stop_bar = Barrier::create_barrier(nshards, REDOP_MAX, &RedopMax::identity, sizeof(RedopMax::identity));
+  Barrier first_start_bar = Barrier::create_barrier(nshards, REDOP_MIN, &RedopMin::identity, sizeof(RedopMin::identity));
+  Barrier first_stop_bar = Barrier::create_barrier(nshards, REDOP_MIN, &RedopMin::identity, sizeof(RedopMin::identity));
+  Barrier last_start_bar = Barrier::create_barrier(nshards, REDOP_MAX, &RedopMax::identity, sizeof(RedopMax::identity));
+  Barrier last_stop_bar = Barrier::create_barrier(nshards, REDOP_MAX, &RedopMax::identity, sizeof(RedopMax::identity));
 
   // Launch shard tasks
   {
@@ -838,8 +847,10 @@ void top_level_task(const void *args, size_t arglen,
       args.ym_full_out = yp_bars_full[i + Point2( 0, -1)];
 
       args.sync = sync_bar;
-      args.start = start_bar;
-      args.stop = stop_bar;
+      args.first_start = first_start_bar;
+      args.last_start = last_start_bar;
+      args.first_stop = first_stop_bar;
+      args.last_stop = last_stop_bar;
 
       args.tsteps = config.tsteps + config.tprune;
       args.tprune = config.tprune;
@@ -904,19 +915,32 @@ void top_level_task(const void *args, size_t arglen,
   }
 
   // Collect start and stop times
-  long long start;
-  start_bar.wait();
-  assert(start_bar.get_result(&start, sizeof(start)));
+  long long first_start;
+  first_start_bar.wait();
+  assert(first_start_bar.get_result(&first_start, sizeof(first_start)));
 
-  long long stop;
-  stop_bar.wait();
-  assert(stop_bar.get_result(&stop, sizeof(stop)));
+  long long last_start;
+  last_start_bar.wait();
+  assert(last_start_bar.get_result(&last_start, sizeof(last_start)));
+
+  long long first_stop;
+  first_stop_bar.wait();
+  assert(first_stop_bar.get_result(&first_stop, sizeof(first_stop)));
+
+  long long last_stop;
+  last_stop_bar.wait();
+  assert(last_stop_bar.get_result(&last_stop, sizeof(last_stop)));
+
+  long long start = first_start;
+  long long stop = last_stop;
 
   printf("\n");
   printf("Elapsed time: %e seconds\n", (stop - start)/1e6);
   printf("Iterations: %lld\n", config.tsteps);
   printf("Time per iteration: %e seconds\n",
          (stop - start)/1e6/config.tsteps);
+  printf("Start skew: %e seconds\n", (last_start - first_start)/1e6);
+  printf("Stop skew: %e seconds\n", (last_stop - first_stop)/1e6);
 }
 
 int main(int argc, char **argv)

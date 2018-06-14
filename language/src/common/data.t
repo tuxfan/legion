@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -192,6 +192,14 @@ function data.zip(...)
   return result
 end
 
+function data.flatten(list)
+  local result = terralib.newlist()
+  for _, sublist in ipairs(list) do
+    result:insertall(sublist)
+  end
+  return result
+end
+
 function data.dict(list)
   local result = {}
   for _, pair in ipairs(list) do
@@ -217,7 +225,7 @@ setmetatable(data.tuple, { __index = terralib.newlist })
 data.tuple.__index = data.tuple
 
 function data.tuple.__eq(a, b)
-  if getmetatable(a) ~= data.tuple or getmetatable(b) ~= data.tuple then
+  if not data.is_tuple(a) or not data.is_tuple(b) then
     return false
   end
   if #a ~= #b then
@@ -282,6 +290,99 @@ function data.is_tuple(x)
 end
 
 -- #####################################
+-- ## Vectors
+-- #################
+
+data.vector = {}
+setmetatable(data.vector, { __index = data.tuple })
+data.vector.__index = data.vector
+
+function data.vector.__eq(a, b)
+  assert(data.is_vector(a) and data.is_vector(b))
+  for i, v in ipairs(a) do
+    if v ~= b[i] then
+      return false
+    end
+  end
+  return true
+end
+
+-- Since Lua doesn't support mixed-type equality, we have to expose this as a method.
+function data.vector.eq(a, b)
+  if data.is_vector(a) then
+    if type(b) == "number" then
+      for i, v in ipairs(a) do
+        if v ~= b then
+          return false
+        end
+      end
+      return true
+    end
+  elseif data.is_vector(b) then
+    return data.vector.eq(b, a)
+  end
+  return a == b
+end
+
+function data.vector.__add(a, b)
+  if data.is_vector(a) then
+    if data.is_vector(b) then
+      local result = data.newvector()
+      for i, v in ipairs(a) do
+        result:insert(v + b[i])
+      end
+      return result
+    elseif type(b) == "number" then
+      local result = data.newvector()
+      for i, v in ipairs(a) do
+        result:insert(v + b)
+      end
+      return result
+    end
+  elseif data.is_vector(b) then
+    return data.vector.__add(b, a)
+  end
+  assert(false) -- At least one should have been a vector
+end
+
+function data.vector.__mul(a, b)
+  if data.is_vector(a) then
+    if data.is_vector(b) then
+      local result = data.newvector()
+      for i, v in ipairs(a) do
+        result:insert(v * b[i])
+      end
+      return result
+    elseif type(b) == "number" then
+      local result = data.newvector()
+      for i, v in ipairs(a) do
+        result:insert(v * b)
+      end
+      return result
+    end
+  elseif data.is_vector(b) then
+    return data.vector.__mul(b, a)
+  end
+  assert(false) -- At least one should have been a vector
+end
+
+function data.vector:__tostring()
+  return self:mkstring("[", ",", "]")
+end
+
+function data.vector:hash()
+  return "data.vector" .. tostring(self)
+end
+
+function data.newvector(...)
+  return setmetatable({...}, data.vector)
+end
+
+function data.is_vector(x)
+  return getmetatable(x) == data.vector
+end
+
+-- #####################################
 -- ## Maps
 -- #################
 
@@ -311,13 +412,21 @@ function data.map:__newindex(k, v)
   self:put(k, v)
 end
 
+function data.map:has(k)
+  return self.__values_by_hash[data.hash(k)]
+end
+
 function data.map:get(k)
   return self.__values_by_hash[data.hash(k)]
 end
 
 function data.map:put(k, v)
-  self.__keys_by_hash[data.hash(k)] = k
-  self.__values_by_hash[data.hash(k)] = v
+  local kh = data.hash(k)
+  if v == nil then
+    k = nil
+  end
+  self.__keys_by_hash[kh] = k
+  self.__values_by_hash[kh] = v
 end
 
 function data.map:next_item(k)
@@ -417,6 +526,10 @@ function data.default_map:__index(k)
     if lookup ~= nil then self:put(k, lookup) end
   end
   return lookup
+end
+
+function data.default_map:has(k)
+  return data.map.get(self, k)
 end
 
 function data.default_map:get(k)

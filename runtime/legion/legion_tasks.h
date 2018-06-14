@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,12 @@
 #define __LEGION_TASKS_H__
 
 #include "legion.h"
-#include "runtime.h"
-#include "legion_ops.h"
-#include "region_tree.h"
-#include "legion_mapping.h"
-#include "legion_utilities.h"
-#include "legion_allocation.h"
+#include "legion/runtime.h"
+#include "legion/legion_ops.h"
+#include "legion/region_tree.h"
+#include "legion/legion_mapping.h"
+#include "legion/legion_utilities.h"
+#include "legion/legion_allocation.h"
 
 namespace Legion {
   namespace Internal {
@@ -46,7 +46,7 @@ namespace Legion {
       ResourceTracker& operator=(const ResourceTracker &rhs);
     public:
       virtual void register_region_creations(
-                          const std::set<LogicalRegion> &regions) = 0;
+                     const std::map<LogicalRegion,bool> &regions) = 0;
       virtual void register_region_deletions(
                           const std::set<LogicalRegion> &regions) = 0;
     public:
@@ -76,7 +76,8 @@ namespace Legion {
       static void unpack_privilege_state(Deserializer &derez,
                                          ResourceTracker *target);
     protected:
-      std::set<LogicalRegion>                   created_regions;
+      std::map<LogicalRegion,
+               bool/*local*/>                   created_regions;
       std::map<std::pair<FieldSpace,FieldID>,
                bool/*local*/>                   created_fields;
       std::set<FieldSpace>                      created_field_spaces;
@@ -140,24 +141,83 @@ namespace Legion {
         SLICE_TASK_KIND,
       };
     public:
+      struct TriggerTaskArgs : public LgTaskArgs<TriggerTaskArgs> {
+      public:
+        static const LgTaskID TASK_ID = LG_TRIGGER_TASK_ID;
+      public:
+        TriggerTaskArgs(TaskOp *t)
+          : LgTaskArgs<TriggerTaskArgs>(t->get_unique_op_id()), op(t) { }
+      public:
+        TaskOp *const op;
+      };
       struct DeferDistributeArgs : public LgTaskArgs<DeferDistributeArgs> {
       public:
         static const LgTaskID TASK_ID = LG_DEFER_DISTRIBUTE_TASK_ID;
       public:
-        TaskOp *proxy_this;
+        DeferDistributeArgs(TaskOp *op)
+          : LgTaskArgs<DeferDistributeArgs>(op->get_unique_op_id()),
+            proxy_this(op) { }
+      public:
+        TaskOp *const proxy_this;
       };
       struct DeferMappingArgs : public LgTaskArgs<DeferMappingArgs> {
       public:
         static const LgTaskID TASK_ID = LG_DEFER_PERFORM_MAPPING_TASK_ID;
       public:
-        TaskOp *proxy_this;
-        MustEpochOp *must_op;
+        DeferMappingArgs(TaskOp *op, MustEpochOp *owner)
+          : LgTaskArgs<DeferMappingArgs>(op->get_unique_op_id()),
+            proxy_this(op), must_op(owner) { }
+      public:
+        TaskOp *const proxy_this;
+        MustEpochOp *const must_op;
       };
       struct DeferLaunchArgs : public LgTaskArgs<DeferLaunchArgs> {
       public:
         static const LgTaskID TASK_ID = LG_DEFER_LAUNCH_TASK_ID;
       public:
-        TaskOp *proxy_this;
+        DeferLaunchArgs(TaskOp *op)
+          : LgTaskArgs<DeferLaunchArgs>(op->get_unique_op_id()), 
+            proxy_this(op) { }
+      public:
+        TaskOp *const proxy_this;
+      };
+      struct DeferredFutureSetArgs : public LgTaskArgs<DeferredFutureSetArgs> {
+      public:
+        static const LgTaskID TASK_ID = LG_DEFERRED_FUTURE_SET_ID;
+      public:
+        DeferredFutureSetArgs(FutureImpl *tar, FutureImpl *res, TaskOp *t)
+          : LgTaskArgs<DeferredFutureSetArgs>(t->get_unique_op_id()),
+            target(tar), result(res), task_op(t) { }
+      public:
+        FutureImpl *const target;
+        FutureImpl *const result;
+        TaskOp *const task_op;
+      };
+      struct DeferredFutureMapSetArgs : 
+        public LgTaskArgs<DeferredFutureMapSetArgs> {
+      public:
+        static const LgTaskID TASK_ID = LG_DEFERRED_FUTURE_MAP_SET_ID;
+      public:
+        DeferredFutureMapSetArgs(FutureMapImpl *map, FutureImpl *res,
+                                 Domain d, TaskOp *t)
+          : LgTaskArgs<DeferredFutureMapSetArgs>(t->get_unique_op_id()),
+            future_map(map), result(res), domain(d), task_op(t) { }
+      public:
+        FutureMapImpl *const future_map;
+        FutureImpl *const result;
+        const Domain domain;
+        TaskOp *const task_op;
+      };
+      struct DeferredEnqueueArgs : public LgTaskArgs<DeferredEnqueueArgs> {
+      public:
+        static const LgTaskID TASK_ID = LG_DEFERRED_ENQUEUE_TASK_ID;
+      public:
+        DeferredEnqueueArgs(ProcessorManager *man, TaskOp *t)
+          : LgTaskArgs<DeferredEnqueueArgs>(t->get_unique_op_id()),
+            manager(man), task(t) { }
+      public:
+        ProcessorManager *const manager;
+        TaskOp *const task;
       };
     public:
       TaskOp(Runtime *rt);
@@ -171,11 +231,11 @@ namespace Legion {
     public:
       bool is_remote(void) const;
       inline bool is_stolen(void) const { return (steal_count > 0); }
-      inline bool is_locally_mapped(void) const { return map_locally; }
+      inline bool is_origin_mapped(void) const { return map_origin; }
     public:
       void set_current_proc(Processor current);
-      inline void set_locally_mapped(bool local) { map_locally = local; }
-      inline void set_target_proc(Processor next) { target_proc = next; }
+      inline void set_origin_mapped(bool origin) { map_origin = origin; }
+      inline void set_target_proc(Processor next) { target_proc = next; } 
     protected:
       void activate_task(void);
       void deactivate_task(void); 
@@ -320,7 +380,7 @@ namespace Legion {
       bool commit_received;
     protected:
       bool options_selected;
-      bool map_locally;
+      bool map_origin;
     protected:
       // For managing predication
       PredEvent true_guard;
@@ -363,14 +423,22 @@ namespace Legion {
       public:
         static const LgTaskID TASK_ID = LG_DEFERRED_POST_MAPPED_ID;
       public:
-        SingleTask *task;
+        DeferredPostMappedArgs(SingleTask *t)
+          : LgTaskArgs<DeferredPostMappedArgs>(t->get_unique_op_id()),
+            task(t) { }
+      public:
+        SingleTask *const task;
       };
       struct MisspeculationTaskArgs :
         public LgTaskArgs<MisspeculationTaskArgs> {
       public:
         static const LgTaskID TASK_ID = LG_MISSPECULATE_TASK_ID;
       public:
-        SingleTask *task;
+        MisspeculationTaskArgs(SingleTask *t)
+          : LgTaskArgs<MisspeculationTaskArgs>(t->get_unique_op_id()),
+            task(t) { }
+      public:
+        SingleTask *const task;
       };
     public:
       SingleTask(Runtime *rt);
@@ -872,7 +940,7 @@ namespace Legion {
     public:
       virtual void record_reference_mutation_effect(RtEvent event);
     public:
-      void record_locally_mapped_slice(SliceTask *local_slice);
+      void record_origin_mapped_slice(SliceTask *local_slice);
     public:
       void return_slice_mapped(unsigned points, long long denom,
                                RtEvent applied_condition, 
@@ -902,7 +970,7 @@ namespace Legion {
       unsigned committed_points;
     protected:
       std::vector<RegionTreePath> privilege_paths;
-      std::deque<SliceTask*> locally_mapped_slices;
+      std::deque<SliceTask*> origin_mapped_slices;
     protected:
       std::set<RtEvent> map_applied_conditions;
       std::set<ApEvent> completion_preconditions;
@@ -935,6 +1003,10 @@ namespace Legion {
       struct DeferMapAndLaunchArgs : public LgTaskArgs<DeferMapAndLaunchArgs> {
       public:
         static const LgTaskID TASK_ID = LG_DEFER_MAP_AND_LAUNCH_TASK_ID;
+      public:
+        DeferMapAndLaunchArgs(SliceTask *t)
+          : LgTaskArgs<DeferMapAndLaunchArgs>(t->get_unique_op_id()),
+            proxy_this(t) { }
       public:
         SliceTask *proxy_this;
       };
@@ -994,7 +1066,8 @@ namespace Legion {
       void record_child_mapped(RtEvent child_complete, 
                                ApEvent restrict_postcondition);
       void record_child_complete(void);
-      void record_child_committed(void);
+      void record_child_committed(RtEvent commit_precondition = 
+                                  RtEvent::NO_RT_EVENT);
     protected:
       void trigger_slice_mapped(void);
       void trigger_slice_complete(void);
@@ -1009,7 +1082,7 @@ namespace Legion {
       static void handle_slice_return(Runtime *rt, Deserializer &derez);
     public: // Privilege tracker methods
       virtual void register_region_creations(
-                          const std::set<LogicalRegion> &regions);
+                     const std::map<LogicalRegion,bool> &regions);
       virtual void register_region_deletions(
                           const std::set<LogicalRegion> &regions);
     public:
@@ -1047,7 +1120,7 @@ namespace Legion {
       IndexTask *index_owner;
       ApEvent index_complete;
       UniqueID remote_unique_id;
-      bool locally_mapped;
+      bool origin_mapped;
       bool need_versioning_analysis;
       UniqueID remote_owner_uid;
     protected:
@@ -1056,6 +1129,7 @@ namespace Legion {
       std::map<PhysicalManager*,std::pair<unsigned,bool> > acquired_instances;
       std::set<RtEvent> map_applied_conditions;
       std::set<ApEvent> restrict_postconditions;
+      std::set<RtEvent> commit_preconditions;
     };
 
   }; // namespace Internal 

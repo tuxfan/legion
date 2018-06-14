@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2017 Stanford University
+# Copyright 2018 Stanford University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,12 +20,16 @@ from __future__ import print_function
 import legion
 import numpy
 
-init = legion.extern_task(task_id=3, privileges=[legion.RW])
-
 @legion.task
 def f(x, y, z):
     print("inside task f%s" % ((x, y, z),))
     return x+1
+
+@legion.task(privileges=[legion.RW], leaf=True)
+def init(R):
+    for x in range(0, 4):
+        for y in range(0, 4):
+            R.x[x][y] = x*4 + y
 
 @legion.task(privileges=[legion.RW], leaf=True)
 def inc(R, step):
@@ -34,8 +38,8 @@ def inc(R, step):
     # Sanity check that the values written by init are here, and that
     # they follow the same array ordering.
     print(R.x)
-    for x in xrange(0, 4):
-        for y in xrange(0, 4):
+    for x in range(0, 4):
+        for y in range(0, 4):
             assert int(R.x[x][y]) == x*4 + y
 
     numpy.add(R.x, step, out=R.x)
@@ -66,7 +70,7 @@ def main_task():
     x = f(1, "asdf", True)
     print("result of f is %s" % x.get())
 
-    R = legion.Region.create([4, 4], {'x': (legion.float64, 1)})
+    R = legion.Region.create([4, 4], {'x': legion.float64})
     init(R)
     inc(R, 1)
 

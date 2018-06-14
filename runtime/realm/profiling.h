@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,16 +18,16 @@
 #ifndef REALM_PROFILING_H
 #define REALM_PROFILING_H
 
-#include <climits>
+#include <limits.h>
 #include <vector>
 #include <set>
 #include <map>
 
-#include "bytearray.h"
-#include "processor.h"
-#include "memory.h"
-#include "instance.h"
-#include "faults.h"
+#include "realm/bytearray.h"
+#include "realm/processor.h"
+#include "realm/memory.h"
+#include "realm/instance.h"
+#include "realm/faults.h"
 
 namespace Realm {
 
@@ -162,6 +162,7 @@ namespace Realm {
 	DESTROYED_SUCCESSFULLY,
 	CORRUPTED,
 	MEMORY_LOST,
+	INSTANCE_COUNT_EXCEEDED,
       };
 
       Result result;
@@ -313,6 +314,9 @@ namespace Realm {
     void send_responses(const ProfilingRequestSet& prs);
     void clear(void);
 
+    // clears only recorded measurements (keeps request info)
+    void clear_measurements(void);
+
     template <typename T>
     bool wants_measurement(void) const;
 
@@ -367,6 +371,6 @@ namespace Realm {
   };
 }; // namespace Realm
 
-#include "profiling.inl"
+#include "realm/profiling.inl"
 
 #endif // ifdef REALM_PROFILING_H

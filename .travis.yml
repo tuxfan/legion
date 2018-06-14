@@ -15,11 +15,12 @@ env:
   - REALM_SYNTHETIC_CORE_MAP=""
   - REALM_BACKTRACE=1
   - TEST_FUZZER=0
+  - SHORT=1
   matrix:
-  - CC_FLAGS="-std=c++98" DEBUG=0 USE_CMAKE=1 TEST_REGENT=0
-  - CC_FLAGS="-std=c++98" DEBUG=0 TEST_LEGION_CXX=0 TEST_REALM=0
+  - CC_FLAGS="-std=c++98" DEBUG=0 USE_CMAKE=1 TEST_REGENT=0 TEST_CTEST=1
+  - CC_FLAGS="-std=c++98" DEBUG=0 TEST_LEGION_CXX=0 TEST_REALM=0 REGENT_JOBS=4
   - CC_FLAGS="-std=c++98 -DPRIVILEGE_CHECKS -DBOUNDS_CHECKS" DEBUG=1 TEST_REGENT=0
-  - CC_FLAGS="-std=c++98 -DLEGION_SPY" DEBUG=1 USE_SPY=1 TEST_LEGION_CXX=0 TEST_REALM=0
+  - CC_FLAGS="-std=c++98 -DLEGION_SPY" DEBUG=1 USE_SPY=1 TEST_LEGION_CXX=0 TEST_REALM=0 REGENT_INCREMENTAL=1
     #- CC_FLAGS="-std=c++98" USE_GASNET=1 USE_HDF=1 USE_CMAKE=1 TEST_REGENT=0
   - CC_FLAGS="-std=c++98" DEBUG=1 USE_HDF=1 TEST_REGENT=0
   - CC_FLAGS="-std=c++11" DEBUG=0 TEST_REGENT=0
@@ -51,7 +52,7 @@ before_install:
   - |
     if [[ "$(uname)" = "Darwin" ]]; then
       brew update
-      brew install pypy llvm@3.9 homebrew/science/hdf5
+      brew install pypy llvm@3.9 hdf5
       export CLANG="$(brew --prefix)/opt/llvm@3.9/bin/clang"
       echo CLANG is $(CLANG) CXX is $(CXX)
       export LLVM_CONFIG="$(brew --prefix)/opt/llvm@3.9/bin/llvm-config"
@@ -75,8 +76,4 @@ before_install:
       popd
     fi
 script:
-  - |
-    if [[ "$(uname)" = "Darwin" ]]; then
-      export SHORT=1 # FIXME: macOS tests take too long, workaround by running short tests
-    fi
   - ./test.py -j2

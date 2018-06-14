@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2017 Stanford University, NVIDIA Corporation
+# Copyright 2018 Stanford University, NVIDIA Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -51,11 +51,12 @@ DEPENDENCE_TYPES = [
 "simultaneous",
 ]
 
-NO_ACCESS  = 0x00000000
-READ_ONLY  = 0x00000001
-READ_WRITE = 0x00000007
-WRITE_ONLY = 0x00000002
-REDUCE     = 0x00000004
+NO_ACCESS     = 0x00000000
+READ_ONLY     = 0x00000001
+READ_WRITE    = 0x00000007
+WRITE_ONLY    = 0x10000002
+WRITE_DISCARD = 0x10000007
+REDUCE        = 0x00000004
 
 EXCLUSIVE = 0
 ATOMIC = 1
@@ -2289,11 +2290,13 @@ class IndexPartition(object):
         # Check for dominance of children by parent
         for child in self.children.itervalues():
             if not self.parent.dominates(child):
-                print(('WARNING: child % is not dominated by parent %s in %s. '+
+                print(('WARNING: child %s is not dominated by parent %s in %s. '+
                       'This is definitely an application bug.') %
                       (child, self.parent, self))
                 if self.state.assert_on_warning:
                     assert False
+            # Recurse down the tree too
+            child.check_partition_properties()
         # Check disjointness
         if self.disjoint:
             previous = PointSet()
@@ -2613,16 +2616,6 @@ class LogicalRegion(object):
         if field not in self.logical_state:
             self.logical_state[field] = LogicalState(self, field)
         self.logical_state[field].register_logical_user(op, req)
-
-    def perform_logical_fence(self, op, field, checks):
-        if field not in self.logical_state:
-            self.logical_state[field] = LogicalState(self, field)
-        if not self.logical_state[field].perform_logical_fence(op, checks):
-            return False
-        for child in self.children.itervalues():
-            if not child.perform_logical_fence(op, field, checks):
-                return False
-        return True
 
     def perform_logical_deletion(self, depth, path, op, req, field, prev, checks):
         assert self is path[depth]
@@ -2951,16 +2944,6 @@ class LogicalPartition(object):
             self.logical_state[field] = LogicalState(self, field)
         self.logical_state[field].register_logical_user(op, req)
 
-    def perform_logical_fence(self, op, field, checks):
-        if field not in self.logical_state:
-            self.logical_state[field] = LogicalState(self, field)
-        if not self.logical_state[field].perform_logical_fence(op, checks):
-            return False
-        for child in self.children.itervalues():
-            if not child.perform_logical_fence(op, field, checks):
-                return False
-        return True
-
     def perform_logical_deletion(self, depth, path, op, req, field, prev, checks):
         assert self is path[depth]
         if field not in self.logical_state:
@@ -3135,43 +3118,6 @@ class LogicalState(object):
     def register_logical_user(self, op, req):
         self.current_epoch_users.append((op,req))
 
-    def perform_logical_fence(self, op, perform_checks):
-        if perform_checks: 
-            for prev_op,prev_req in self.current_epoch_users:
-                found = False
-                if op.incoming:
-                    for dep in op.incoming:
-                        if dep.op1 is not prev_op:
-                            # If the prev op is a close op see if we have a dependence 
-                            # on its creator
-                            # We need this transitivity to deal with tracing properly
-                            if prev_op.is_internal() and prev_op.creator is dep.op1 and \
-                                prev_op.internal_idx == dep.idx1:
-                                found = True
-                                break
-                            continue
-                        if dep.idx1 is not prev_req.index:
-                            continue
-                        found = True
-                        break
-                if not found:
-                    found = op.has_transitive_mapping_dependence(prev_op)
-                if not found:
-                    print(("ERROR: missing logical fence dependence between %s "+
-                          "(UID %s) and %s (UID %s)") % (prev_op, prev_op.uid, op, op.uid))
-                    if self.node.state.assert_on_error:
-                        assert False
-                    return False
-        else:
-            for prev_op,prev_req in self.current_epoch_users:
-                dep = MappingDependence(prev_op, op, 0, 0, TRUE_DEPENDENCE)
-                prev_op.add_outgoing(dep)
-                op.add_incoming(dep)
-        # Clear out the user lists
-        self.current_epoch_users = list()
-        self.previous_epoch_users = list()
-        return True
-
     def perform_logical_deletion(self, op, req, next_child, 
                                  previous_deps, perform_checks, force_close):
         arrived = next_child is None
@@ -3253,18 +3199,26 @@ class LogicalState(object):
                 if prev_req.index == req.index:
                     continue
                 assert False
-            if not advance.has_mapping_dependence(advance_req, prev_op, prev_req,
-                                  ANTI_DEPENDENCE if prev_req.is_read_only()
-                                  else TRUE_DEPENDENCE, self.field):
-                print(("ERROR: advance operation %s generated by "+
-                      "field %s of region requirement "+
-                      "%s of %s failed to find a "+
-                      "mapping dependence on previous operation "+
-                      "%s from higher in the region tree") %
-                      (advance, self.field, req.index, op, prev_op))
-                if self.node.state.assert_on_error:
-                    assert False
-                return (False,None)
+            if perform_checks:
+                if not advance.has_mapping_dependence(advance_req, prev_op, prev_req,
+                                      ANTI_DEPENDENCE if prev_req.is_read_only()
+                                      else TRUE_DEPENDENCE, self.field):
+                    print(("ERROR: advance operation %s generated by "+
+                          "field %s of region requirement "+
+                          "%s of %s failed to find a "+
+                          "mapping dependence on previous operation "+
+                          "%s from higher in the region tree") %
+                          (advance, self.field, req.index, op, prev_op))
+                    if self.node.state.assert_on_error:
+                        assert False
+                    return (False,None)
+            else:
+                # Not performing checks so record the mapping dependence
+                dep_type = compute_dependence_type(prev_req, advance_req)
+                dep = MappingDependence(prev_op, advance, prev_req.index,
+                                        advance_req.index, dep_type)
+                prev_op.add_outgoing(dep)
+                advance.add_incoming(dep)
         # Then check for dependences at this level
         if not self.perform_epoch_analysis(advance, advance_req,
                                            perform_checks, False, None, op):
@@ -3437,7 +3391,7 @@ class LogicalState(object):
                 # If we're going to do a write discard then
                 # this can be a read only close, but only if
                 # the operation is not predicated and it dominates
-                overwrite = req.priv == WRITE_ONLY and not op.predicate and \
+                overwrite = req.priv == WRITE_DISCARD and not op.predicate and \
                                req.logical_node.dominates(self.node)
                 for child,open_mode in self.open_children.iteritems():
                     if open_mode == OPEN_READ_ONLY:                
@@ -3671,7 +3625,7 @@ class LogicalState(object):
         return close
 
     def perform_close_checks(self, close, closed_users, op, req, 
-                             previous_deps, error_str):
+                             previous_deps, error_str, perform_checks):
         assert 0 in close.reqs
         close_req = close.reqs[0]
         # Check for dependences against all the closed users
@@ -3684,18 +3638,26 @@ class LogicalState(object):
                 if prev_req.index == req.index:
                     continue
                 assert False
-            if not close.has_mapping_dependence(close_req, prev_op, prev_req, 
-                                  ANTI_DEPENDENCE if prev_req.is_read_only() 
-                                  else TRUE_DEPENDENCE, self.field):
-                print(("ERROR: close operation %s generated by "+
-                      "field %s of region requirement "+
-                      "%s of %s failed to find a "+
-                      "mapping dependence on previous operation "+
-                      "%s in sub-tree being closed%s") %
-                      (close, self.field, req.index, op, prev_op, error_str))
-                if self.node.state.assert_on_error:
-                    assert False
-                return False
+            if perform_checks:
+                if not close.has_mapping_dependence(close_req, prev_op, prev_req,
+                                      ANTI_DEPENDENCE if prev_req.is_read_only()
+                                      else TRUE_DEPENDENCE, self.field):
+                    print(("ERROR: close operation %s generated by "+
+                          "field %s of region requirement "+
+                          "%s of %s failed to find a "+
+                          "mapping dependence on previous operation "+
+                          "%s in sub-tree being closed%s") %
+                          (close, self.field, req.index, op, prev_op, error_str))
+                    if self.node.state.assert_on_error:
+                        assert False
+                    return False
+            else:
+                # Not performing checks so record the mapping dependence
+                dep_type = compute_dependence_type(prev_req, close_req)
+                dep = MappingDependence(prev_op, close, prev_req.index,
+                                        close_req.index, dep_type)
+                prev_op.add_outgoing(dep)
+                close.add_incoming(dep)
         for prev_op,prev_req in previous_deps:
             # Check for replays
             if prev_op is op:
@@ -3704,18 +3666,26 @@ class LogicalState(object):
                 if prev_req.index == req.index:
                     continue
                 assert False
-            if not close.has_mapping_dependence(close_req, prev_op, prev_req, 
-                                  ANTI_DEPENDENCE if prev_req.is_read_only()
-                                  else TRUE_DEPENDENCE, self.field):
-                print(("ERROR: close operation %s generated by "+
-                      "field %s of region requirement "+
-                      "%s of %s failed to find a "+
-                      "mapping dependence on previous operation "+
-                      "%s from higher in the region tree") %
-                      (close, self.field, req.index, op, prev_op))
-                if self.node.state.assert_on_error:
-                    assert False
-                return False
+            if perform_checks:
+                if not close.has_mapping_dependence(close_req, prev_op, prev_req,
+                                      ANTI_DEPENDENCE if prev_req.is_read_only()
+                                      else TRUE_DEPENDENCE, self.field):
+                    print(("ERROR: close operation %s generated by "+
+                          "field %s of region requirement "+
+                          "%s of %s failed to find a "+
+                          "mapping dependence on previous operation "+
+                          "%s from higher in the region tree") %
+                          (close, self.field, req.index, op, prev_op))
+                    if self.node.state.assert_on_error:
+                        assert False
+                    return False
+            else:
+                # Not performing checks so record the mapping dependence
+                dep_type = compute_dependence_type(prev_req, close_req)
+                dep = MappingDependence(prev_op, close, prev_req.index,
+                                        close_req.index, dep_type)
+                prev_op.add_outgoing(dep)
+                close.add_incoming(dep)
         return True
 
     def record_close_dependences(self, close, closed_users, op, req, previous_deps):
@@ -3723,7 +3693,7 @@ class LogicalState(object):
         close_req = close.reqs[0]
         for prev_op,prev_req in closed_users:
             if op != prev_op or req.index != prev_req.index:
-                dep = MappingDependence(prev_op, close, prev_req.index, 
+                dep = MappingDependence(prev_op, close, prev_req.index,
                                         close_req.index, TRUE_DEPENDENCE)
                 prev_op.add_outgoing(dep)
                 close.add_incoming(dep)
@@ -3750,7 +3720,7 @@ class LogicalState(object):
             # Perform any checks
             if perform_checks:
                 if not self.perform_close_checks(close, closed_users, op, req, 
-                                                 previous_deps, error_str):
+                                                 previous_deps, error_str, perform_checks):
                     return False
             else:
                 self.record_close_dependences(close, closed_users, op, req,
@@ -3775,7 +3745,7 @@ class LogicalState(object):
             if not still_dirty:
                 for privilege in self.open_children.itervalues():
                     if privilege == READ_WRITE or privilege == REDUCE or \
-                        privilege == WRITE_ONLY:
+                        privilege == WRITE_DISCARD:
                           still_dirty = True
                           break
             if not still_dirty:
@@ -4782,16 +4752,17 @@ class Requirement(object):
 
     def has_write(self):
         return (self.priv == READ_WRITE) or (self.priv == REDUCE) or \
-                (self.priv == WRITE_ONLY)
+                (self.priv == WRITE_DISCARD) or (self.priv == WRITE_ONLY)
 
     def is_write(self):
-        return (self.priv == READ_WRITE) or (self.priv == WRITE_ONLY)
+        return (self.priv == READ_WRITE) or (self.priv == WRITE_DISCARD) or \
+                (self.priv == WRITE_ONLY)
 
     def is_read_write(self):
         return self.priv == READ_WRITE
 
     def is_write_only(self):
-        return self.priv == WRITE_ONLY
+        return self.priv == WRITE_DISCARD or self.priv == WRITE_ONLY
 
     def is_reduce(self):
         return self.priv == REDUCE
@@ -4829,6 +4800,8 @@ class Requirement(object):
             return "READ-ONLY"
         elif self.priv == READ_WRITE:
             return "READ-WRITE"
+        elif self.priv == WRITE_DISCARD:
+            return "WRITE-DISCARD"
         elif self.priv == WRITE_ONLY:
             return "WRITE-ONLY"
         else:
@@ -5468,9 +5441,9 @@ class Operation(object):
             for fill in self.realm_fills:
                 if req.logical_node is not fill.region:
                     continue
-                if field.fid not in fill.fields:
+                if field not in fill.fields:
                     continue
-                idx = fill.fields.index(field.fid)
+                idx = fill.fields.index(field)
                 if dst is not fill.dsts[idx]:
                     continue
                 return fill
@@ -5512,9 +5485,9 @@ class Operation(object):
                 # See if the regions are the same
                 if req.logical_node is not copy.region:
                     continue
-                if field.fid not in copy.src_fields:
+                if field not in copy.src_fields:
                     continue
-                idx = copy.src_fields.index(field.fid)
+                idx = copy.src_fields.index(field)
                 if field.fid != copy.dst_fields[idx]:
                     continue
                 if src is not copy.srcs[idx]:
@@ -5706,10 +5679,38 @@ class Operation(object):
         return True
 
     def analyze_logical_fence(self, perform_checks):
-        for index,req in self.context.op.reqs.iteritems():
-            for field in req.fields:
-                if not req.logical_node.perform_logical_fence(self, field, perform_checks):
-                    return False
+        # Find all the operations since the previous fence and then make sure
+        # we either depend on them directly or we have a transitive dependence
+        start_index = 0 if self.context.current_fence is None else \
+            self.context.operations.index(self.context.current_fence)
+        stop_index = self.context.operations.index(self)
+        for index in range(start_index, stop_index):
+            prev_op = self.context.operations[index]
+            if perform_checks:
+                found = False
+                if self.incoming:
+                    for dep in self.incoming:
+                        if dep.op1 is not prev_op:
+                            # If the prev op is a close op see if we have a dependence 
+                            # on its creator
+                            # We need this transitivity to deal with tracing properly
+                            if prev_op.is_internal() and prev_op.creator is dep.op1 and \
+                                prev_op.internal_idx == dep.idx1:
+                                found = True
+                                break
+                            continue
+                        found = True
+                        break
+                if not found and not self.has_transitive_mapping_dependence(prev_op):
+                    print(("ERROR: missing logical fence dependence between %s "+
+                          "(UID %s) and %s (UID %s)") % (prev_op, prev_op.uid, self, self.uid))
+                    if self.state.assert_on_error:
+                        assert False
+                    return False 
+            else:
+                dep = MappingDependence(prev_op, self, 0, 0, TRUE_DEPENDENCE)
+                prev_op.add_outgoing(dep)
+                self.add_incoming(prev_op)
         return True
 
     def analyze_logical_deletion(self, index, perform_checks):
@@ -5764,6 +5765,13 @@ class Operation(object):
         for idx in range(0,len(self.reqs)):
             if not self.analyze_logical_requirement(idx, perform_checks):
                 return False
+        # Perform any updates to the restricted state for our context 
+        if not self.update_context_restrictions():
+            return False
+        return True
+
+    def update_context_restrictions(self):
+        assert self.context is not None
         # See if our operation had any bearing on the restricted
         # properties of the enclosing context
         if self.kind == ACQUIRE_OP_KIND:
@@ -6084,7 +6092,7 @@ class Operation(object):
                 return False
         return True
 
-    def perform_op_physical_verification(self, perform_checks):
+    def perform_op_physical_verification(self, perform_checks, need_restrict_analysis):
         # If we were predicated false, then there is nothing to do
         if not self.predicate_result:
             return True
@@ -6093,6 +6101,14 @@ class Operation(object):
             depth = self.context.get_depth()
             for idx in range(depth):
                 prefix += '  '
+            # Since we have a context, see if we have to do our restriction analysis
+            if need_restrict_analysis:
+                if self.reqs is not None:
+                    for idx in range(0,len(self.reqs)):
+                        self.context.check_restricted_coherence(self, self.reqs[idx])
+                # Do our updates to the restricted set
+                if not self.update_context_restrictions():
+                    return False
         # If we have any internal operations (e.g. close operations, then
         # see if they performed any physical analysis
         if self.inter_close_ops:
@@ -6101,17 +6117,20 @@ class Operation(object):
             for close in self.inter_close_ops:
                 if close.kind == READ_ONLY_CLOSE_OP_KIND:
                     continue
-                if not close.perform_op_physical_verification(perform_checks):
+                if not close.perform_op_physical_verification(perform_checks, 
+                                                              need_restrict_analysis):
                     return False
         # If we are an index space task, only do our points
         if self.kind == INDEX_TASK_KIND:
             for point in sorted(self.points.itervalues(), key=lambda x: x.op.uid):
-                if not point.op.perform_op_physical_verification(perform_checks):
+                if not point.op.perform_op_physical_verification(perform_checks,
+                                                                 need_restrict_analysis):
                     return False
             return True
         elif self.points: # Handle other index space operations too
             for point in sorted(self.points.itervalues(), key=lambda x: x.uid):
-                if not point.perform_op_physical_verification(perform_checks):
+                if not point.perform_op_physical_verification(perform_checks,
+                                                              need_restrict_analysis):
                     return False
             return True
         print((prefix+"Performing physical verification analysis "+
@@ -6126,7 +6145,8 @@ class Operation(object):
             # Check to see if this is an index copy
             if self.points:
                 for point in sorted(self.points.itervalues(), key=lambda x: x.uid):
-                    if not point.perform_op_physical_verification(perform_checks):
+                    if not point.perform_op_physical_verification(perform_checks, 
+                                                                  need_restrict_analysis):
                         return False
                 return True
             # Compute our version numbers first
@@ -6142,7 +6162,8 @@ class Operation(object):
             # Check to see if this is an index fill
             if self.points:
                 for point in sorted(self.points.itervalues(), key=lambda x: x.uid):
-                    if not point.perform_op_physical_verification(perform_checks):
+                    if not point.perform_op_physical_verification(perform_checks,
+                                                                  need_restrict_analysis):
                         return False
                 return True
             # Compute our version numbers first
@@ -6153,7 +6174,8 @@ class Operation(object):
         elif self.kind == DEP_PART_OP_KIND and self.points:
             # Index partition operation
             for point in sorted(self.points.itervalues(), key=lambda x: x.uid):
-                if not point.perform_op_physical_verification(perform_checks):
+                if not point.perform_op_physical_verification(perform_checks,
+                                                              need_restrict_analysis):
                     return False
             return True
         elif self.kind == DELETION_OP_KIND:
@@ -6177,7 +6199,8 @@ class Operation(object):
                             return False
                 # If we are not a leaf task, go down the task tree
                 if self.task is not None:
-                    if not self.task.perform_task_physical_verification(perform_checks):
+                    if not self.task.perform_task_physical_verification(perform_checks,
+                                                                need_restrict_analysis):
                         return False
         self.check_for_unanalyzed_realm_ops(perform_checks)
         # Clean up our reachable cache
@@ -6728,7 +6751,6 @@ class Task(object):
                     for field in req.fields:
                         assert field.fid in mapping 
                         inst = mapping[field.fid]
-                        # If they virtual mapped then there is no way
                         self.restrictions.append(
                             Restriction(req.logical_node, field, inst))
         # Iterate over all the operations in order and
@@ -6934,7 +6956,7 @@ class Task(object):
         # up the task tree so just give it depth zero
         return 0
 
-    def perform_task_physical_verification(self, perform_checks):
+    def perform_task_physical_verification(self, perform_checks, need_restrict_analysis):
         if not self.operations:
             return True
         # Depth is a proxy for context 
@@ -6949,15 +6971,26 @@ class Task(object):
                     continue
                 assert idx in self.op.mappings
                 mappings = self.op.mappings[idx]
+                # If we are doing restricted analysis then add any restrictions
+                add_restrictions = need_restrict_analysis and \
+                        (req.priv == READ_WRITE or req.priv == READ_ONLY) and \
+                        req.coher == SIMULTANEOUS
+                if add_restrictions and not self.restrictions:
+                    self.restrictions = list()
                 for field in req.fields:
                     assert field.fid in mappings
                     inst = mappings[field.fid]
                     if inst.is_virtual():
+                        assert not add_restrictions # Better not be virtual if restricted
                         continue
                     req.logical_node.initialize_verification_state(depth, field, inst)
+                    if add_restrictions:
+                        self.restrictions.append(
+                                Restriction(req.logical_node, field, inst))
         success = True
         for op in self.operations:
-            if not op.perform_op_physical_verification(perform_checks):
+            if not op.perform_op_physical_verification(perform_checks, 
+                                                       need_restrict_analysis):
                 success = False
                 break
         # Reset any physical user lists at our depth
@@ -6971,7 +7004,7 @@ class Task(object):
         for op in self.operations:
             op.print_op_mapping_decisions(depth)
 
-    def print_dataflow_graph(self, path, simplify_graphs):
+    def print_dataflow_graph(self, path, simplify_graphs, zoom_graphs):
         if len(self.operations) == 0:
             return 0
         if len(self.operations) == 1:
@@ -7041,7 +7074,7 @@ class Task(object):
             previous_pairs = set()
             for op in self.operations:
                 op.print_incoming_dataflow_edges(printer, previous_pairs)
-        printer.print_pdf_after_close(False)
+        printer.print_pdf_after_close(False, zoom_graphs)
         # We printed our dataflow graph
         return 1   
 
@@ -7270,16 +7303,17 @@ class PointUser(object):
 
     def has_write(self):
         return (self.priv == READ_WRITE) or (self.priv == REDUCE) or \
-                (self.priv == WRITE_ONLY)
+                (self.priv == WRITE_DISCARD) or (self.priv == WRITE_ONLY)
 
     def is_write(self):
-        return (self.priv == READ_WRITE) or (self.priv == WRITE_ONLY)
+        return (self.priv == READ_WRITE) or (self.priv == WRITE_DISCARD) or \
+                (self.priv == WRITE_ONLY)
 
     def is_read_write(self):
         return self.priv == READ_WRITE
 
     def is_write_only(self):
-        return self.priv == WRITE_ONLY
+        return self.priv == WRITE_DISCARD or self.priv == WRITE_ONLY
 
     def is_reduce(self):
         return self.priv == REDUCE
@@ -7427,16 +7461,17 @@ class InstanceUser(object):
 
     def has_write(self):
         return (self.priv == READ_WRITE) or (self.priv == REDUCE) or \
-                (self.priv == WRITE_ONLY)
+                (self.priv == WRITE_DISCARD) or (self.priv == WRITE_ONLY)
 
     def is_write(self):
-        return (self.priv == READ_WRITE) or (self.priv == WRITE_ONLY)
+        return (self.priv == READ_WRITE) or (self.priv == WRITE_DISCARD) or \
+                (self.priv == WRITE_ONLY)
 
     def is_read_write(self):
         return self.priv == READ_WRITE
 
     def is_write_only(self):
-        return self.priv == WRITE_ONLY
+        return self.priv == WRITE_DISCARD or self.priv == WRITE_ONLY
 
     def is_reduce(self):
         return self.priv == REDUCE
@@ -7454,15 +7489,21 @@ class InstanceUser(object):
         return self.coher == RELAXED
 
 class Instance(object):
-    __slots__ = ['state', 'handle', 'memory', 'region', 'fields', 
+    __slots__ = ['state', 'use_event', 'handle', 'memory', 'region', 'fields', 
                  'redop', 'verification_users', 'processor', 
                  'creator', 'uses', 'creator_regions', 'specialized_constraint',
                  'memory_constraint', 'field_constraint', 'ordering_constraint',
                  'splitting_constraints', 'dimension_constraints',
                  'alignment_constraints', 'offset_constraints']
-    def __init__(self, state, handle):
+    def __init__(self, state, use_event):
         self.state = state
-        self.handle = handle
+        # Instances are uniquely identified by their use event since Realm
+        # can recycle physical instance IDs
+        self.use_event = use_event
+        if self.use_event == 0:
+            self.handle = 0 # Virtual Instance
+        else:
+            self.handle = None 
         self.memory = None
         self.region = None # Upper bound region
         self.creator_regions = None # Regions contributing to upper bound
@@ -7489,6 +7530,9 @@ class Instance(object):
             return "Instance "+hex(self.handle)
 
     __repr__ = __str__
+
+    def set_handle(self, handle):
+        self.handle = handle
 
     def set_memory(self, memory):
         self.memory = memory
@@ -8472,7 +8516,8 @@ class PhysicalTraverser(object):
 
 
 class GraphPrinter(object):
-    __slots__ = ['name', 'filename', 'out', 'depth', 'next_cluster_id']
+    # Static member so we only issue this warning once
+    zoom_warning = True
     def __init__(self,path,name,direction='LR'):
         self.name = name
         self.filename = path+name+'.dot'
@@ -8495,7 +8540,7 @@ class GraphPrinter(object):
         self.out.close()
         return self.filename
 
-    def print_pdf_after_close(self, simplify):
+    def print_pdf_after_close(self, simplify, zoom_graph=False):
         dot_file = self.close()
         pdf_file = self.name+".pdf"
         #svg_file = self.name+".svg"
@@ -8518,6 +8563,80 @@ class GraphPrinter(object):
         except:
             print("WARNING: DOT failure, image for graph "+str(self.name)+" not generated")
             subprocess.call(['rm', '-f', 'core', pdf_file])
+        # If we are making a zoom graph, then make a directory with the appropriate name
+        if zoom_graph:
+            try:
+                import pydot
+                # Make a directory to put this in 
+                zoom_dir = 'zoom_'+self.name
+                os.mkdir(zoom_dir)
+                # Rest of this is courtesy of @manopapad
+                nodes = {} # map(string,Node)
+                in_edges = {} # map(string,set(Edge))
+                out_edges = {} # map(string,set(Edge))
+                def collect_nodes_edges(g):
+                    for sub in g.get_subgraphs():
+                        collect_nodes_edges(sub)
+                    for n in g.get_nodes():
+                        if n.get_style() == 'invis':
+                            # HACK: Assuming invisible nodes aren't connected to anything
+                            continue
+                        assert(n.get_name() not in nodes)
+                        nodes[n.get_name()] = n
+                        n.set_URL(n.get_name() + '.svg')
+                        in_edges[n.get_name()] = set()
+                        out_edges[n.get_name()] = set()
+                    for e in g.get_edges():
+                        out_edges[e.get_source()].add(e)
+                        in_edges[e.get_destination()].add(e)
+
+                # Support both older and newer versions of pydot library
+                # See pydot issue 159 on github:
+                # https://github.com/erocarrera/pydot/issues/159
+                graphs = pydot.graph_from_dot_file(self.filename)
+                if type(graphs) == list:
+                    # This is the common path
+                    assert len(graphs) == 1
+                    g = graphs[0]
+                else:
+                    # This is the deprecated path
+                    g = graphs
+                collect_nodes_edges(g)
+
+                g.write_svg(zoom_dir + '/zoom.svg')
+                g.write_cmap(zoom_dir + '/zoom.map')
+                g.write_png(zoom_dir + '/zoom.png')
+                with open(zoom_dir+'/index.html', 'w') as f:
+                    f.write('<!DOCTYPE html>\n')
+                    f.write('<html>\n')
+                    f.write('<head></head>\n')
+                    f.write('<body>\n')
+                    f.write('<img src="zoom.png" usemap="#mainmap"/>\n')
+                    f.write('<map id="mainmap" name="mainmap">\n')
+                    with open(zoom_dir+'/zoom.map', 'r') as f_map:
+                        for line in f_map:
+                            f.write(line)
+                    f.write('</map>\n')
+                    f.write('</body>\n')
+                    f.write('</html>\n')
+
+                for n in nodes.values():
+                    sub = pydot.Dot()
+                    sub.obj_dict['attributes'] = g.get_attributes()
+                    sub.add_node(n)
+                    for e in out_edges[n.get_name()]:
+                        dst = nodes[e.get_destination()]
+                        sub.add_node(dst)
+                        sub.add_edge(e)
+                    for e in in_edges[n.get_name()]:
+                        src = nodes[e.get_source()]
+                        sub.add_node(src)
+                        sub.add_edge(e)
+                    sub.write_svg(zoom_dir + '/' + n.get_name() + '.svg')
+            except ImportError:
+                if self.zoom_warning:
+                    print("WARNING: Unable to make zoom plots because the package pydot is not installed")
+                    GraphPrinter.zoom_warning = False
 
     def up(self):
         assert self.depth > 0
@@ -8752,53 +8871,53 @@ predicate_use_pat       = re.compile(
     prefix+"Predicate Use (?P<uid>[0-9]+) (?P<pred>[0-9]+)")
 # Physical instance and mapping decision patterns
 instance_pat            = re.compile(
-    prefix+"Physical Instance (?P<iid>[0-9a-f]+) (?P<mid>[0-9a-f]+) (?P<redop>[0-9]+)")
+    prefix+"Physical Instance (?P<eid>[0-9a-f]+) (?P<iid>[0-9a-f]+) (?P<mid>[0-9a-f]+) (?P<redop>[0-9]+)")
 instance_region_pat     = re.compile(
-    prefix+"Physical Instance Region (?P<iid>[0-9a-f]+) (?P<ispace>[0-9]+) "
+    prefix+"Physical Instance Region (?P<eid>[0-9a-f]+) (?P<ispace>[0-9]+) "
            "(?P<fspace>[0-9]+) (?P<tid>[0-9]+)")
 instance_field_pat      = re.compile(
-    prefix+"Physical Instance Field (?P<iid>[0-9a-f]+) (?P<fid>[0-9]+)")
+    prefix+"Physical Instance Field (?P<eid>[0-9a-f]+) (?P<fid>[0-9]+)")
 instance_creator_pat    = re.compile(
-    prefix+"Physical Instance Creator (?P<iid>[0-9a-f]+) (?P<uid>[0-9]+) "
+    prefix+"Physical Instance Creator (?P<eid>[0-9a-f]+) (?P<uid>[0-9]+) "
            "(?P<proc>[0-9a-f]+)")
 instance_creator_region_pat = re.compile(
-    prefix+"Physical Instance Creation Region (?P<iid>[0-9a-f]+) (?P<ispace>[0-9]+) "
+    prefix+"Physical Instance Creation Region (?P<eid>[0-9a-f]+) (?P<ispace>[0-9]+) "
            "(?P<fspace>[0-9]+) (?P<tid>[0-9]+)")
 specialized_constraint_pat = re.compile(
-    prefix+"Instance Specialized Constraint (?P<iid>[0-9a-f]+) (?P<kind>[0-9]+) "
+    prefix+"Instance Specialized Constraint (?P<eid>[0-9a-f]+) (?P<kind>[0-9]+) "
            "(?P<redop>[0-9]+)")
 memory_constraint_pat   = re.compile(
-    prefix+"Instance Memory Constraint (?P<iid>[0-9a-f]+) (?P<kind>[0-9]+)")
+    prefix+"Instance Memory Constraint (?P<eid>[0-9a-f]+) (?P<kind>[0-9]+)")
 field_constraint_pat    = re.compile(
-    prefix+"Instance Field Constraint (?P<iid>[0-9a-f]+) (?P<contig>[0-1]) "
+    prefix+"Instance Field Constraint (?P<eid>[0-9a-f]+) (?P<contig>[0-1]) "
            "(?P<inorder>[0-1]) (?P<fields>[0-9]+)")
 field_constraint_field_pat = re.compile(
-    prefix+"Instance Field Constraint Field (?P<iid>[0-9a-f]+) (?P<fid>[0-9]+)")
+    prefix+"Instance Field Constraint Field (?P<eid>[0-9a-f]+) (?P<fid>[0-9]+)")
 ordering_constraint_pat = re.compile(
-    prefix+"Instance Ordering Constraint (?P<iid>[0-9a-f]+) (?P<contig>[0-1]) "
+    prefix+"Instance Ordering Constraint (?P<eid>[0-9a-f]+) (?P<contig>[0-1]) "
            "(?P<dims>[0-9]+)")
 ordering_constraint_dim_pat = re.compile(
-    prefix+"Instance Ordering Constraint Dimension (?P<iid>[0-9a-f]+) (?P<dim>[0-9]+)")
+    prefix+"Instance Ordering Constraint Dimension (?P<eid>[0-9a-f]+) (?P<dim>[0-9]+)")
 splitting_constraint_pat = re.compile(
-    prefix+"Instance Splitting Constraint (?P<iid>[0-9a-f]+) (?P<dim>[0-9]+) "
+    prefix+"Instance Splitting Constraint (?P<eid>[0-9a-f]+) (?P<dim>[0-9]+) "
            "(?P<value>[0-9]+) (?P<chunks>[0-1])")
 dimension_constraint_pat = re.compile(
-    prefix+"Instance Dimension Constraint (?P<iid>[0-9a-f]+) (?P<dim>[0-9]+) "
+    prefix+"Instance Dimension Constraint (?P<eid>[0-9a-f]+) (?P<dim>[0-9]+) "
            "(?P<eqk>[0-9]+) (?P<value>[0-9]+)")
 alignment_constraint_pat = re.compile(
-    prefix+"Instance Alignment Constraint (?P<iid>[0-9a-f]+) (?P<fid>[0-9]+) "
+    prefix+"Instance Alignment Constraint (?P<eid>[0-9a-f]+) (?P<fid>[0-9]+) "
            "(?P<eqk>[0-9]+) (?P<align>[0-9]+)")
 offset_constraint_pat = re.compile(
-    prefix+"Instance Offset Constraint (?P<iid>[0-9a-f]+) (?P<fid>[0-9]+) "
+    prefix+"Instance Offset Constraint (?P<eid>[0-9a-f]+) (?P<fid>[0-9]+) "
            "(?P<offset>[0-9]+)")
 variant_decision_pat    = re.compile(
     prefix+"Variant Decision (?P<uid>[0-9]+) (?P<vid>[0-9]+)")
 mapping_decision_pat    = re.compile(
     prefix+"Mapping Decision (?P<uid>[0-9]+) (?P<idx>[0-9]+) (?P<fid>[0-9]+) "
-           "(?P<iid>[0-9a-f]+)")
+           "(?P<eid>[0-9a-f]+)")
 post_decision_pat       = re.compile(
     prefix+"Post Mapping Decision (?P<uid>[0-9]+) (?P<idx>[0-9]+) (?P<fid>[0-9]+) "
-           "(?P<iid>[0-9a-f]+)")
+           "(?P<eid>[0-9a-f]+)")
 task_priority_pat       = re.compile(
     prefix+"Task Priority (?P<uid>[0-9]+) (?P<priority>-?[0-9]+)") # Handle negatives
 task_processor_pat      = re.compile(
@@ -8807,7 +8926,7 @@ task_premapping_pat     = re.compile(
     prefix+"Task Premapping (?P<uid>[0-9]+) (?P<index>[0-9]+)")
 temporary_decision_pat  = re.compile(
     prefix+"Temporary Instance (?P<uid>[0-9]+) (?P<idx>[0-9]+) (?P<fid>[0-9]+) "
-           "(?P<iid>[0-9a-f]+)")
+           "(?P<eid>[0-9a-f]+)")
 tunable_pat             = re.compile(
     prefix+"Task Tunable (?P<uid>[0-9]+) (?P<idx>[0-9]+) (?P<bytes>[0-9]+) "
            "(?P<value>[0-9a-f]+)")
@@ -9098,89 +9217,90 @@ def parse_legion_spy_line(line, state):
     m = instance_pat.match(line)
     if m is not None:
         mem = state.get_memory(int(m.group('mid'),16))
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
+        inst.set_handle(int(m.group('iid'),16))
         inst.set_memory(mem)
         inst.set_redop(int(m.group('redop')))
         return True
     m = instance_region_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         region = state.get_region(int(m.group('ispace')), 
             int(m.group('fspace')), int(m.group('tid')))
         inst.set_region(region)
         return True
     m = instance_field_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         inst.add_field(int(m.group('fid')))
         return True
     m = instance_creator_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         proc = state.get_processor(int(m.group('proc'),16))
         inst.set_creator(int(m.group('uid')), proc)
         return True
     m = instance_creator_region_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         region = state.get_region(int(m.group('ispace')), 
             int(m.group('fspace')), int(m.group('tid')))
         inst.add_creator_region(region)
         return True
     m = specialized_constraint_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         inst.set_specialized_constraint(int(m.group('kind')),
                                         int(m.group('redop')))
         return True
     m = memory_constraint_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         inst.set_memory_constraint(int(m.group('kind')))
         return True
     m = field_constraint_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         inst.set_field_constraint(int(m.group('contig')), 
             int(m.group('inorder')), int(m.group('fields')))
         return True
     m = field_constraint_field_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         inst.add_field_constraint_field(int(m.group('fid')))
         return True
     m = ordering_constraint_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         inst.set_ordering_constraint(int(m.group('contig')), 
                                      int(m.group('dims')))
         return True
     m = ordering_constraint_dim_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         inst.add_ordering_constraint_dim(int(m.group('dim')))
         return True
     m = splitting_constraint_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         inst.add_splitting_constraint(int(m.group('dim')),
             int(m.group('value')), int(m.group('chunks')))
         return True
     m = dimension_constraint_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         inst.add_dimesion_constraint(int(m.group('dim')),
             int(m.group('eqk')), int(m.group('value')))
         return True
     m = alignment_constraint_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         inst.add_alignment_constraint(int(m.group('fid')),
             int(m.group('eqk')), int(m.group('align')))
         return True
     m = offset_constraint_pat.match(line)
     if m is not None:
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         inst.add_offset_constraint(int(m.group('fid')),
             int(m.group('offset')))
         return True
@@ -9193,14 +9313,14 @@ def parse_legion_spy_line(line, state):
     m = mapping_decision_pat.match(line)
     if m is not None:
         op = state.get_operation(int(m.group('uid')))
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         op.add_mapping_decision(int(m.group('idx')),
             int(m.group('fid')), inst)
         return True
     m = post_decision_pat.match(line)
     if m is not None:
         task = state.get_task(int(m.group('uid')))
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         task.add_postmapping(int(m.group('idx')),
             int(m.group('fid')), inst)
         return True
@@ -9223,7 +9343,7 @@ def parse_legion_spy_line(line, state):
     m = temporary_decision_pat.match(line)
     if m is not None:
         op = state.get_operation(int(m.group('uid')))
-        inst = state.get_instance(int(m.group('iid'),16))
+        inst = state.get_instance(int(m.group('eid'),16))
         op.add_temporary_instance(int(m.group('idx')),
             int(m.group('fid')), inst)
         return True
@@ -10060,11 +10180,11 @@ class State(object):
                     return False 
         return True
 
-    def perform_physical_analysis(self, perform_checks, sanity_checks):
+    def perform_physical_analysis(self, perform_checks, sanity_checks, need_restrict_analysis):
         assert self.top_level_uid is not None
         top_task = self.get_task(self.top_level_uid)
         # Perform the physical analysis on all the operations in program order
-        if not top_task.perform_task_physical_verification(perform_checks):
+        if not top_task.perform_task_physical_verification(perform_checks, need_restrict_analysis):
             print("FAIL")
             return
         print("Pass")
@@ -10118,14 +10238,14 @@ class State(object):
             mem.print_mem_edges(machine_printer)
         machine_printer.print_pdf_after_close(False)
 
-    def make_dataflow_graphs(self, path, simplify_graphs):
+    def make_dataflow_graphs(self, path, simplify_graphs, zoom_graphs):
         total_dataflow_graphs = 0
         for task in self.tasks.itervalues():
-            total_dataflow_graphs += task.print_dataflow_graph(path, simplify_graphs)
+            total_dataflow_graphs += task.print_dataflow_graph(path, simplify_graphs, zoom_graphs)
         if self.verbose:
             print("Made "+str(total_dataflow_graphs)+" dataflow graphs")
 
-    def make_event_graph(self, path):
+    def make_event_graph(self, path, zoom_graphs):
         # we print these recursively so we can see the hierarchy
         assert self.top_level_uid is not None
         op = self.get_operation(self.top_level_uid)
@@ -10137,7 +10257,7 @@ class State(object):
         # Now print the edges at the very end
         for node in all_nodes:
             node.print_incoming_event_edges(printer) 
-        printer.print_pdf_after_close(False)
+        printer.print_pdf_after_close(False, zoom_graphs)
 
     def print_realm_statistics(self):
         print('Total events: '+str(len(self.events)))
@@ -10361,11 +10481,11 @@ class State(object):
         self.projection_functions[pid] = result
         return result
 
-    def get_instance(self, iid):
-        if iid in self.instances:
-            return self.instances[iid]
-        result = Instance(self, iid)
-        self.instances[iid] = result
+    def get_instance(self, eid):
+        if eid in self.instances:
+            return self.instances[eid]
+        result = Instance(self, eid)
+        self.instances[eid] = result
         return result
 
     def get_event(self, iid):
@@ -10605,6 +10725,9 @@ def main(temp_dir):
         '--assert-warning', dest='assert_on_warning', action='store_true',
         help='assert on warnings (implies -a)')
     parser.add_argument(
+        '--zoom', dest='zoom_graphs', action='store_true',
+        help='enable generation of "zoom" graphs for all emitted graphs')
+    parser.add_argument(
         dest='filenames', nargs='+',
         help='input legion spy log filenames')
     args = parser.parse_args()
@@ -10632,6 +10755,7 @@ def main(temp_dir):
     assert_on_error = args.assert_on_error or args.assert_on_warning
     assert_on_warning = args.assert_on_warning
     test_geometry = args.test_geometry
+    zoom_graphs = args.zoom_graphs
 
     if test_geometry:
         run_geometry_tests()
@@ -10693,6 +10817,7 @@ def main(temp_dir):
     # If we are doing logical checks or the user asked for the dataflow
     # graph but we don't have any logical data then perform the logical analysis
     need_logical = dataflow_graphs and not state.detailed_logging 
+    need_restrict_analysis = True 
     if logical_checks or need_logical:
         if need_logical:
             print("INFO: No logical dependence data was found so we are running "+
@@ -10700,6 +10825,8 @@ def main(temp_dir):
                   "should compute. These are not the actual dataflow graphs computed.")
         print("Performing logical analysis...")
         state.perform_logical_analysis(logical_checks, sanity_checks)
+        # No longer need to do restriction analysis if we do it during logical
+        need_restrict_analysis = False
     # If we are doing physical checks or the user asked for the event
     # graph but we don't have any logical data then perform the physical analysis
     need_physical = event_graphs and not state.detailed_logging 
@@ -10709,7 +10836,7 @@ def main(temp_dir):
                   "physical analysis to show the event graph that the runtime "+
                   "should compute. This is not the actual event graph computed.")
         print("Performing physical analysis...")
-        state.perform_physical_analysis(physical_checks, sanity_checks)
+        state.perform_physical_analysis(physical_checks, sanity_checks, need_restrict_analysis)
         # If we generated the graph for printing, then simplify it 
         if need_physical:
             state.simplify_physical_graph(need_cycle_check=False)
@@ -10727,10 +10854,10 @@ def main(temp_dir):
         state.make_machine_graphs(temp_dir)
     if dataflow_graphs:
         print("Making dataflow graphs...")
-        state.make_dataflow_graphs(temp_dir, simplify_graphs)
+        state.make_dataflow_graphs(temp_dir, simplify_graphs, zoom_graphs)
     if event_graphs:
         print("Making event graphs...")
-        state.make_event_graph(temp_dir)
+        state.make_event_graph(temp_dir, zoom_graphs)
     if realm_stats:
         print("Printing Realm statistics...")
         state.print_realm_statistics()

@@ -1,4 +1,4 @@
--- Copyright 2017 Stanford University
+-- Copyright 2018 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -44,8 +44,6 @@ local terra get_optional_arg(key : rawstring)
       else
         return nil
       end
-    elseif args.argv[i][0] == ('-')[0] then
-      i = i + 1
     end
     i = i + 1
   end

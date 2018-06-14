@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University
+/* Copyright 2018 Stanford University
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 
 #include "external_test.h"
 
-#include "default_mapper.h"
+#include "mappers/default_mapper.h"
 
 using namespace Legion;
 using namespace Legion::Mapping;

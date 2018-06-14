@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,12 @@
 
 
 #include "legion.h"
-#include "runtime.h"
-#include "legion_ops.h"
-#include "legion_tasks.h"
-#include "legion_context.h"
-#include "legion_profiling.h"
-#include "legion_allocation.h"
+#include "legion/runtime.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_tasks.h"
+#include "legion/legion_context.h"
+#include "legion/legion_profiling.h"
+#include "legion/legion_allocation.h"
 
 namespace Legion {
 #ifndef DISABLE_PARTITION_SHIM
@@ -421,15 +421,7 @@ namespace Legion {
     };
 
     const LogicalRegion LogicalRegion::NO_REGION = LogicalRegion();
-    const LogicalPartition LogicalPartition::NO_PART = LogicalPartition(); 
-    const LgEvent LgEvent::NO_LG_EVENT = LgEvent();
-    const ApEvent ApEvent::NO_AP_EVENT = ApEvent();
-    const ApUserEvent ApUserEvent::NO_AP_USER_EVENT = ApUserEvent();
-    const ApBarrier ApBarrier::NO_AP_BARRIER = ApBarrier();
-    const RtEvent RtEvent::NO_RT_EVENT = RtEvent();
-    const RtUserEvent RtUserEvent::NO_RT_USER_EVENT = RtUserEvent();
-    const RtBarrier RtBarrier::NO_RT_BARRIER = RtBarrier();
-    const PredEvent PredEvent::NO_PRED_EVENT = PredEvent();
+    const LogicalPartition LogicalPartition::NO_PART = LogicalPartition();  
     const Domain Domain::NO_DOMAIN = Domain();
 
     // Cache static type tags so we don't need to recompute them all the time
@@ -446,7 +438,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     Mappable::Mappable(void)
-      : map_id(0), tag(0)
+      : map_id(0), tag(0), mapper_data(NULL), mapper_data_size(0)
     //--------------------------------------------------------------------------
     {
     }
@@ -965,8 +957,8 @@ namespace Legion {
 #ifdef DEBUG_LEGION
       assert(reservation_lock.exists());
 #endif
-      ApEvent lock_event(reservation_lock.acquire(mode,exclusive));
-      lock_event.lg_wait();
+      Internal::ApEvent lock_event(reservation_lock.acquire(mode,exclusive));
+      lock_event.wait();
     }
 
     //--------------------------------------------------------------------------
@@ -1041,13 +1033,13 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     PhaseBarrier::PhaseBarrier(void)
-      : phase_barrier(ApBarrier::NO_AP_BARRIER)
+      : phase_barrier(Internal::ApBarrier::NO_AP_BARRIER)
     //--------------------------------------------------------------------------
     {
     }
 
     //--------------------------------------------------------------------------
-    PhaseBarrier::PhaseBarrier(ApBarrier b)
+    PhaseBarrier::PhaseBarrier(Internal::ApBarrier b)
       : phase_barrier(b)
     //--------------------------------------------------------------------------
     {
@@ -1091,8 +1083,8 @@ namespace Legion {
 #ifdef DEBUG_LEGION
       assert(phase_barrier.exists());
 #endif
-      ApEvent e = Internal::Runtime::get_previous_phase(*this);
-      e.lg_wait();
+      Internal::ApEvent e = Internal::Runtime::get_previous_phase(*this);
+      e.wait();
     }
 
     //--------------------------------------------------------------------------
@@ -1121,7 +1113,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    DynamicCollective::DynamicCollective(ApBarrier b, ReductionOpID r)
+    DynamicCollective::DynamicCollective(Internal::ApBarrier b, ReductionOpID r)
       : PhaseBarrier(b), redop(r)
     //--------------------------------------------------------------------------
     {
@@ -1133,7 +1125,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       Internal::Runtime::phase_barrier_arrive(*this, count, 
-                                            ApEvent::NO_AP_EVENT, value, size);
+                                  Internal::ApEvent::NO_AP_EVENT, value, size);
     }
 
     /////////////////////////////////////////////////////////////
@@ -1161,6 +1153,9 @@ namespace Legion {
     { 
       privilege_fields = priv_fields;
       instance_fields = inst_fields;
+      // For backwards compatibility with the old encoding
+      if (privilege == WRITE_PRIV)
+        privilege = WRITE_DISCARD;
 #ifdef DEBUG_LEGION
       if (IS_REDUCE(*this)) // Shouldn't use this constructor for reductions
         REPORT_LEGION_ERROR(ERROR_USE_REDUCTION_REGION_REQ, 
@@ -1183,6 +1178,9 @@ namespace Legion {
     { 
       privilege_fields = priv_fields;
       instance_fields = inst_fields;
+      // For backwards compatibility with the old encoding
+      if (privilege == WRITE_PRIV)
+        privilege = WRITE_DISCARD;
 #ifdef DEBUG_LEGION
       if (IS_REDUCE(*this))
         REPORT_LEGION_ERROR(ERROR_USE_REDUCTION_REGION_REQ, 
@@ -1205,6 +1203,9 @@ namespace Legion {
     {
       privilege_fields = priv_fields;
       instance_fields = inst_fields;
+      // For backwards compatibility with the old encoding
+      if (privilege == WRITE_PRIV)
+        privilege = WRITE_DISCARD;
 #ifdef DEBUG_LEGION
       if (IS_REDUCE(*this))
         REPORT_LEGION_ERROR(ERROR_USE_REDUCTION_REGION_REQ, 
@@ -1290,6 +1291,9 @@ namespace Legion {
         handle_type(SINGULAR)
     //--------------------------------------------------------------------------
     { 
+      // For backwards compatibility with the old encoding
+      if (privilege == WRITE_PRIV)
+        privilege = WRITE_DISCARD;
 #ifdef DEBUG_LEGION
       if (IS_REDUCE(*this)) // Shouldn't use this constructor for reductions
         REPORT_LEGION_ERROR(ERROR_USE_REDUCTION_REGION_REQ, 
@@ -1311,6 +1315,9 @@ namespace Legion {
         handle_type(PART_PROJECTION), projection(_proj)
     //--------------------------------------------------------------------------
     { 
+      // For backwards compatibility with the old encoding
+      if (privilege == WRITE_PRIV)
+        privilege = WRITE_DISCARD;
 #ifdef DEBUG_LEGION
       if (IS_REDUCE(*this))
         REPORT_LEGION_ERROR(ERROR_USE_REDUCTION_REGION_REQ, 
@@ -1332,6 +1339,9 @@ namespace Legion {
         handle_type(REG_PROJECTION), projection(_proj)
     //--------------------------------------------------------------------------
     {
+      // For backwards compatibility with the old encoding
+      if (privilege == WRITE_PRIV)
+        privilege = WRITE_DISCARD;
 #ifdef DEBUG_LEGION
       if (IS_REDUCE(*this))
         REPORT_LEGION_ERROR(ERROR_USE_REDUCTION_REGION_REQ, 
@@ -1773,7 +1783,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     CopyLauncher::CopyLauncher(Predicate pred /*= Predicate::TRUE_PRED*/,
                                MapperID mid /*=0*/, MappingTagID t /*=0*/)
-      : predicate(pred), map_id(mid), tag(t), static_dependences(NULL),
+      : predicate(pred), map_id(mid), tag(t), static_dependences(NULL), 
         silence_warnings(false)
     //--------------------------------------------------------------------------
     {
@@ -1807,7 +1817,7 @@ namespace Legion {
                                     Predicate pred /*= Predicate::TRUE_PRED*/,
                                     MapperID mid /*=0*/, MappingTagID t /*=0*/) 
       : launch_domain(Domain::NO_DOMAIN), launch_space(space), predicate(pred),
-        map_id(mid),tag(t), static_dependences(NULL), silence_warnings(false)
+        map_id(mid), tag(t), static_dependences(NULL), silence_warnings(false)
     //--------------------------------------------------------------------------
     {
     }
@@ -2072,7 +2082,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     TaskVariantRegistrar::TaskVariantRegistrar(void)
-      : task_id(0), generator(NULL), global_registration(true), 
+      : task_id(0), global_registration(true), 
         task_variant_name(NULL), leaf_variant(false), 
         inner_variant(false), idempotent_variant(false)
     //--------------------------------------------------------------------------
@@ -2080,11 +2090,10 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    TaskVariantRegistrar::TaskVariantRegistrar(TaskID tid, bool global/*=true*/,
-                                               GeneratorContext ctx/*=NULL*/,
-                                               const char *name/*= NULL*/)
-      : task_id(tid), generator(ctx), global_registration(global), 
-        task_variant_name(name), leaf_variant(false), 
+    TaskVariantRegistrar::TaskVariantRegistrar(TaskID task_id, bool global,
+                                               const char *variant_name)
+      : task_id(task_id), global_registration(global), 
+        task_variant_name(variant_name), leaf_variant(false), 
         inner_variant(false), idempotent_variant(false)
     //--------------------------------------------------------------------------
     {
@@ -2093,9 +2102,8 @@ namespace Legion {
     //--------------------------------------------------------------------------
     TaskVariantRegistrar::TaskVariantRegistrar(TaskID task_id,
 					       const char *variant_name,
-					       bool global/*=true*/,
-					       GeneratorContext ctx/*=NULL*/)
-      : task_id(task_id), generator(ctx), global_registration(global), 
+					       bool global/*=true*/)
+      : task_id(task_id), global_registration(global), 
         task_variant_name(variant_name), leaf_variant(false), 
         inner_variant(false), idempotent_variant(false)
     //--------------------------------------------------------------------------
@@ -2262,11 +2270,11 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    Future::Future(Internal::FutureImpl *i)
+    Future::Future(Internal::FutureImpl *i, bool need_reference)
       : impl(i)
     //--------------------------------------------------------------------------
     {
-      if (impl != NULL)
+      if ((impl != NULL) && need_reference)
         impl->add_base_gc_ref(Internal::FUTURE_HANDLE_REF);
     }
 
@@ -2301,6 +2309,15 @@ namespace Legion {
       if (impl != NULL)
         return impl->is_empty(block, silence_warnings);
       return true;
+    }
+
+    //--------------------------------------------------------------------------
+    bool Future::is_ready(void) const
+    //--------------------------------------------------------------------------
+    {
+      if (impl != NULL)
+        return impl->is_ready();
+      return true; // Empty futures are always ready
     }
 
     //--------------------------------------------------------------------------
@@ -2344,11 +2361,11 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    FutureMap::FutureMap(Internal::FutureMapImpl *i)
+    FutureMap::FutureMap(Internal::FutureMapImpl *i, bool need_reference)
       : impl(i)
     //--------------------------------------------------------------------------
     {
-      if (impl != NULL)
+      if ((impl != NULL) && need_reference)
         impl->add_base_gc_ref(Internal::FUTURE_HANDLE_REF);
     }
 
@@ -2565,6 +2582,14 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       impl->fail_bounds_check(p, fid, mode);
+    }
+
+    //--------------------------------------------------------------------------
+    void PhysicalRegion::fail_bounds_check(Domain d, FieldID fid,
+                                           PrivilegeMode mode) const
+    //--------------------------------------------------------------------------
+    {
+      impl->fail_bounds_check(d, fid, mode);
     }
 
 #ifdef __GNUC__
@@ -3253,7 +3278,7 @@ namespace Legion {
                                    pointer_fid);
       }
       LogicalRegionT<1,coord_t> temp_lr = create_logical_region(ctx,
-                                                  temp_is, temp_fs);
+                                            temp_is, temp_fs, true);
       // Fill in the logical region with the data
       // Do this with a task launch to maintain deferred execution
       switch (color_space.get_dim())
@@ -3395,7 +3420,7 @@ namespace Legion {
                                    pointer_fid);
       }
       LogicalRegionT<1,coord_t> temp_lr = create_logical_region(ctx,
-                                                  temp_is, temp_fs);
+                                            temp_is, temp_fs, true);
       // Fill in the logical region with the data
       // Do this with a task launch to maintain deferred execution
       if (do_ranges)
@@ -3515,7 +3540,7 @@ namespace Legion {
         }
       }
       LogicalRegionT<1,coord_t> temp_lr = create_logical_region(ctx,
-                                                  temp_is, temp_fs);
+                                            temp_is, temp_fs, true);
       // Fill in the logical region with the data
       // Do this with a task launch to maintain deferred execution
       switch (color_dim)
@@ -3684,7 +3709,7 @@ namespace Legion {
         }
       }
       LogicalRegionT<1,coord_t> temp_lr = create_logical_region(ctx,
-                                                  temp_is, temp_fs);
+                                            temp_is, temp_fs, true);
       // Fill in the logical region with the data
       // Do this with a task launch to maintain deferred execution
       switch (range_dim)
@@ -3812,7 +3837,7 @@ namespace Legion {
         }
       }
       LogicalRegionT<1,coord_t> temp_lr = create_logical_region(ctx,
-                                                  temp_is, temp_fs);
+                                            temp_is, temp_fs, true);
       // Fill in the logical region with the data
       // Do this with a task launch to maintain deferred execution
       switch (color_dim)
@@ -3984,7 +4009,7 @@ namespace Legion {
         }
       }
       LogicalRegionT<1,coord_t> temp_lr = create_logical_region(ctx,
-                                                  temp_is, temp_fs);
+                                            temp_is, temp_fs, true);
       // Fill in the logical region with the data
       // Do this with a task launch to maintain deferred execution
       switch (range_dim)
@@ -4153,6 +4178,193 @@ namespace Legion {
                          range.get_index_space(), id, tag);
       create_association(ctx, range, range_parent, range_fid, 
                          domain.get_index_space(), id, tag);
+    }
+
+    //--------------------------------------------------------------------------
+    IndexPartition Runtime::create_partition_by_restriction(Context ctx,
+                                                        IndexSpace par,
+                                                        IndexSpace cs,
+                                                        DomainTransform tran,
+                                                        Domain ext,
+                                                        PartitionKind part_kind,
+                                                        Color color)
+    //--------------------------------------------------------------------------
+    {
+      switch (ext.get_dim())
+      {
+        case 1:
+          {
+            const IndexSpaceT<1,coord_t> parent(par);
+            const Rect<1,coord_t> extent(ext);
+            switch (tran.n)
+            {
+              case 1:
+                {
+                  const Transform<1,1> transform(tran);
+                  const IndexSpaceT<1,coord_t> color_space(cs);
+                  return create_partition_by_restriction<1,1,coord_t>(ctx, 
+                      parent, color_space, transform, extent, part_kind, color);
+                }
+              case 2:
+                {
+                  const Transform<1,2> transform(tran);
+                  const IndexSpaceT<2,coord_t> color_space(cs);
+                  return create_partition_by_restriction<1,2,coord_t>(ctx,
+                      parent, color_space, transform, extent, part_kind, color);
+                }
+              case 3:
+                {
+                  const Transform<1,3> transform(tran);
+                  const IndexSpaceT<3,coord_t> color_space(cs);
+                  return create_partition_by_restriction<1,3,coord_t>(ctx,
+                      parent, color_space, transform, extent, part_kind, color);
+                }
+              default:
+                assert(false);
+            }
+          }
+        case 2:
+          {
+            const IndexSpaceT<2,coord_t> parent(par);
+            const Rect<2,coord_t> extent(ext);
+            switch (tran.n)
+            {
+              case 1:
+                {
+                  const Transform<2,1> transform(tran);
+                  const IndexSpaceT<1,coord_t> color_space(cs);
+                  return create_partition_by_restriction<2,1,coord_t>(ctx, 
+                      parent, color_space, transform, extent, part_kind, color);
+                }
+              case 2:
+                {
+                  const Transform<2,2> transform(tran);
+                  const IndexSpaceT<2,coord_t> color_space(cs);
+                  return create_partition_by_restriction<2,2,coord_t>(ctx,
+                      parent, color_space, transform, extent, part_kind, color);
+                }
+              case 3:
+                {
+                  const Transform<2,3> transform(tran);
+                  const IndexSpaceT<3,coord_t> color_space(cs);
+                  return create_partition_by_restriction<2,3,coord_t>(ctx,
+                      parent, color_space, transform, extent, part_kind, color);
+                }
+              default:
+                assert(false);
+            }
+          }
+        case 3:
+          {
+            const IndexSpaceT<3,coord_t> parent(par);
+            const Rect<3,coord_t> extent(ext);
+            switch (tran.n)
+            {
+              case 1:
+                {
+                  const Transform<3,1> transform(tran);
+                  const IndexSpaceT<1,coord_t> color_space(cs);
+                  return create_partition_by_restriction<3,1,coord_t>(ctx, 
+                      parent, color_space, transform, extent, part_kind, color);
+                }
+              case 2:
+                {
+                  const Transform<3,2> transform(tran);
+                  const IndexSpaceT<2,coord_t> color_space(cs);
+                  return create_partition_by_restriction<3,2,coord_t>(ctx,
+                      parent, color_space, transform, extent, part_kind, color);
+                }
+              case 3:
+                {
+                  const Transform<3,3> transform(tran);
+                  const IndexSpaceT<3,coord_t> color_space(cs);
+                  return create_partition_by_restriction<3,3,coord_t>(ctx,
+                      parent, color_space, transform, extent, part_kind, color);
+                }
+              default:
+                assert(false);
+            }
+          }
+        default:
+          assert(false);
+      }
+      return IndexPartition::NO_PART;
+    }
+
+    //--------------------------------------------------------------------------
+    IndexPartition Runtime::create_partition_by_blockify(Context ctx,
+                                                         IndexSpace par,
+                                                         DomainPoint bf,
+                                                         Color color)
+    //--------------------------------------------------------------------------
+    {
+      switch (bf.get_dim())
+      {
+        case 1:
+          {
+            const IndexSpaceT<1,coord_t> parent(par);
+            const Point<1,coord_t> blocking_factor(bf);
+            return create_partition_by_blockify<1,coord_t>(ctx, parent, 
+                                                blocking_factor, color);
+          }
+        case 2:
+          {
+            const IndexSpaceT<2,coord_t> parent(par);
+            const Point<2,coord_t> blocking_factor(bf);
+            return create_partition_by_blockify<2,coord_t>(ctx, parent, 
+                                                blocking_factor, color);
+          }
+        case 3:
+          {
+            const IndexSpaceT<3,coord_t> parent(par);
+            const Point<3,coord_t> blocking_factor(bf);
+            return create_partition_by_blockify<3,coord_t>(ctx, parent, 
+                                                blocking_factor, color);
+          }
+        default:
+          assert(false);
+      }
+      return IndexPartition::NO_PART;
+    }
+
+    //--------------------------------------------------------------------------
+    IndexPartition Runtime::create_partition_by_blockify(Context ctx,
+                                                         IndexSpace par,
+                                                         DomainPoint bf,
+                                                         DomainPoint orig,
+                                                         Color color)
+    //--------------------------------------------------------------------------
+    {
+      switch (bf.get_dim())
+      {
+        case 1:
+          {
+            const IndexSpaceT<1,coord_t> parent(par);
+            const Point<1,coord_t> blocking_factor(bf);
+            const Point<1,coord_t> origin(orig);
+            return create_partition_by_blockify<1,coord_t>(ctx, parent, 
+                                        blocking_factor, origin, color);
+          }
+        case 2:
+          {
+            const IndexSpaceT<2,coord_t> parent(par);
+            const Point<2,coord_t> blocking_factor(bf);
+            const Point<2,coord_t> origin(orig);
+            return create_partition_by_blockify<2,coord_t>(ctx, parent, 
+                                        blocking_factor, origin, color);
+          }
+        case 3:
+          {
+            const IndexSpaceT<3,coord_t> parent(par);
+            const Point<3,coord_t> blocking_factor(bf);
+            const Point<3,coord_t> origin(orig);
+            return create_partition_by_blockify<3,coord_t>(ctx, parent, 
+                                        blocking_factor, origin, color);
+          }
+        default:
+          assert(false);
+      }
+      return IndexPartition::NO_PART;
     }
 
     //--------------------------------------------------------------------------
@@ -4590,6 +4802,14 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    IndexSpace Runtime::get_index_subspace_internal(IndexPartition p,
+                                      const void *realm_color, TypeTag type_tag)
+    //--------------------------------------------------------------------------
+    {
+      return runtime->get_index_subspace(p, realm_color, type_tag);
+    }
+
+    //--------------------------------------------------------------------------
     bool Runtime::has_index_subspace(Context ctx, 
                                      IndexPartition p, const DomainPoint &color)
     //--------------------------------------------------------------------------
@@ -4642,6 +4862,14 @@ namespace Legion {
           assert(false);
       }
       return false;
+    }
+
+    //--------------------------------------------------------------------------
+    bool Runtime::has_index_subspace_internal(IndexPartition p,
+                                      const void *realm_color, TypeTag type_tag)
+    //--------------------------------------------------------------------------
+    {
+      return runtime->has_index_subspace(p, realm_color, type_tag);
     }
 
     //--------------------------------------------------------------------------
@@ -5120,10 +5348,10 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     LogicalRegion Runtime::create_logical_region(Context ctx, 
-                                            IndexSpace index, FieldSpace fields)
+                           IndexSpace index, FieldSpace fields, bool task_local)
     //--------------------------------------------------------------------------
     {
-      return runtime->create_logical_region(ctx, index, fields);
+      return runtime->create_logical_region(ctx, index, fields, task_local);
     }
 
     //--------------------------------------------------------------------------
@@ -5774,10 +6002,10 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void Runtime::detach_external_resource(Context ctx, PhysicalRegion region)
+    Future Runtime::detach_external_resource(Context ctx, PhysicalRegion region)
     //--------------------------------------------------------------------------
     {
-      runtime->detach_external_resource(ctx, region);
+      return runtime->detach_external_resource(ctx, region);
     }
 
     //--------------------------------------------------------------------------
@@ -5821,7 +6049,7 @@ namespace Legion {
     {
       runtime->detach_external_resource(ctx, region);
     }
-
+    
     //--------------------------------------------------------------------------
     void Runtime::issue_copy_operation(Context ctx,const CopyLauncher &launcher)
     //--------------------------------------------------------------------------
@@ -6214,6 +6442,13 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    MapperID Runtime::generate_library_mapper_ids(const char *name, size_t cnt)
+    //--------------------------------------------------------------------------
+    {
+      return runtime->generate_library_mapper_ids(name, cnt);
+    }
+
+    //--------------------------------------------------------------------------
     /*static*/ MapperID Runtime::generate_static_mapper_id(void)
     //--------------------------------------------------------------------------
     {
@@ -6240,6 +6475,14 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       return runtime->generate_dynamic_projection_id();
+    }
+
+    //--------------------------------------------------------------------------
+    ProjectionID Runtime::generate_library_projection_ids(const char *name,
+                                                          size_t count)
+    //--------------------------------------------------------------------------
+    {
+      return runtime->generate_library_projection_ids(name, count);
     }
 
     //--------------------------------------------------------------------------
@@ -6605,8 +6848,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    /*static*/ int Runtime::start(int argc, char **argv, 
-                                           bool background)
+    /*static*/ int Runtime::start(int argc, char **argv, bool background)
     //--------------------------------------------------------------------------
     {
       return Internal::Runtime::start(argc, argv, background);
@@ -6620,8 +6862,7 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    /*static*/ void Runtime::set_top_level_task_id(
-                                                  Processor::TaskFuncID top_id)
+    /*static*/ void Runtime::set_top_level_task_id(Processor::TaskFuncID top_id)
     //--------------------------------------------------------------------------
     {
       Internal::Runtime::set_top_level_task_id(top_id);
@@ -6686,24 +6927,26 @@ namespace Legion {
     /*static*/ const InputArgs& Runtime::get_input_args(void)
     //--------------------------------------------------------------------------
     {
-      return Internal::Runtime::get_input_args();
+      return Internal::implicit_runtime->input_args;
     }
 
     //--------------------------------------------------------------------------
     /*static*/ Runtime* Runtime::get_runtime(Processor p)
     //--------------------------------------------------------------------------
     {
-      return Internal::Runtime::get_runtime(p)->external;
+      // If we have an implicit runtime we use that
+      if (Internal::implicit_runtime != NULL)
+        return Internal::implicit_runtime->external;
+      // Otherwise this is not from a Legion task, so fallback to the_runtime
+      return Internal::Runtime::the_runtime->external;
     }
 
-#ifdef ENABLE_LEGION_TLS
     //--------------------------------------------------------------------------
     /*static*/ Context Runtime::get_context(void)
     //--------------------------------------------------------------------------
     {
       return Internal::implicit_context;
     }
-#endif
 
     //--------------------------------------------------------------------------
     /*static*/ ReductionOpTable& Runtime::get_reduction_table(void)
@@ -6730,6 +6973,13 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       return runtime->generate_dynamic_task_id();
+    }
+
+    //--------------------------------------------------------------------------
+    TaskID Runtime::generate_library_task_ids(const char *name, size_t count)
+    //--------------------------------------------------------------------------
+    {
+      return runtime->generate_library_task_ids(name, count);
     }
 
     //--------------------------------------------------------------------------
@@ -6769,6 +7019,33 @@ namespace Legion {
       return preregister_variant(registrar, user_data, user_len,
 				 realm_desc, has_return, task_name,
                                  AUTO_GENERATE_ID);
+    }
+
+    //--------------------------------------------------------------------------
+    /*static*/ void Runtime::legion_task_preamble(
+                                       const void *data, size_t datalen,
+                                       Processor p, const Task *& task,
+                                       const std::vector<PhysicalRegion> *& reg,
+                                       Context& ctx, Runtime *& runtime)
+    //--------------------------------------------------------------------------
+    {
+      // Read the context out of the buffer
+#ifdef DEBUG_LEGION
+      assert(datalen == sizeof(Context));
+#endif
+      ctx = *((const Context*)data);
+      task = ctx->get_task();
+
+      reg = &ctx->begin_task(runtime);
+    }
+
+    //--------------------------------------------------------------------------
+    /*static*/ void Runtime::legion_task_postamble(Runtime *runtime,Context ctx,
+                                                   const void *retvalptr,
+                                                   size_t retvalsize)
+    //--------------------------------------------------------------------------
+    {
+      ctx->end_task(retvalptr, retvalsize, false/*owned*/);
     }
 
     //--------------------------------------------------------------------------
@@ -6857,44 +7134,6 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       return runtime->get_layout_constraints_name(id);
-    }
-
-    /////////////////////////////////////////////////////////////
-    // LegionTaskWrapper
-    /////////////////////////////////////////////////////////////
-
-    //--------------------------------------------------------------------------
-    /*static*/ void LegionTaskWrapper::legion_task_preamble(
-                  const void *data,
-		  size_t datalen,
-		  Processor p,
-		  const Task *& task,
-		  const std::vector<PhysicalRegion> *& regionsptr,
-		  Context& ctx,
-		  Runtime *& runtime)
-    //--------------------------------------------------------------------------
-    {
-      // Get the high level runtime
-      runtime = Runtime::get_runtime(p);
-
-      // Read the context out of the buffer
-#ifdef DEBUG_LEGION
-      assert(datalen == sizeof(Context));
-#endif
-      ctx = *((const Context*)data);
-      task = ctx->get_task();
-
-      regionsptr = &ctx->begin_task();
-    }
-
-    //--------------------------------------------------------------------------
-    /*static*/ void LegionTaskWrapper::legion_task_postamble(
-                  Runtime *runtime, Context ctx,
-		  const void *retvalptr /*= NULL*/,
-		  size_t retvalsize /*= 0*/)
-    //--------------------------------------------------------------------------
-    {
-      ctx->end_task(retvalptr, retvalsize, false/*owned*/);
     }
 
 }; // namespace Legion

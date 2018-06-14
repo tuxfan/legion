@@ -1,4 +1,4 @@
-/* Copyright 2015 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,12 @@
 
 // byfield (filter) operations for Realm dependent partitioning
 
-#include "byfield.h"
+#include "realm/deppart/byfield.h"
 
-#include "deppart_config.h"
-#include "rectlist.h"
-#include "inst_helper.h"
-#include "../logging.h"
+#include "realm/deppart/deppart_config.h"
+#include "realm/deppart/rectlist.h"
+#include "realm/deppart/inst_helper.h"
+#include "realm/logging.h"
 
 namespace Realm {
 

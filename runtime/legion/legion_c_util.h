@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University
+/* Copyright 2018 Stanford University
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,12 +23,12 @@
  */
 
 #include "legion.h"
-#include "legion_c.h"
-#include "legion_mapping.h"
-#include "mapping_utilities.h"
+#include "legion/legion_c.h"
+#include "legion/legion_mapping.h"
+#include "mappers/mapping_utilities.h"
 
-#include <cstdlib>
-#include <cstring>
+#include <stdlib.h>
+#include <string.h>
 #include <algorithm>
 
 namespace Legion {
@@ -86,8 +86,10 @@ namespace Legion {
       NEW_OPAQUE_WRAPPER(legion_index_launcher_t, IndexTaskLauncher *);
       NEW_OPAQUE_WRAPPER(legion_inline_launcher_t, InlineLauncher *);
       NEW_OPAQUE_WRAPPER(legion_copy_launcher_t, CopyLauncher *);
+      NEW_OPAQUE_WRAPPER(legion_index_copy_launcher_t, IndexCopyLauncher *);
       NEW_OPAQUE_WRAPPER(legion_acquire_launcher_t, AcquireLauncher *);
       NEW_OPAQUE_WRAPPER(legion_release_launcher_t, ReleaseLauncher *);
+      NEW_OPAQUE_WRAPPER(legion_attach_launcher_t, AttachLauncher *);
       NEW_OPAQUE_WRAPPER(legion_must_epoch_launcher_t, MustEpochLauncher *);
       NEW_OPAQUE_WRAPPER(legion_physical_region_t, PhysicalRegion *);
       NEW_OPAQUE_WRAPPER(legion_accessor_array_1d_t, ArrayAccessor1D *);
@@ -214,6 +216,76 @@ namespace Legion {
       NEW_BLOCKIFY_WRAPPER(legion_blockify_2d_t, Blockify<2>);
       NEW_BLOCKIFY_WRAPPER(legion_blockify_3d_t, Blockify<3>);
 #undef NEW_RECT_WRAPPER
+
+#define NEW_TRANSFORM_WRAPPER(T_, T, X, Y)              \
+      static T_ wrap(T t) {                             \
+        T_ t_;                                          \
+        for (int i = 0; i < X; i++)                     \
+          for (int j = 0; j < Y; j++)                   \
+            t_.trans[i][j] = t[i][j];                   \
+        return t_;                                      \
+      }                                                 \
+      static T unwrap(T_ t_) {                          \
+        T t;                                            \
+        for (int i = 0; i < X; i++)                     \
+          for (int j = 0; j < Y; j++)                   \
+            t[i][j] = t_.trans[i][j];                   \
+        return t;                                       \
+      }
+    typedef Transform<1,1,coord_t> Transform1x1;
+    typedef Transform<1,2,coord_t> Transform1x2;
+    typedef Transform<1,3,coord_t> Transform1x3;
+    typedef Transform<2,1,coord_t> Transform2x1;
+    typedef Transform<2,2,coord_t> Transform2x2;
+    typedef Transform<2,3,coord_t> Transform2x3;
+    typedef Transform<3,1,coord_t> Transform3x1;
+    typedef Transform<3,2,coord_t> Transform3x2;
+    typedef Transform<3,3,coord_t> Transform3x3;
+    NEW_TRANSFORM_WRAPPER(legion_transform_1x1_t, Transform1x1, 1, 1);
+    NEW_TRANSFORM_WRAPPER(legion_transform_1x2_t, Transform1x2, 1, 2);
+    NEW_TRANSFORM_WRAPPER(legion_transform_1x3_t, Transform1x3, 1, 3);
+    NEW_TRANSFORM_WRAPPER(legion_transform_2x1_t, Transform2x1, 2, 1);
+    NEW_TRANSFORM_WRAPPER(legion_transform_2x2_t, Transform2x2, 2, 2);
+    NEW_TRANSFORM_WRAPPER(legion_transform_2x3_t, Transform2x3, 2, 3);
+    NEW_TRANSFORM_WRAPPER(legion_transform_3x1_t, Transform3x1, 3, 1);
+    NEW_TRANSFORM_WRAPPER(legion_transform_3x2_t, Transform3x2, 3, 2);
+    NEW_TRANSFORM_WRAPPER(legion_transform_3x3_t, Transform3x3, 3, 3);
+#undef NEW_TRANSFORM_WRAPPER
+
+#define NEW_AFFINE_TRANSFORM_WRAPPER(T_, T)             \
+    static T_ wrap(T t) {                               \
+      T_ t_;                                            \
+      t_.transform = wrap(t.transform);                 \
+      t_.offset = wrap(t.offset);                       \
+      return t_;                                        \
+    }                                                   \
+    static T unwrap(T_ t_) {                            \
+      T t;                                              \
+      t.transform = unwrap(t_.transform);               \
+      t.offset = unwrap(t_.offset);                     \
+      return t;                                         \
+    }
+
+    typedef AffineTransform<1,1,coord_t> AffineTransform1x1;
+    typedef AffineTransform<1,2,coord_t> AffineTransform1x2;
+    typedef AffineTransform<1,3,coord_t> AffineTransform1x3;
+    typedef AffineTransform<2,1,coord_t> AffineTransform2x1;
+    typedef AffineTransform<2,2,coord_t> AffineTransform2x2;
+    typedef AffineTransform<2,3,coord_t> AffineTransform2x3;
+    typedef AffineTransform<3,1,coord_t> AffineTransform3x1;
+    typedef AffineTransform<3,2,coord_t> AffineTransform3x2;
+    typedef AffineTransform<3,3,coord_t> AffineTransform3x3;
+    NEW_AFFINE_TRANSFORM_WRAPPER(legion_affine_transform_1x1_t, AffineTransform1x1);
+    NEW_AFFINE_TRANSFORM_WRAPPER(legion_affine_transform_1x2_t, AffineTransform1x2);
+    NEW_AFFINE_TRANSFORM_WRAPPER(legion_affine_transform_1x3_t, AffineTransform1x3);
+    NEW_AFFINE_TRANSFORM_WRAPPER(legion_affine_transform_2x1_t, AffineTransform2x1);
+    NEW_AFFINE_TRANSFORM_WRAPPER(legion_affine_transform_2x2_t, AffineTransform2x2);
+    NEW_AFFINE_TRANSFORM_WRAPPER(legion_affine_transform_2x3_t, AffineTransform2x3);
+    NEW_AFFINE_TRANSFORM_WRAPPER(legion_affine_transform_3x1_t, AffineTransform3x1);
+    NEW_AFFINE_TRANSFORM_WRAPPER(legion_affine_transform_3x2_t, AffineTransform3x2);
+    NEW_AFFINE_TRANSFORM_WRAPPER(legion_affine_transform_3x3_t, AffineTransform3x3);
+#undef NEW_AFFINE_TRANSFORM_WRAPPER
+
       static legion_domain_t
       wrap(Domain domain) {
         legion_domain_t domain_;
@@ -246,6 +318,40 @@ namespace Legion {
         dp.dim = dp_.dim;
         std::copy(dp_.point_data, dp_.point_data + MAX_POINT_DIM, dp.point_data);
         return dp;
+      }
+
+      static legion_domain_transform_t
+      wrap(DomainTransform transform) {
+        legion_domain_transform_t transform_;
+        transform_.m = transform.m;
+        transform_.n = transform.n;
+        std::copy(transform.matrix, transform.matrix + MAX_POINT_DIM * MAX_POINT_DIM, transform_.matrix);
+        return transform_;
+      }
+
+      static DomainTransform
+      unwrap(legion_domain_transform_t transform_) {
+        DomainTransform transform;
+        transform.m = transform_.m;
+        transform.n = transform_.n;
+        std::copy(transform_.matrix, transform_.matrix + MAX_POINT_DIM * MAX_POINT_DIM, transform.matrix);
+        return transform;
+      }
+
+      static legion_domain_affine_transform_t
+      wrap(DomainAffineTransform transform) {
+        legion_domain_affine_transform_t transform_;
+        transform_.transform = wrap(transform.transform);
+        transform_.offset = wrap(transform.offset);
+        return transform_;
+      }
+
+      static DomainAffineTransform
+      unwrap(legion_domain_affine_transform_t transform_) {
+        DomainAffineTransform transform;
+        transform.transform = unwrap(transform_.transform);
+        transform.offset = unwrap(transform_.offset);
+        return transform;
       }
 
       static legion_index_space_t
@@ -524,6 +630,7 @@ namespace Legion {
         options_.inline_task = options.inline_task;
         options_.stealable = options.stealable;
         options_.map_locally = options.map_locally;
+        options_.parent_priority = options.parent_priority;
         return options_;
       }
 
@@ -534,6 +641,7 @@ namespace Legion {
         options.inline_task = options_.inline_task;
         options.stealable = options_.stealable;
         options.map_locally = options_.map_locally;
+        options.parent_priority = options_.parent_priority;
         return options;
       }
 

@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,15 +55,17 @@ namespace Realm {
 
       static const int NODE_FIELD_WIDTH = 16;
       static const unsigned MAX_NODE_ID = (1U << NODE_FIELD_WIDTH) - 2; // reserve all 1's for special cases
+      static const int EVENT_GENERATION_WIDTH = 20;
+      static const int INSTANCE_INDEX_WIDTH = 16;
 
       struct FMT_Event {
 #ifdef REALM_REVERSE_ID_FIELDS
 	IDType type_tag : 1;
 	IDType creator_node : NODE_FIELD_WIDTH;
 	IDType gen_event_idx : 27;
-	IDType generation : 20;
+	IDType generation : EVENT_GENERATION_WIDTH;
 #else
-	IDType generation : 20;
+	IDType generation : EVENT_GENERATION_WIDTH;
 	IDType gen_event_idx : 27;
 	IDType creator_node : NODE_FIELD_WIDTH;
 	IDType type_tag : 1;
@@ -76,9 +78,9 @@ namespace Realm {
 	IDType type_tag : 4;
 	IDType creator_node : 16;
 	IDType barrier_idx : 24;
-	IDType generation : 20;  // MUST MATCH FMT_Event::generation size
+	IDType generation : EVENT_GENERATION_WIDTH;  // MUST MATCH FMT_Event::generation size
 #else
-	IDType generation : 20;  // MUST MATCH FMT_Event::generation size
+	IDType generation : EVENT_GENERATION_WIDTH;  // MUST MATCH FMT_Event::generation size
 	IDType barrier_idx : 24;
 	IDType creator_node : 16;
 	IDType type_tag : 4;
@@ -137,9 +139,9 @@ namespace Realm {
 	IDType owner_node : 16;
 	IDType creator_node : 16;
 	IDType mem_idx : 12;
-	IDType inst_idx : 16;
+	IDType inst_idx : INSTANCE_INDEX_WIDTH;
 #else
-	IDType inst_idx : 16;
+	IDType inst_idx : INSTANCE_INDEX_WIDTH;
 	IDType mem_idx : 12;
 	IDType creator_node : 16;
 	IDType owner_node : 16;
@@ -297,7 +299,7 @@ namespace Realm {
 
 }; // namespace Realm
 
-#include "id.inl"
+#include "realm/id.inl"
 
 #endif // ifndef REALM_ID_H
 

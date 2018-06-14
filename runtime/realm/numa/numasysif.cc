@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 // NOTE: this is nowhere near a full libnuma-style interface - it's just the
 //  calls that Realm's NUMA module needs
 
-#include "numasysif.h"
+#include "realm/numa/numasysif.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -227,7 +227,7 @@ namespace Realm {
 	  continue;
 	// find the node symlink to determine the node
 	char path2[256];
-	sprintf(path2, "/sys/devices/system/cpu/%s", de->d_name);
+	sprintf(path2, "/sys/devices/system/cpu/%.16s", de->d_name);
 	DIR *d2 = opendir(path2);
 	if(!d2) {
 	  fprintf(stderr, "couldn't read '%s': %s\n", path2, strerror(errno));

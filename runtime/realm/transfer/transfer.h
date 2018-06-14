@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,9 @@
 #ifndef REALM_TRANSFER_H
 #define REALM_TRANSFER_H
 
-#include "event.h"
-#include "memory.h"
-#include "indexspace.h"
+#include "realm/event.h"
+#include "realm/memory.h"
+#include "realm/indexspace.h"
 
 #ifdef USE_HDF
 #include "realm/hdf5/hdf5_internal.h"
@@ -43,7 +43,7 @@ namespace Realm {
     virtual Event request_metadata(void);
 
     virtual void reset(void) = 0;
-    virtual bool done(void) const = 0;
+    virtual bool done(void) = 0;
 
     // flag bits to control iterators
     enum {

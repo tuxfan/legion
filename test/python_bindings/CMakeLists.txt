@@ -1,5 +1,5 @@
 #------------------------------------------------------------------------------#
-# Copyright 2017 Stanford University
+# Copyright 2018 Stanford University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,5 +29,5 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/python_bindings.py
   DESTINATION ${CMAKE_INSTALL_DATADIR}/Legion/python/tests
 )
 if(Legion_ENABLE_TESTING)
-  add_test(NAME python_bindings COMMAND $<TARGET_FILE:python_bindings> -ll:py 1)
+  add_test(NAME python_bindings COMMAND ${Legion_TEST_LAUNCHER} $<TARGET_FILE:python_bindings> -ll:py 1 -ll:cpu 0)
 endif()

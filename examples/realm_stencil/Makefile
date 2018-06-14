@@ -1,4 +1,4 @@
-# Copyright 2017 Stanford University
+# Copyright 2018 Stanford University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -53,6 +53,7 @@ CC_FLAGS += -DDTYPE=$(DTYPE) -DRESTRICT=$(RESTRICT) -DRADIUS=$(RADIUS)
 
 include $(LG_RT_DIR)/runtime.mk
 
-# Make absolutely sure application code is compiled with -O3
-$(GEN_OBJS) : %.o : %.cc
-	$(CXX) -o $@ -c $< $(CC_FLAGS) $(INC_FLAGS) -O3
+# Make absolutely sure application code is compiled with -O3 (in non-debug mode)
+ifneq ($(strip $(DEBUG)),1)
+$(GEN_OBJS) : CC_FLAGS += -O3
+endif

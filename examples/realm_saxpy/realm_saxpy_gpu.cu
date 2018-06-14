@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ void gpu_saxpy(const float alpha,
 {
   int p = bounds.lo + (blockIdx.x * blockDim.x) + threadIdx.x;
   if (p <= bounds.hi)
-    ra_z[p] = alpha * ra_x[p] + ra_y[p];
+    ra_z[p] += alpha * ra_x[p] + ra_y[p];
 }
 
 __host__

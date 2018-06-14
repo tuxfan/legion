@@ -1,5 +1,5 @@
-/* Copyright 2016 Stanford University
- * Copyright 2016 Los Alamos National Laboratory
+/* Copyright 2018 Stanford University
+ * Copyright 2018 Los Alamos National Laboratory
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-#include "channel.h"
-#include "channel_disk.h"
-#include <realm/transfer/transfer.h>
+#include "realm/transfer/channel.h"
+#include "realm/transfer/channel_disk.h"
+#include "realm/transfer/transfer.h"
 
 TYPE_IS_SERIALIZABLE(Realm::XferOrder::Type);
 TYPE_IS_SERIALIZABLE(Realm::XferDes::XferKind);
@@ -100,6 +100,10 @@ namespace Realm {
 	    return max_avail;
 	}
 
+	// recheck noncontig as well
+	if(start < first_noncontig)
+	  return 0;
+
 	// otherwise find the first span after us and then back up one to find
 	//  the one that might contain our 'start'
 	std::map<size_t, size_t>::const_iterator it = spans.upper_bound(start);
@@ -163,10 +167,34 @@ namespace Realm {
 	{
 	  AutoHSLLock al(mutex);
 
-	  if(pos < first_noncontig)
-	    first_noncontig = pos;
+	  // the checks above were done without the lock, so it is possible
+	  //  that by the time we've got the lock here, contig_amount has
+	  //  caught up to us
+	  if(__sync_bool_compare_and_swap(&contig_amount, pos, span_end)) {
+	    // see if any other spans are now contiguous as well
+	    while(!spans.empty()) {
+	      std::map<size_t, size_t>::iterator it = spans.begin();
+	      if(it->first == span_end) {
+		bool ok = __sync_bool_compare_and_swap(&contig_amount,
+						       span_end,
+						       span_end + it->second);
+		assert(ok);
+		span_end += it->second;
+		spans.erase(it);
+	      } else {
+		// this is the new first noncontig
+		first_noncontig = it->first;
+		break;
+	      }
+	    }
+	    if(spans.empty())
+	      first_noncontig = (size_t)-1;
+	  } else {
+	    if(pos < first_noncontig)
+	      first_noncontig = pos;
 
-	  spans[pos] = count;
+	    spans[pos] = count;
+	  }
 	}
 	
 	return 0; // no change to contig_amount
@@ -181,13 +209,16 @@ namespace Realm {
               bool _mark_start,
 	      Memory _src_mem, Memory _dst_mem,
 	      TransferIterator *_src_iter, TransferIterator *_dst_iter,
+	      CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
               uint64_t _max_req_size, int _priority,
               XferOrder::Type _order, XferKind _kind, XferDesFence* _complete_fence)
         : dma_request(_dma_request), mark_start(_mark_start), launch_node(_launch_node),
 	  iteration_completed(false),
-	  bytes_total(0),
+          read_bytes_total(0), write_bytes_total(0),
+          read_bytes_cons(0), write_bytes_cons(0),
           pre_bytes_total((size_t)-1),
 	  src_iter(_src_iter), dst_iter(_dst_iter),
+          src_serdez_op(0), dst_serdez_op(0),
           src_ib_offset(_src_ib_offset), src_ib_size(_src_ib_size),
           max_req_size(_max_req_size), priority(_priority),
           guid(_guid), pre_xd_guid(_pre_xd_guid), next_xd_guid(_next_xd_guid),
@@ -202,6 +233,14 @@ namespace Realm {
 	//iteration_completed = (pre_xd_guid != XFERDES_NO_GUID) && (next_xd_guid != XFERDES_NO_GUID);
 	src_mem = get_runtime()->get_memory_impl(_src_mem);
 	dst_mem = get_runtime()->get_memory_impl(_dst_mem);
+	if(_src_serdez_id != 0) {
+	  src_serdez_op = get_runtime()->custom_serdez_table[_src_serdez_id];
+	  assert(src_serdez_op != 0);
+	}
+	if(_dst_serdez_id != 0) {
+	  dst_serdez_op = get_runtime()->custom_serdez_table[_dst_serdez_id];
+	  assert(dst_serdez_op != 0);
+	}
 	// if we're writing into an IB, the first 'next_max_rw_gap' byte
 	//  locations can be freely written
 	if(next_xd_guid != XFERDES_NO_GUID)
@@ -300,225 +339,485 @@ namespace Realm {
 	  //   is already done
 	  if(iteration_completed) break;
 
+	  // there are several variables that can change asynchronously to
+	  //  the logic here:
+	  //   pre_bytes_total - the max bytes we'll ever see from the input IB
+	  //   read_bytes_cons - conservative estimate of bytes we've read
+	  //   write_bytes_cons - conservative estimate of bytes we've written
+	  //
+	  // to avoid all sorts of weird race conditions, sample all three here
+	  //  and only use them in the code below (exception: atomic increments
+	  //  of rbc or wbc, for which we adjust the snapshot by the same)
+	  size_t pbt_snapshot = __sync_fetch_and_add(&pre_bytes_total, 0);
+	  size_t rbc_snapshot = __sync_fetch_and_add(&read_bytes_cons, 0);
+	  size_t wbc_snapshot = __sync_fetch_and_add(&write_bytes_cons, 0);
+
 	  // handle special case of empty transfers by generating a 0-byte
 	  //  request
-	  if((bytes_total == 0) &&
+	  if((read_bytes_total == 0) &&
 	     ((pre_xd_guid == XFERDES_NO_GUID) ? src_iter->done() :
-	                                         (pre_bytes_total == 0))) {
+	                                         (pbt_snapshot == 0))) {
 	    log_request.info() << "empty xferdes: " << guid;
 	    assert((next_xd_guid != XFERDES_NO_GUID) || dst_iter->done());
 
 	    iteration_completed = true;
 
 	    Request* new_req = dequeue_request();
-	    new_req->seq_pos = 0;
-	    new_req->seq_count = 0;
+	    new_req->read_seq_pos = 0;
+	    new_req->read_seq_count = 0;
+	    new_req->write_seq_pos = 0;
+	    new_req->write_seq_count = 0;
 	    new_req->dim = Request::DIM_1D;
 	    new_req->src_off = 0;
 	    new_req->dst_off = 0;
 	    new_req->nbytes = 0;
 	    new_req->nlines = 1;
+	    new_req->nplanes = 1;
 	    reqs[idx++] = new_req;
 	    break;
 	  }
-
-	  // some sort of per-channel max request size?
-	  size_t max_bytes = 1 << 20;
-
-	  // if we're not the first in the chain, and we know the total bytes
-	  //  written by the predecessor, don't exceed that
-	  if(pre_xd_guid != XFERDES_NO_GUID) {
-	    size_t pre_max = pre_bytes_total - bytes_total;
-	    if(pre_max == 0) {
-	      // due to unsynchronized updates to pre_bytes_total, this path
-	      //  can happen for an empty transfer reading from an intermediate
-	      //  buffer - handle it by looping around and letting the check
-	      //  at the top of the loop notice it the second time around
-	      if(bytes_total == 0)
-		continue;
-	      // otherwise, this shouldn't happen - we should detect this case
-	      //  on the the transfer of those last bytes
-	      assert(0);
-	      iteration_completed = true;
-	      break;
-	    }
-	    if(pre_max < max_bytes) {
-	      log_request.info() << "pred limits xfer: " << max_bytes << " -> " << pre_max;
-	      max_bytes = pre_max;
-	    }
-	  }
-
+	  
 	  TransferIterator::AddressInfo src_info, dst_info;
+	  size_t read_bytes, write_bytes, read_seq, write_seq;
+	  size_t write_pad_bytes = 0;
+	  size_t read_pad_bytes = 0;
 
-	  size_t src_bytes = src_iter->step(max_bytes, src_info,
-					    flags,
-					    true /*tentative*/);
-	  size_t src_bytes_avail;
-	  if(pre_xd_guid == XFERDES_NO_GUID) {
-	    src_bytes_avail = src_bytes;
+	  // handle serialization-only and deserialization-only cases 
+	  //  specially, because they have uncertainty in how much data
+	  //  they write or read
+	  if(src_serdez_op && !dst_serdez_op) {
+	    // serialization only - must be into an IB
+	    assert(pre_xd_guid == XFERDES_NO_GUID);
+	    assert(next_xd_guid != XFERDES_NO_GUID);
+
+	    // when serializing, we don't know how much output space we're
+	    //  going to consume, so do not step the dst_iter here
+	    // instead, see what we can get from the source and conservatively
+	    //  check flow control on the destination and let the stepping
+	    //  of dst_iter happen in the actual execution of the request
+
+	    // if we don't have space to write a single worst-case
+	    //  element, try again later
+	    if(seq_next_read.span_exists(wbc_snapshot,
+					 src_serdez_op->max_serialized_size) <
+	       src_serdez_op->max_serialized_size)
+	      break;
+
+	    size_t max_bytes = max_req_size;
+
+	    size_t src_bytes = src_iter->step(max_bytes, src_info, flags,
+					      true /*tentative*/);
+
+	    size_t num_elems = src_bytes / src_serdez_op->sizeof_field_type;
+	    assert((num_elems * src_serdez_op->sizeof_field_type) == src_bytes);
+
+	    size_t max_dst_bytes = num_elems * src_serdez_op->max_serialized_size;
+	    // test for space using our conserative bytes written count
+	    size_t dst_bytes_avail = seq_next_read.span_exists(wbc_snapshot,
+							       max_dst_bytes);
+
+	    if(dst_bytes_avail == max_dst_bytes) {
+	      // enough space - confirm the source step
+	      src_iter->confirm_step();
+	    } else {
+	      // not enough space - figure out how many elements we can
+	      //  actually take and adjust the source step
+	      size_t act_elems = dst_bytes_avail / src_serdez_op->max_serialized_size;
+	      // if there was a remainder in the division, get rid of it
+	      dst_bytes_avail = act_elems * src_serdez_op->max_serialized_size;
+	      size_t new_src_bytes = act_elems * src_serdez_op->sizeof_field_type;
+	      src_iter->cancel_step();
+	      src_bytes = src_iter->step(new_src_bytes, src_info, flags,
+					 false /*!tentative*/);
+	      // this can come up shorter than we expect if the source
+	      //  iterator is 2-D or 3-D - if that happens, re-adjust the
+	      //  dest bytes again
+	      if(src_bytes < new_src_bytes) {
+		if(src_bytes == 0) break;
+
+		num_elems = src_bytes / src_serdez_op->sizeof_field_type;
+		assert((num_elems * src_serdez_op->sizeof_field_type) == src_bytes);
+
+		// no need to recheck seq_next_read
+		dst_bytes_avail = num_elems * src_serdez_op->max_serialized_size;
+	      }
+	    }
+
+	    // since the dst_iter will be stepped later, the dst_info is a 
+	    //  don't care, so copy the source so that lines/planes/etc match
+	    //  up
+	    dst_info = src_info;
+
+	    read_seq = read_bytes_total;
+	    read_bytes = src_bytes;
+	    read_bytes_total += src_bytes;
+
+	    write_seq = 0; // filled in later
+	    write_bytes = dst_bytes_avail;
+	    __sync_fetch_and_add(&write_bytes_cons, dst_bytes_avail);
+	    wbc_snapshot += dst_bytes_avail;
+	  } else
+	  if(!src_serdez_op && dst_serdez_op) {
+	    // deserialization only - must be from an IB
+	    assert(pre_xd_guid != XFERDES_NO_GUID);
+	    assert(next_xd_guid == XFERDES_NO_GUID);
+
+	    // when deserializing, we don't know how much input data we need
+	    //  for each element, so do not step the src_iter here
+	    //  instead, see what the destination wants
+	    // if the transfer is still in progress (i.e. pre_bytes_total
+	    //  hasn't been set), we have to be conservative about how many
+	    //  elements we can get from partial data
+
+	    // input data is done only if we know the limit AND we have all
+	    //  the remaining bytes (if any) up to that limit
+	    bool input_data_done = ((pbt_snapshot != size_t(-1)) &&
+				    ((rbc_snapshot >= pbt_snapshot) ||
+				     (seq_pre_write.span_exists(rbc_snapshot,
+								pbt_snapshot - rbc_snapshot) ==
+				      (pbt_snapshot - rbc_snapshot))));
+
+	    // this done-ness overrides many checks based on the conservative
+	    //  dst_serdez_op->max_serialized_size
+	    if(!input_data_done) {
+	      // if we don't have enough input data for a single worst-case
+	      //  element, try again later
+	      if((seq_pre_write.span_exists(rbc_snapshot,
+					    dst_serdez_op->max_serialized_size) <
+		  dst_serdez_op->max_serialized_size)) {
+		break;
+	      }
+	    }
+
+	    size_t max_bytes = max_req_size;
+
+	    size_t dst_bytes = dst_iter->step(max_bytes, dst_info, flags,
+					      !input_data_done);
+
+	    size_t num_elems = dst_bytes / dst_serdez_op->sizeof_field_type;
+	    assert((num_elems * dst_serdez_op->sizeof_field_type) == dst_bytes);
+
+	    size_t max_src_bytes = num_elems * dst_serdez_op->max_serialized_size;
+	    size_t src_bytes_avail;
+	    if(input_data_done) {
+	      // we're certainty to have all the remaining data, so keep
+	      //  the limit at max_src_bytes - we won't actually overshoot
+	      //  (unless the serialized data is corrupted)
+	      src_bytes_avail = max_src_bytes;
+	    } else {
+	      // test for space using our conserative bytes read count
+	      src_bytes_avail = seq_pre_write.span_exists(rbc_snapshot,
+							  max_src_bytes);
+
+	      if(src_bytes_avail == max_src_bytes) {
+		// enough space - confirm the dest step
+		dst_iter->confirm_step();
+	      } else {
+		log_request.info() << "pred limits deserialize: " << max_src_bytes << " -> " << src_bytes_avail;
+		// not enough space - figure out how many elements we can
+		//  actually read and adjust the dest step
+		size_t act_elems = src_bytes_avail / dst_serdez_op->max_serialized_size;
+		// if there was a remainder in the division, get rid of it
+		src_bytes_avail = act_elems * dst_serdez_op->max_serialized_size;
+		size_t new_dst_bytes = act_elems * dst_serdez_op->sizeof_field_type;
+		dst_iter->cancel_step();
+		dst_bytes = dst_iter->step(new_dst_bytes, dst_info, flags,
+					   false /*!tentative*/);
+		// this can come up shorter than we expect if the destination
+		//  iterator is 2-D or 3-D - if that happens, re-adjust the
+		//  source bytes again
+		if(dst_bytes < new_dst_bytes) {
+		  if(dst_bytes == 0) break;
+
+		  num_elems = dst_bytes / dst_serdez_op->sizeof_field_type;
+		  assert((num_elems * dst_serdez_op->sizeof_field_type) == dst_bytes);
+
+		  // no need to recheck seq_pre_write
+		  src_bytes_avail = num_elems * dst_serdez_op->max_serialized_size;
+		}
+	      }
+	    }
+
+	    // since the src_iter will be stepped later, the src_info is a 
+	    //  don't care, so copy the source so that lines/planes/etc match
+	    //  up
+	    src_info = dst_info;
+
+	    read_seq = 0; // filled in later
+	    read_bytes = src_bytes_avail;
+	    __sync_fetch_and_add(&read_bytes_cons, src_bytes_avail);
+	    rbc_snapshot += src_bytes_avail;
+
+	    write_seq = write_bytes_total;
+	    write_bytes = dst_bytes;
+	    write_bytes_total += dst_bytes;
+	    write_bytes_cons = write_bytes_total; // completion detection uses this
 	  } else {
-	    // if we're reading from an intermediate buffer, make sure we
-	    //  have enough data from the predecessor
-	    assert((src_info.num_lines == 1) && (src_info.num_planes == 1));
-	    src_bytes_avail = seq_pre_write.span_exists(bytes_total, src_bytes);
-	    if(src_bytes_avail == 0) {
+	    // either no serialization or simultaneous serdez
+
+	    size_t max_bytes = max_req_size;
+
+	    // if we're not the first in the chain, and we know the total bytes
+	    //  written by the predecessor, don't exceed that
+	    if(pre_xd_guid != XFERDES_NO_GUID) {
+	      size_t pre_max = pbt_snapshot - read_bytes_total;
+	      if(pre_max == 0) {
+		// should not happen with snapshots
+		assert(0);
+		// due to unsynchronized updates to pre_bytes_total, this path
+		//  can happen for an empty transfer reading from an intermediate
+		//  buffer - handle it by looping around and letting the check
+		//  at the top of the loop notice it the second time around
+		if(read_bytes_total == 0)
+		  continue;
+		// otherwise, this shouldn't happen - we should detect this case
+		//  on the the transfer of those last bytes
+		assert(0);
+		iteration_completed = true;
+		break;
+	      }
+	      if(pre_max < max_bytes) {
+		log_request.info() << "pred limits xfer: " << max_bytes << " -> " << pre_max;
+		max_bytes = pre_max;
+	      }
+
+	      // further limit by bytes we've actually received
+	      max_bytes = seq_pre_write.span_exists(read_bytes_total, max_bytes);
+	      if(max_bytes == 0) {
+		// TODO: put this XD to sleep until we do have data
+		break;
+	      }
+	    }
+
+	    if(next_xd_guid != XFERDES_NO_GUID) {
+	      // if we're writing to an intermediate buffer, make sure to not
+	      //  overwrite previously written data that has not been read yet
+	      max_bytes = seq_next_read.span_exists(write_bytes_total, max_bytes);
+	      if(max_bytes == 0) {
+		// TODO: put this XD to sleep until we do have data
+		break;
+	      }
+	    }
+
+	    // tentatively get as much as we can from the source iterator
+	    size_t src_bytes = src_iter->step(max_bytes, src_info,
+					      flags,
+					      true /*tentative*/);
+	    if(src_bytes == 0) {
+	      // not enough space for even one element
 	      // TODO: put this XD to sleep until we do have data
-	      src_iter->cancel_step();
 	      break;
 	    }
-	      
-	    // if src_bytes_avail < src_bytes, we'll need to redo the src_iter
-	    //  step, but wait until we see if we need to shrink even more due
-	    //  to the destination side
-	  }
 
-	  // destination step must be tentative for an IB that might be full
-	  //  or a non-IB target that might collapse dimensions differently
-	  bool dimension_mismatch_possible = ((flags & TransferIterator::LINES_OK) != 0);
-	  bool dst_step_tentative = ((next_xd_guid != XFERDES_NO_GUID) ||
-				     dimension_mismatch_possible);
+	    // destination step must be tentative for an non-IB source or
+	    //  target that might collapse dimensions differently
+	    bool dimension_mismatch_possible = (((pre_xd_guid == XFERDES_NO_GUID) ||
+						 (next_xd_guid == XFERDES_NO_GUID)) &&
+						((flags & TransferIterator::LINES_OK) != 0));
 
-	  size_t dst_bytes = dst_iter->step(src_bytes_avail, dst_info,
-					    flags,
-					    dst_step_tentative);
-	  if(next_xd_guid != XFERDES_NO_GUID) {
-	    // if we're writing to an intermediate buffer, make sure the
-	    //  next XD has read the data we want to overwrite
-	    assert((dst_info.num_lines == 1) && (dst_info.num_planes == 1));
-	    size_t dst_bytes_avail = seq_next_read.span_exists(bytes_total,
-							       dst_bytes);
-	    if(dst_bytes_avail == 0) {
-	      // TODO: put this XD to sleep until we do have data
-	      dst_iter->cancel_step();
-	      src_iter->cancel_step();
-	      break;
+	    size_t dst_bytes = dst_iter->step(src_bytes, dst_info,
+					      flags,
+					      dimension_mismatch_possible);
+	    if(dst_bytes == 0) {
+	      // not enough space for even one element
+
+	      // if this happens when the input is an IB, the output is not,
+	      //  and the input doesn't seem to be limited by max_bytes, this
+	      //  is (probably?) the case that requires padding on the input
+	      //  side
+	      if((pre_xd_guid != XFERDES_NO_GUID) &&
+		 (next_xd_guid == XFERDES_NO_GUID) &&
+		 (src_bytes < max_bytes)) {
+		log_xd.info() << "padding input buffer by " << src_bytes << " bytes";
+		src_info.bytes_per_chunk = 0;
+		src_info.num_lines = 1;
+		src_info.num_planes = 1;
+		dst_info.bytes_per_chunk = 0;
+		dst_info.num_lines = 1;
+		dst_info.num_planes = 1;
+		read_pad_bytes = src_bytes;
+		src_bytes = 0;
+		dimension_mismatch_possible = false;
+		// src iterator will be confirmed below
+		//src_iter->confirm_step();
+		// dst didn't actually take a step, so we don't need to cancel it
+	      } else {
+		src_iter->cancel_step();
+		// TODO: put this XD to sleep until we do have data
+		break;
+	      }
 	    }
 
-	    // if dst_bytes_avail < dst_bytes, we'll need to redo the dst_iter
-	    // step
-	    if(dst_bytes_avail < dst_bytes) {
-	      // cancel and request what we have room to write
-	      dst_iter->cancel_step();
-	      dst_bytes = dst_iter->step(dst_bytes_avail, dst_info, flags,
+	    // does source now need to be shrunk?
+	    if(dst_bytes < src_bytes) {
+	      // cancel the src step and try to just step by dst_bytes
+	      src_iter->cancel_step();
+	      // this step must still be tentative if a dimension mismatch is
+	      //  posisble
+	      src_bytes = src_iter->step(dst_bytes, src_info, flags,
 					 dimension_mismatch_possible);
-	      assert(dst_bytes == dst_bytes_avail);
+	      if(src_bytes == 0) {
+		// corner case that should occur only with a destination 
+		//  intermediate buffer - no transfer, but pad to boundary
+		//  destination wants as long as we're not being limited by
+		//  max_bytes
+		assert((pre_xd_guid == XFERDES_NO_GUID) &&
+		       (next_xd_guid != XFERDES_NO_GUID));
+		if(dst_bytes < max_bytes) {
+		  log_xd.info() << "padding output buffer by " << dst_bytes << " bytes";
+		  src_info.bytes_per_chunk = 0;
+		  src_info.num_lines = 1;
+		  src_info.num_planes = 1;
+		  dst_info.bytes_per_chunk = 0;
+		  dst_info.num_lines = 1;
+		  dst_info.num_planes = 1;
+		  write_pad_bytes = dst_bytes;
+		  dst_bytes = 0;
+		  dimension_mismatch_possible = false;
+		  // src didn't actually take a step, so we don't need to cancel it
+		  dst_iter->confirm_step();
+		} else {
+		  // retry later
+		  // src didn't actually take a step, so we don't need to cancel it
+		  dst_iter->cancel_step();
+		  break;
+		}
+	      }
+	      // a mismatch is still possible if the source is 2+D and the
+	      //  destination wants to stop mid-span
+	      if(src_bytes < dst_bytes) {
+		assert(dimension_mismatch_possible);
+		dst_iter->cancel_step();
+		dst_bytes = dst_iter->step(src_bytes, dst_info, flags,
+					   true /*tentative*/);
+	      }
+	      // byte counts now must match
+	      assert(src_bytes == dst_bytes);
 	    } else {
 	      // in the absense of dimension mismatches, it's safe now to confirm
-	      //  the destination step
+	      //  the source step
 	      if(!dimension_mismatch_possible)
-		dst_iter->confirm_step();
+		src_iter->confirm_step();
 	    }
-	  }
 
-	  // does source now need to be shrunk?
-	  if(dst_bytes < src_bytes) {
-	    // cancel the src step and try to just step by dst_bytes
-	    assert(dst_bytes < src_bytes);  // should never be larger
-	    src_iter->cancel_step();
-	    // this step must still be tentative if a dimension mismatch is
-	    //  posisble
-	    src_bytes = src_iter->step(dst_bytes, src_info, flags,
-				       dimension_mismatch_possible);
-	    // now must match
-	    assert(src_bytes == dst_bytes);
-	  } else {
-	    // in the absense of dimension mismatches, it's safe now to confirm
-	    //  the source step
-	    if(!dimension_mismatch_possible)
-	      src_iter->confirm_step();
-	  }
-
-	  // when 2D transfers are allowed, it is possible that the
-	  // bytes_per_chunk don't match, and we need to add an extra
-	  //  dimension to one side or the other
-	  // NOTE: this transformation can cause the dimensionality of the
-	  //  transfer to grow.  Allow this to happen and detect it at the
-	  //  end.
-	  if(!dimension_mismatch_possible) {
-	    assert(src_info.bytes_per_chunk == dst_info.bytes_per_chunk);
-	    assert(src_info.num_lines == 1);
-	    assert(src_info.num_planes == 1);
-	    assert(dst_info.num_lines == 1);
-	    assert(dst_info.num_planes == 1);
-	  } else {
-	    if(src_info.bytes_per_chunk < dst_info.bytes_per_chunk) {
-	      size_t ratio = dst_info.bytes_per_chunk / src_info.bytes_per_chunk;
-	      assert((src_info.bytes_per_chunk * ratio) == dst_info.bytes_per_chunk);
-	      dst_info.num_planes = dst_info.num_lines;
-	      dst_info.plane_stride = dst_info.line_stride;
-	      dst_info.num_lines = ratio;
-	      dst_info.line_stride = src_info.bytes_per_chunk;
-	      dst_info.bytes_per_chunk = src_info.bytes_per_chunk;
-	    }
-	    if(dst_info.bytes_per_chunk < src_info.bytes_per_chunk) {
-	      size_t ratio = src_info.bytes_per_chunk / dst_info.bytes_per_chunk;
-	      assert((dst_info.bytes_per_chunk * ratio) == src_info.bytes_per_chunk);
-	      src_info.num_planes = src_info.num_lines;
-	      src_info.plane_stride = src_info.line_stride;
-	      src_info.num_lines = ratio;
-	      src_info.line_stride = dst_info.bytes_per_chunk;
-	      src_info.bytes_per_chunk = dst_info.bytes_per_chunk;
-	    }
+	    // when 2D transfers are allowed, it is possible that the
+	    // bytes_per_chunk don't match, and we need to add an extra
+	    //  dimension to one side or the other
+	    // NOTE: this transformation can cause the dimensionality of the
+	    //  transfer to grow.  Allow this to happen and detect it at the
+	    //  end.
+	    if(!dimension_mismatch_possible) {
+	      assert(src_info.bytes_per_chunk == dst_info.bytes_per_chunk);
+	      assert(src_info.num_lines == 1);
+	      assert(src_info.num_planes == 1);
+	      assert(dst_info.num_lines == 1);
+	      assert(dst_info.num_planes == 1);
+	    } else {
+	      // track how much of src and/or dst is "lost" into a 4th
+	      //  dimension
+	      size_t src_4d_factor = 1;
+	      size_t dst_4d_factor = 1;
+	      if(src_info.bytes_per_chunk < dst_info.bytes_per_chunk) {
+		size_t ratio = dst_info.bytes_per_chunk / src_info.bytes_per_chunk;
+		assert((src_info.bytes_per_chunk * ratio) == dst_info.bytes_per_chunk);
+		dst_4d_factor *= dst_info.num_planes; // existing planes lost
+		dst_info.num_planes = dst_info.num_lines;
+		dst_info.plane_stride = dst_info.line_stride;
+		dst_info.num_lines = ratio;
+		dst_info.line_stride = src_info.bytes_per_chunk;
+		dst_info.bytes_per_chunk = src_info.bytes_per_chunk;
+	      }
+	      if(dst_info.bytes_per_chunk < src_info.bytes_per_chunk) {
+		size_t ratio = src_info.bytes_per_chunk / dst_info.bytes_per_chunk;
+		assert((dst_info.bytes_per_chunk * ratio) == src_info.bytes_per_chunk);
+		src_4d_factor *= src_info.num_planes; // existing planes lost
+		src_info.num_planes = src_info.num_lines;
+		src_info.plane_stride = src_info.line_stride;
+		src_info.num_lines = ratio;
+		src_info.line_stride = dst_info.bytes_per_chunk;
+		src_info.bytes_per_chunk = dst_info.bytes_per_chunk;
+	      }
 	  
-	    // similarly, if the number of lines doesn't match, we need to promote
-	    //  one of the requests from 2D to 3D
-	    if(src_info.num_lines < dst_info.num_lines) {
-	      size_t ratio = dst_info.num_lines / src_info.num_lines;
-	      assert((src_info.num_lines * ratio) == dst_info.num_lines);
-	      dst_info.num_planes = ratio;
-	      dst_info.plane_stride = dst_info.line_stride * src_info.num_lines;
-	      dst_info.num_lines = src_info.num_lines;
-	    }
-	    if(dst_info.num_lines < src_info.num_lines) {
-	      size_t ratio = src_info.num_lines / dst_info.num_lines;
-	      assert((dst_info.num_lines * ratio) == src_info.num_lines);
-	      src_info.num_planes = ratio;
-	      src_info.plane_stride = src_info.line_stride * dst_info.num_lines;
-	      src_info.num_lines = dst_info.num_lines;
+	      // similarly, if the number of lines doesn't match, we need to promote
+	      //  one of the requests from 2D to 3D
+	      if(src_info.num_lines < dst_info.num_lines) {
+		size_t ratio = dst_info.num_lines / src_info.num_lines;
+		assert((src_info.num_lines * ratio) == dst_info.num_lines);
+		dst_4d_factor *= dst_info.num_planes; // existing planes lost
+		dst_info.num_planes = ratio;
+		dst_info.plane_stride = dst_info.line_stride * src_info.num_lines;
+		dst_info.num_lines = src_info.num_lines;
+	      }
+	      if(dst_info.num_lines < src_info.num_lines) {
+		size_t ratio = src_info.num_lines / dst_info.num_lines;
+		assert((dst_info.num_lines * ratio) == src_info.num_lines);
+		src_4d_factor *= src_info.num_planes; // existing planes lost
+		src_info.num_planes = ratio;
+		src_info.plane_stride = src_info.line_stride * dst_info.num_lines;
+		src_info.num_lines = dst_info.num_lines;
+	      }
+
+	      // sanity-checks: src/dst should match on lines/planes and we
+	      //  shouldn't have multiple planes if we don't have multiple lines
+	      assert(src_info.num_lines == dst_info.num_lines);
+	      assert((src_info.num_planes * src_4d_factor) == 
+		     (dst_info.num_planes * dst_4d_factor));
+	      assert((src_info.num_lines > 1) || (src_info.num_planes == 1));
+	      assert((dst_info.num_lines > 1) || (dst_info.num_planes == 1));
+
+	      // only do as many planes as both src and dst can manage
+	      if(src_info.num_planes > dst_info.num_planes)
+		src_info.num_planes = dst_info.num_planes;
+	      else
+		dst_info.num_planes = src_info.num_planes;
+
+	      // if 3D isn't allowed, set num_planes back to 1
+	      if((flags & TransferIterator::PLANES_OK) == 0) {
+		src_info.num_planes = 1;
+		dst_info.num_planes = 1;
+	      }
+
+	      // now figure out how many bytes we're actually able to move and
+	      //  if it's less than what we got from the iterators, try again
+	      size_t act_bytes = (src_info.bytes_per_chunk *
+				  src_info.num_lines *
+				  src_info.num_planes);
+	      if(act_bytes == src_bytes) {
+		// things match up - confirm the steps
+		src_iter->confirm_step();
+		dst_iter->confirm_step();
+	      } else {
+		//log_request.info() << "dimension mismatch! " << act_bytes << " < " << src_bytes << " (" << bytes_total << ")";
+		TransferIterator::AddressInfo dummy_info;
+		src_iter->cancel_step();
+		src_bytes = src_iter->step(act_bytes, dummy_info, flags,
+					   false /*!tentative*/);
+		assert(src_bytes == act_bytes);
+		dst_iter->cancel_step();
+		dst_bytes = dst_iter->step(act_bytes, dummy_info, flags,
+					   false /*!tentative*/);
+		assert(dst_bytes == act_bytes);
+	      }
 	    }
 
-	    // sanity-checks: src/dst should match on lines/planes and we
-	    //  shouldn't have multiple planes if we don't have multiple lines
-	    assert(src_info.num_lines == dst_info.num_lines);
-	    assert(src_info.num_planes == dst_info.num_planes);
-	    assert((src_info.num_lines > 1) || (src_info.num_planes == 1));
-
-	    // if 3D isn't allowed, set num_planes back to 1
-	    if((flags & TransferIterator::PLANES_OK) == 0) {
-	      src_info.num_planes = 1;
-	      dst_info.num_planes = 1;
-	    }
-
-	    // now figure out how many bytes we're actually able to move and
-	    //  if it's less than what we got from the iterators, try again
 	    size_t act_bytes = (src_info.bytes_per_chunk *
 				src_info.num_lines *
 				src_info.num_planes);
-	    if(act_bytes == src_bytes) {
-	      // things match up - confirm the steps
-	      src_iter->confirm_step();
-	      dst_iter->confirm_step();
-	    } else {
-	      //log_request.info() << "dimension mismatch! " << act_bytes << " < " << src_bytes << " (" << bytes_total << ")";
-	      TransferIterator::AddressInfo dummy_info;
-	      src_iter->cancel_step();
-	      src_bytes = src_iter->step(act_bytes, dummy_info, flags,
-					 false /*!tentative*/);
-	      assert(src_bytes == act_bytes);
-	      dst_iter->cancel_step();
-	      dst_bytes = dst_iter->step(act_bytes, dummy_info, flags,
-					 false /*!tentative*/);
-	      assert(dst_bytes == act_bytes);
-	    }
+	    read_seq = read_bytes_total;
+	    read_bytes = act_bytes + read_pad_bytes;
+	    read_bytes_total += read_bytes;
+
+	    write_seq = write_bytes_total;
+	    write_bytes = act_bytes + write_pad_bytes;
+	    write_bytes_total += write_bytes;
+	    write_bytes_cons = write_bytes_total; // completion detection uses this
 	  }
 
-	  size_t act_bytes = (src_info.bytes_per_chunk *
-			      src_info.num_lines *
-			      src_info.num_planes);
-
 	  Request* new_req = dequeue_request();
-	  new_req->seq_pos = bytes_total;
-	  new_req->seq_count = act_bytes;
+	  new_req->read_seq_pos = read_seq;
+	  new_req->read_seq_count = read_bytes;
+	  new_req->write_seq_pos = write_seq;
+	  new_req->write_seq_count = write_bytes;
 	  new_req->dim = ((src_info.num_planes == 1) ?
 			  ((src_info.num_lines == 1) ? Request::DIM_1D :
 			                               Request::DIM_2D) :
@@ -533,11 +832,17 @@ namespace Realm {
 	  new_req->src_pstr = src_info.plane_stride;
 	  new_req->dst_pstr = dst_info.plane_stride;
 
-	  bytes_total += act_bytes;
+	  // we can actually hit the end of an intermediate buffer input
+	  //  even if our initial pbt_snapshot was (size_t)-1 because
+	  //  we use the asynchronously-updated seq_pre_write, so if
+	  //  we think we might be done, go ahead and resample here if
+	  //  we still have -1
+	  if((pre_xd_guid != XFERDES_NO_GUID) && (pbt_snapshot == (size_t)-1))
+	    pbt_snapshot = __sync_fetch_and_add(&pre_bytes_total, 0);
 
 	  // is our iterator done?
 	  if(src_iter->done() || dst_iter->done() ||
-	     (bytes_total == pre_bytes_total)) {
+	     (read_bytes_total == pbt_snapshot)) {
 	    assert(!iteration_completed);
 	    iteration_completed = true;
 	    
@@ -545,7 +850,14 @@ namespace Realm {
 	    assert((pre_xd_guid != XFERDES_NO_GUID) || src_iter->done());
 	    assert((next_xd_guid != XFERDES_NO_GUID) || dst_iter->done());
 
-	    assert((pre_xd_guid == XFERDES_NO_GUID) || (pre_bytes_total == bytes_total));
+	    if(!src_serdez_op && dst_serdez_op) {
+	      // ok to be over, due to the conservative nature of
+	      //  deserialization reads
+	      assert(rbc_snapshot >= pbt_snapshot);
+	    } else {
+	      assert((pre_xd_guid == XFERDES_NO_GUID) ||
+		     (pbt_snapshot == read_bytes_total));
+	    }
 	  }
 
 	  switch(new_req->dim) {
@@ -726,8 +1038,10 @@ namespace Realm {
       // to be complete, we need to have finished iterating (which may have been
       //  achieved by getting a pre_bytes_total update) and finished all of our
       //  writes
+      // use the conservative byte write count here to make sure we don't
+      //  trigger early when serializing
       return (iteration_completed &&
-	      (seq_write.span_exists(0, bytes_total) == bytes_total));
+	      (seq_write.span_exists(0, write_bytes_cons) == write_bytes_cons));
     }
 
       void XferDes::update_bytes_read(size_t offset, size_t size)
@@ -785,14 +1099,15 @@ namespace Realm {
 	size_t inc_amt = seq_write.add_span(offset, size);
 	log_xd.info() << "bytes_write: " << guid << " " << offset << "+" << size << " -> " << inc_amt;
 	if(next_xd_guid != XFERDES_NO_GUID) {
-	  if(inc_amt > 0) {
+	  // we can skip an update if this was empty _and_ we're not done yet
+	  if((inc_amt > 0) || (offset == write_bytes_total)) {
 	    // this update carries our bytes_total amount, if we know it
 	    //  to be final
             xferDes_queue->update_pre_bytes_write(next_xd_guid,
 						  offset,
 						  inc_amt,
 						  (iteration_completed ?
-						     bytes_total :
+						     write_bytes_total :
 						     (size_t)-1));
 	  } else {
 	    // TODO: mode to send non-contiguous updates?
@@ -859,7 +1174,7 @@ namespace Realm {
       void XferDes::default_notify_request_read_done(Request* req)
       {  
         req->is_read_done = true;
-	update_bytes_read(req->seq_pos, req->seq_count);
+	update_bytes_read(req->read_seq_pos, req->read_seq_count);
 #if 0
         if (req->dim == Request::DIM_1D)
           simple_update_bytes_read(req->src_off, req->nbytes);
@@ -871,7 +1186,7 @@ namespace Realm {
       void XferDes::default_notify_request_write_done(Request* req)
       {
         req->is_write_done = true;
-	update_bytes_write(req->seq_pos, req->seq_count);
+	update_bytes_write(req->write_seq_pos, req->write_seq_count);
 #if 0
         if (req->dim == Request::DIM_1D)
           simple_update_bytes_write(req->dst_off, req->nbytes);
@@ -892,6 +1207,7 @@ namespace Realm {
                                         bool mark_started,
 				   Memory _src_mem, Memory _dst_mem,
 				   TransferIterator *_src_iter, TransferIterator *_dst_iter,
+				   CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
                                         uint64_t _max_req_size,
                                         long max_nr,
                                         int _priority,
@@ -902,6 +1218,7 @@ namespace Realm {
 		  mark_started,
 		  //_src_buf, _dst_buf, _domain, _oas_vec,
 		  _src_mem, _dst_mem, _src_iter, _dst_iter,
+		  _src_serdez_id, _dst_serdez_id,
 		  _max_req_size, _priority, _order,
                   XferDes::XFER_MEM_CPY, _complete_fence)
       {
@@ -910,6 +1227,11 @@ namespace Realm {
         channel = channel_manager->get_memcpy_channel();
         //src_buf_base = (char*) src_mem_impl->get_direct_ptr(_src_buf.alloc_offset, 0);
         //dst_buf_base = (char*) dst_mem_impl->get_direct_ptr(_dst_buf.alloc_offset, 0);
+	// if we're serializing or deserializing (but not both), limit
+	//  ourselves to a single outstanding request to deal with uncertainty
+	//  in transfer sizes
+	if(_src_serdez_id != _dst_serdez_id)
+	  max_nr = 1;
         memcpy_reqs = (MemcpyRequest*) calloc(max_nr, sizeof(MemcpyRequest));
         for (int i = 0; i < max_nr; i++) {
           memcpy_reqs[i].xd = this;
@@ -926,14 +1248,22 @@ namespace Realm {
         long new_nr = default_get_requests(requests, nr, flags);
         for (long i = 0; i < new_nr; i++)
         {
-          //reqs[i]->src_base = (char*)(src_buf_base + reqs[i]->src_off);
-          //reqs[i]->dst_base = (char*)(dst_buf_base + reqs[i]->dst_off);
-	  reqs[i]->src_base = src_mem->get_direct_ptr(reqs[i]->src_off,
-						      reqs[i]->nbytes);
-	  reqs[i]->dst_base = dst_mem->get_direct_ptr(reqs[i]->dst_off,
-						      reqs[i]->nbytes);
-	  assert(reqs[i]->src_base != 0);
-	  assert(reqs[i]->dst_base != 0);
+          if(!src_serdez_op && dst_serdez_op) {
+            // source offset is determined later - not safe to call get_direct_ptr now
+            reqs[i]->src_base = 0;
+          } else {
+	    reqs[i]->src_base = src_mem->get_direct_ptr(reqs[i]->src_off,
+						        reqs[i]->nbytes);
+	    assert(reqs[i]->src_base != 0);
+          }
+          if(src_serdez_op && !dst_serdez_op) {
+            // dest offset is determined later - not safe to call get_direct_ptr now
+            reqs[i]->dst_base = 0;
+          } else {
+	    reqs[i]->dst_base = dst_mem->get_direct_ptr(reqs[i]->dst_off,
+						        reqs[i]->nbytes);
+	    assert(reqs[i]->dst_base != 0);
+          }
         }
         return new_nr;
 
@@ -1003,6 +1333,7 @@ namespace Realm {
 				   bool mark_started,
 				   Memory _src_mem, Memory _dst_mem,
 				   TransferIterator *_src_iter, TransferIterator *_dst_iter,
+				   CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
 				   uint64_t _max_req_size,
 				   long max_nr,
 				   int _priority,
@@ -1014,6 +1345,7 @@ namespace Realm {
 		  mark_started,
 		  //_src_buf, _dst_buf, _domain, _oas_vec,
 		  _src_mem, _dst_mem, _src_iter, _dst_iter,
+		  _src_serdez_id, _dst_serdez_id,
 		  _max_req_size, _priority, _order,
                   _kind, _complete_fence)
       {
@@ -1100,6 +1432,7 @@ namespace Realm {
 					     bool mark_started,
 					     Memory _src_mem, Memory _dst_mem,
 					     TransferIterator *_src_iter, TransferIterator *_dst_iter,
+					     CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
 					     uint64_t _max_req_size,
 					     long max_nr,
 					     int _priority,
@@ -1110,6 +1443,7 @@ namespace Realm {
 		  mark_started,
 		  //_src_buf, _dst_buf,_domain, _oas_vec,
 		  _src_mem, _dst_mem, _src_iter, _dst_iter,
+		  _src_serdez_id, _dst_serdez_id,
 		  _max_req_size, _priority, _order,
                   XferDes::XFER_REMOTE_WRITE, _complete_fence)
       {
@@ -1188,6 +1522,7 @@ namespace Realm {
 			     bool mark_started,
 			     Memory _src_mem, Memory _dst_mem,
 			     TransferIterator *_src_iter, TransferIterator *_dst_iter,
+			     CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
 			     uint64_t _max_req_size,
 			     long max_nr,
 			     int _priority,
@@ -1199,6 +1534,7 @@ namespace Realm {
 		mark_started,
 		//_src_buf, _dst_buf, _domain, _oas_vec,
 		_src_mem, _dst_mem, _src_iter, _dst_iter,
+		_src_serdez_id, _dst_serdez_id,
 		_max_req_size, _priority,
                 _order, _kind, _complete_fence)
       {
@@ -1333,6 +1669,7 @@ namespace Realm {
 			     RegionInstance inst,
 			     Memory _src_mem, Memory _dst_mem,
 			     TransferIterator *_src_iter, TransferIterator *_dst_iter,
+			     CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
 			     uint64_t _max_req_size,
 			     long max_nr,
 			     int _priority,
@@ -1344,6 +1681,7 @@ namespace Realm {
 		  mark_started,
 		  //_src_buf, _dst_buf, _domain, _oas_vec,
 		  _src_mem, _dst_mem, _src_iter, _dst_iter,
+		  _src_serdez_id, _dst_serdez_id,
 		  _max_req_size, _priority,
                   _order, _kind, _complete_fence)
       {
@@ -1424,19 +1762,22 @@ namespace Realm {
 	    break;
 	  }
 
-	  // some sort of per-channel max request size?
-	  size_t max_bytes = 1 << 20;
+	  // no support for serdez ops
+	  assert(src_serdez_op == 0);
+	  assert(dst_serdez_op == 0);
+
+	  size_t max_bytes = max_req_size;
 
 	  // if we're not the first in the chain, and we know the total bytes
 	  //  written by the predecessor, don't exceed that
 	  if(pre_xd_guid != XFERDES_NO_GUID) {
-	    size_t pre_max = pre_bytes_total - bytes_total;
+	    size_t pre_max = pre_bytes_total - read_bytes_total;
 	    if(pre_max == 0) {
 	      // due to unsynchronized updates to pre_bytes_total, this path
 	      //  can happen for an empty transfer reading from an intermediate
 	      //  buffer - handle it by looping around and letting the check
 	      //  at the top of the loop notice it the second time around
-	      if(bytes_total == 0)
+	      if(read_bytes_total == 0)
 		continue;
 	      // otherwise, this shouldn't happen - we should detect this case
 	      //  on the the transfer of those last bytes
@@ -1450,7 +1791,7 @@ namespace Realm {
 	    }
 
 	    // further limit based on data that has actually shown up
-	    max_bytes = seq_pre_write.span_exists(bytes_total, max_bytes);
+	    max_bytes = seq_pre_write.span_exists(read_bytes_total, max_bytes);
 	    if(max_bytes == 0)
 	      break;
 	  }
@@ -1458,7 +1799,7 @@ namespace Realm {
 	  // similarly, limit our max transfer size based on the amount the
 	  //  destination IB buffer can take (assuming there is an IB)
 	  if(next_xd_guid != XFERDES_NO_GUID) {
-	    max_bytes = seq_next_read.span_exists(bytes_total, max_bytes);
+	    max_bytes = seq_next_read.span_exists(write_bytes_total, max_bytes);
 	    if(max_bytes == 0)
 	      break;
 	  }
@@ -1558,10 +1899,14 @@ namespace Realm {
 #endif
 
 	  new_req->nbytes = hdf5_bytes;
-	  new_req->seq_pos = bytes_total;
-	  new_req->seq_count = hdf5_bytes;
 
-	  bytes_total += hdf5_bytes;
+	  new_req->read_seq_pos = read_bytes_total;
+	  new_req->read_seq_count = hdf5_bytes;
+	  read_bytes_total += hdf5_bytes;
+
+	  new_req->write_seq_pos = write_bytes_total;
+	  new_req->write_seq_count = hdf5_bytes;
+	  write_bytes_total += hdf5_bytes;
 
 	  requests[idx++] = new_req;
 	}
@@ -1720,6 +2065,177 @@ namespace Realm {
       }
 #endif
 
+      std::ostream& operator<<(std::ostream& os, const Channel::SupportedPath& p)
+      {
+	switch(p.src_type) {
+	case Channel::SupportedPath::SPECIFIC_MEMORY:
+	  { os << "src=" << p.src_mem; break; }
+	case Channel::SupportedPath::LOCAL_KIND:
+	  { os << "src=" << p.src_kind << "(lcl)"; break; }
+	case Channel::SupportedPath::GLOBAL_KIND:
+	  { os << "src=" << p.src_kind << "(gbl)"; break; }
+	default:
+	  assert(0);
+	}
+	switch(p.dst_type) {
+	case Channel::SupportedPath::SPECIFIC_MEMORY:
+	  { os << " dst=" << p.dst_mem; break; }
+	case Channel::SupportedPath::LOCAL_KIND:
+	  { os << " dst=" << p.dst_kind << "(lcl)"; break; }
+	case Channel::SupportedPath::GLOBAL_KIND:
+	  { os << " dst=" << p.dst_kind << "(gbl)"; break; }
+	default:
+	  assert(0);
+	}
+	os << " bw=" << p.bandwidth << " lat=" << p.latency;
+	if(p.serdez_allowed)
+	  os << " serdez";
+	if(p.redops_allowed)
+	  os << " redop";
+	return os;
+      }
+	  
+      void Channel::print(std::ostream& os) const
+      {
+	os << "channel{ node=" << node << " kind=" << kind << " paths=[";
+	if(!paths.empty()) {
+	  for(std::vector<SupportedPath>::const_iterator it = paths.begin();
+	      it != paths.end();
+	      ++it)
+	    os << "\n    " << *it;
+	  os << "\n";
+	}
+	os << "] }";
+      }
+
+      const std::vector<Channel::SupportedPath>& Channel::get_paths(void) const
+      {
+	return paths;
+      }
+	  
+      bool Channel::supports_path(Memory src_mem, Memory dst_mem,
+				  CustomSerdezID src_serdez_id,
+				  CustomSerdezID dst_serdez_id,
+				  ReductionOpID redop_id,
+				  unsigned *bw_ret /*= 0*/,
+				  unsigned *lat_ret /*= 0*/)
+      {
+	for(std::vector<SupportedPath>::const_iterator it = paths.begin();
+	    it != paths.end();
+	    ++it) {
+	  if(!it->serdez_allowed && ((src_serdez_id != 0) ||
+				     (dst_serdez_id != 0)))
+	    continue;
+	  if(!it->redops_allowed && (redop_id != 0))
+	    continue;
+
+	  if(it->src_type == SupportedPath::SPECIFIC_MEMORY) {
+	    if(src_mem != it->src_mem)
+	      continue;
+	  } else {
+	    if(src_mem.kind() != it->src_kind)
+	      continue;
+	    if((it->src_type == SupportedPath::LOCAL_KIND) &&
+	       (ID(src_mem).memory.owner_node != node))
+	      continue;
+	  }
+
+	  if(it->dst_type == SupportedPath::SPECIFIC_MEMORY) {
+	    if(dst_mem != it->dst_mem)
+	      continue;
+	  } else {
+	    if(dst_mem.kind() != it->dst_kind)
+	      continue;
+	    if((it->dst_type == SupportedPath::LOCAL_KIND) &&
+	       (ID(dst_mem).memory.owner_node != node))
+	      continue;
+	  }
+	  
+	  // match
+	  if(bw_ret) *bw_ret = it->bandwidth;
+	  if(lat_ret) *lat_ret = it->latency;
+	  return true;
+	}
+
+	return false;
+      }
+
+      void Channel::add_path(Memory src_mem, Memory dst_mem,
+			     unsigned bandwidth, unsigned latency,
+			     bool redops_allowed, bool serdez_allowed)
+      {
+	size_t idx = paths.size();
+	paths.resize(idx + 1);
+	SupportedPath &p = paths[idx];
+	p.src_type = SupportedPath::SPECIFIC_MEMORY;
+	p.src_mem = src_mem;
+	p.dst_type = SupportedPath::SPECIFIC_MEMORY;
+	p.dst_mem = dst_mem;
+	p.bandwidth = bandwidth;
+	p.latency = latency;
+	p.redops_allowed = redops_allowed;
+	p.serdez_allowed = serdez_allowed;
+      }
+
+      void Channel::add_path(Memory src_mem, Memory::Kind dst_kind, bool dst_global,
+		    unsigned bandwidth, unsigned latency,
+		    bool redops_allowed, bool serdez_allowed)
+      {
+	size_t idx = paths.size();
+	paths.resize(idx + 1);
+	SupportedPath &p = paths[idx];
+	p.src_type = SupportedPath::SPECIFIC_MEMORY;
+	p.src_mem = src_mem;
+	p.dst_type = (dst_global ? SupportedPath::GLOBAL_KIND :
+		                   SupportedPath::LOCAL_KIND);
+	p.dst_kind = dst_kind;
+	p.bandwidth = bandwidth;
+	p.latency = latency;
+	p.redops_allowed = redops_allowed;
+	p.serdez_allowed = serdez_allowed;
+      }
+
+      void Channel::add_path(Memory::Kind src_kind, bool src_global,
+		    Memory::Kind dst_kind, bool dst_global,
+		    unsigned bandwidth, unsigned latency,
+		    bool redops_allowed, bool serdez_allowed)
+      {
+	size_t idx = paths.size();
+	paths.resize(idx + 1);
+	SupportedPath &p = paths[idx];
+	p.src_type = (src_global ? SupportedPath::GLOBAL_KIND :
+		                   SupportedPath::LOCAL_KIND);
+	p.src_kind = src_kind;
+	p.dst_type = (dst_global ? SupportedPath::GLOBAL_KIND :
+		                   SupportedPath::LOCAL_KIND);
+	p.dst_kind = dst_kind;
+	p.bandwidth = bandwidth;
+	p.latency = latency;
+	p.redops_allowed = redops_allowed;
+	p.serdez_allowed = serdez_allowed;
+      }
+
+      RemoteChannel::RemoteChannel(void)
+	: Channel(XferDes::XFER_NONE)
+      {}
+
+      long RemoteChannel::submit(Request** requests, long nr)
+      {
+	assert(0);
+	return 0;
+      }
+
+      void RemoteChannel::pull()
+      {
+	assert(0);
+      }
+
+      long RemoteChannel::available()
+      {
+	assert(0);
+	return 0;
+      }
+
       /*static*/ void* MemcpyThread::start(void* arg)
       {
         MemcpyThread* worker = (MemcpyThread*) arg;
@@ -1762,9 +2278,14 @@ namespace Realm {
         channel->stop();
       }
 
+      static const Memory::Kind cpu_mem_kinds[] = { Memory::SYSTEM_MEM,
+						    Memory::REGDMA_MEM,
+						    Memory::Z_COPY_MEM };
+      static const size_t num_cpu_mem_kinds = sizeof(cpu_mem_kinds) / sizeof(cpu_mem_kinds[0]);
+
       MemcpyChannel::MemcpyChannel(long max_nr)
+	: Channel(XferDes::XFER_MEM_CPY)
       {
-        kind = XferDes::XFER_MEM_CPY;
         capacity = max_nr;
         is_stopped = false;
         sleep_threads = false;
@@ -1772,6 +2293,14 @@ namespace Realm {
         pthread_mutex_init(&finished_lock, NULL);
         pthread_cond_init(&pending_cond, NULL);
         //cbs = (MemcpyRequest**) calloc(max_nr, sizeof(MemcpyRequest*));
+	unsigned bw = 0; // TODO
+	unsigned latency = 0;
+	// any combination of SYSTEM/REGDMA/Z_COPY_MEM
+	for(size_t i = 0; i < num_cpu_mem_kinds; i++)
+	  for(size_t j = 0; j < num_cpu_mem_kinds; j++)
+	    add_path(cpu_mem_kinds[i], false,
+		     cpu_mem_kinds[j], false,
+		     bw, latency, true, true);
       }
 
       MemcpyChannel::~MemcpyChannel()
@@ -1780,6 +2309,25 @@ namespace Realm {
         pthread_mutex_destroy(&finished_lock);
         pthread_cond_destroy(&pending_cond);
         //free(cbs);
+      }
+
+      bool MemcpyChannel::supports_path(Memory src_mem, Memory dst_mem,
+					CustomSerdezID src_serdez_id,
+					CustomSerdezID dst_serdez_id,
+					ReductionOpID redop_id,
+					unsigned *bw_ret /*= 0*/,
+					unsigned *lat_ret /*= 0*/)
+      {
+	// simultaneous serialization/deserialization not
+	//  allowed anywhere right now
+	if((src_serdez_id != 0) && (dst_serdez_id != 0))
+	  return false;
+
+	// fall through to normal checks
+	return Channel::supports_path(src_mem, dst_mem,
+				      src_serdez_id, dst_serdez_id,
+				      redop_id,
+				      bw_ret, lat_ret);
       }
 
       void MemcpyChannel::stop()
@@ -1821,43 +2369,426 @@ namespace Realm {
         MemcpyRequest** mem_cpy_reqs = (MemcpyRequest**) requests;
         for (long i = 0; i < nr; i++) {
           MemcpyRequest* req = mem_cpy_reqs[i];
+	  // handle 1-D, 2-D, and 3-D in a single loop
 	  switch(req->dim) {
-	  case Request::DIM_1D :
-	    {
-	      memcpy(req->dst_base, req->src_base, req->nbytes);
-	      break;
-	    }
-	  case Request::DIM_2D :
-	    {
-	      const char *src = (const char *)(req->src_base);
-	      char *dst = (char *)(req->dst_base);
-	      for (size_t i = 0; i < req->nlines; i++) {
-		memcpy(dst, src, req->nbytes);
-		src += req->src_str;
-		dst += req->dst_str;
-	      }
-	      break;
-	    }
-	  case Request::DIM_3D :
-	    {
-	      const char *src_p = (const char *)(req->src_base);
-	      char *dst_p = (char *)(req->dst_base);
-	      for (size_t j = 0; j < req->nplanes; j++) {
-		const char *src = src_p;
-		char *dst = dst_p;
-		for (size_t i = 0; i < req->nlines; i++) {
-		  memcpy(dst, src, req->nbytes);
-		  src += req->src_str;
-		  dst += req->dst_str;
-		}
-		src_p += req->src_pstr;
-		dst_p += req->dst_pstr;
-	      }
-	      break;
-	    }
+	  case Request::DIM_1D:
+	    assert(req->nplanes == 1);
+	    assert(req->nlines == 1);
+	    break;
+	  case Request::DIM_2D:
+	    assert(req->nplanes == 1);
+	    break;
+	  case Request::DIM_3D:
+	    // nothing to check
+	    break;
 	  default:
 	    assert(0);
 	  }
+	  size_t rewind_src = 0;
+	  size_t rewind_dst = 0;
+	  if(req->xd->src_serdez_op && !req->xd->dst_serdez_op) {
+	    // we manage write_bytes_total, write_seq_{pos,count}
+	    req->write_seq_pos = req->xd->write_bytes_total;
+	  }
+	  if(!req->xd->src_serdez_op && req->xd->dst_serdez_op) {
+	    // we manage read_bytes_total, read_seq_{pos,count}
+	    req->read_seq_pos = req->xd->read_bytes_total;
+	  }
+	  {
+	    char *wrap_buffer = 0;
+	    bool wrap_buffer_malloced = false;
+	    const size_t ALLOCA_LIMIT = 4096;
+	    const char *src_p = (const char *)(req->src_base);
+	    char *dst_p = (char *)(req->dst_base);
+	    for (size_t j = 0; j < req->nplanes; j++) {
+	      const char *src = src_p;
+	      char *dst = dst_p;
+	      for (size_t i = 0; i < req->nlines; i++) {
+		if(req->xd->src_serdez_op) {
+		  if(req->xd->dst_serdez_op) {
+		    // serialization AND deserialization
+		    assert(0);
+		  } else {
+		    // serialization
+		    size_t field_size = req->xd->src_serdez_op->sizeof_field_type;
+		    size_t num_elems = req->nbytes / field_size;
+		    assert((num_elems * field_size) == req->nbytes);
+		    size_t maxser_size = req->xd->src_serdez_op->max_serialized_size;
+		    size_t max_bytes = num_elems * maxser_size;
+		    // ask the dst iterator (which should be a
+		    //  WrappingFIFOIterator for enough space to write all the
+		    //  serialized data in the worst case
+		    TransferIterator::AddressInfo dst_info;
+		    size_t bytes_avail = req->xd->dst_iter->step(max_bytes,
+								 dst_info,
+								 0,
+								 true /*tentative*/);
+		    size_t bytes_used;
+		    if(bytes_avail == max_bytes) {
+		      // got enough space to do it all in one go
+		      void *dst = req->xd->dst_mem->get_direct_ptr(dst_info.base_offset,
+								   bytes_avail);
+		      assert(dst != 0);
+		      bytes_used = req->xd->src_serdez_op->serialize(src,
+								     field_size,
+								     num_elems,
+								     dst);
+		      if(bytes_used == max_bytes) {
+			req->xd->dst_iter->confirm_step();
+		      } else {
+			req->xd->dst_iter->cancel_step();
+			bytes_avail = req->xd->dst_iter->step(bytes_used,
+							      dst_info,
+							      0,
+							      false /*!tentative*/);
+			assert(bytes_avail == bytes_used);
+		      }
+		    } else {
+		      // we didn't get the worst case amount, but it might be
+		      //  enough
+		      void *dst = req->xd->dst_mem->get_direct_ptr(dst_info.base_offset,
+								   bytes_avail);
+		      assert(dst != 0);
+		      size_t elems_done = 0;
+		      size_t bytes_left = bytes_avail;
+		      bytes_used = 0;
+		      while((elems_done < num_elems) &&
+			    (bytes_left >= maxser_size)) {
+			size_t todo = std::min(num_elems - elems_done,
+					       bytes_left / maxser_size);
+			size_t amt = req->xd->src_serdez_op->serialize(((const char *)src) + (elems_done * field_size),
+								       field_size,
+								       todo,
+								       dst);
+			assert(amt <= bytes_left);
+			elems_done += todo;
+			bytes_left -= amt;
+			dst = ((char *)dst) + amt;
+			bytes_used += amt;
+		      }
+		      if(elems_done == num_elems) {
+			// we ended up getting all we needed without wrapping
+			if(bytes_used == bytes_avail) {
+			  req->xd->dst_iter->confirm_step();
+			} else {
+			  req->xd->dst_iter->cancel_step();
+			  bytes_avail = req->xd->dst_iter->step(bytes_used,
+								dst_info,
+								0,
+								false /*!tentative*/);
+			  assert(bytes_avail == bytes_used);
+			}
+		      } else {
+			// did we get lucky and finish on the wrap boundary?
+			if(bytes_left == 0) {
+			  req->xd->dst_iter->confirm_step();
+			} else {
+			  // need a temp buffer to deal with wraparound
+			  if(!wrap_buffer) {
+			    if(maxser_size > ALLOCA_LIMIT) {
+			      wrap_buffer_malloced = true;
+			      wrap_buffer = (char *)malloc(maxser_size);
+			    } else {
+			      wrap_buffer = (char *)alloca(maxser_size);
+			    }
+			  }
+			  while((elems_done < num_elems) && (bytes_left > 0)) {
+			    // serialize one element into our buffer
+			    size_t amt = req->xd->src_serdez_op->serialize(((const char *)src) + (elems_done * field_size),
+									   wrap_buffer);
+			    if(amt < bytes_left) {
+			      memcpy(dst, wrap_buffer, amt);
+			      bytes_left -= amt;
+			      dst = ((char *)dst) + amt;
+			    } else {
+			      memcpy(dst, wrap_buffer, bytes_left);
+			      req->xd->dst_iter->confirm_step();
+			      if(amt > bytes_left) {
+				size_t amt2 = req->xd->dst_iter->step(amt - bytes_left,
+								      dst_info,
+								      0,
+								      false /*!tentative*/);
+				assert(amt2 == (amt - bytes_left));
+				void *dst = req->xd->dst_mem->get_direct_ptr(dst_info.base_offset,
+									     amt2);
+				assert(dst != 0);
+				memcpy(dst, wrap_buffer+bytes_left, amt2);
+			      }
+			      bytes_left = 0;
+			    }
+			    elems_done++;
+			    bytes_used += amt;
+			  }
+			  // if we still finished with bytes left over, give 
+			  //  them back to the iterator
+			  if(bytes_left > 0) {
+			    assert(elems_done == num_elems);
+			    req->xd->dst_iter->cancel_step();
+			    size_t amt = req->xd->dst_iter->step(bytes_used,
+								 dst_info,
+								 0,
+								 false /*!tentative*/);
+			    assert(amt == bytes_used);
+			  }
+			}
+
+			// now that we're after the wraparound, any remaining
+			//  elements are fairly straightforward
+			if(elems_done < num_elems) {
+			  size_t max_remain = ((num_elems - elems_done) * maxser_size);
+			  size_t amt = req->xd->dst_iter->step(max_remain,
+							       dst_info,
+							       0,
+							       true /*tentative*/);
+			  assert(amt == max_remain); // no double-wrap
+			  void *dst = req->xd->dst_mem->get_direct_ptr(dst_info.base_offset,
+								       amt);
+			  assert(dst != 0);
+			  size_t amt2 = req->xd->src_serdez_op->serialize(((const char *)src) + (elems_done * field_size),
+									  field_size,
+									  num_elems - elems_done,
+									  dst);
+			  bytes_used += amt2;
+			  if(amt2 == max_remain) {
+			    req->xd->dst_iter->confirm_step();
+			  } else {
+			    req->xd->dst_iter->cancel_step();
+			    size_t amt3 = req->xd->dst_iter->step(amt2,
+								  dst_info,
+								  0,
+								  false /*!tentative*/);
+			    assert(amt3 == amt2);
+			  }
+			}
+		      }
+		    }
+		    assert(bytes_used <= max_bytes);
+		    if(bytes_used < max_bytes)
+		      rewind_dst += (max_bytes - bytes_used);
+		    req->xd->write_bytes_total += bytes_used;
+		  }
+		} else {
+		  if(req->xd->dst_serdez_op) {
+		    // deserialization
+		    size_t field_size = req->xd->dst_serdez_op->sizeof_field_type;
+		    size_t num_elems = req->nbytes / field_size;
+		    assert((num_elems * field_size) == req->nbytes);
+		    size_t maxser_size = req->xd->dst_serdez_op->max_serialized_size;
+		    size_t max_bytes = num_elems * maxser_size;
+		    // ask the srct iterator (which should be a
+		    //  WrappingFIFOIterator for enough space to read all the
+		    //  serialized data in the worst case
+		    TransferIterator::AddressInfo src_info;
+		    size_t bytes_avail = req->xd->src_iter->step(max_bytes,
+								 src_info,
+								 0,
+								 true /*tentative*/);
+		    size_t bytes_used;
+		    if(bytes_avail == max_bytes) {
+		      // got enough space to do it all in one go
+		      const void *src = req->xd->src_mem->get_direct_ptr(src_info.base_offset,
+									 bytes_avail);
+		      assert(src != 0);
+		      bytes_used = req->xd->dst_serdez_op->deserialize(dst,
+								       field_size,
+								       num_elems,
+								       src);
+		      if(bytes_used == max_bytes) {
+			req->xd->src_iter->confirm_step();
+		      } else {
+			req->xd->src_iter->cancel_step();
+			bytes_avail = req->xd->src_iter->step(bytes_used,
+							      src_info,
+							      0,
+							      false /*!tentative*/);
+			assert(bytes_avail == bytes_used);
+		      }
+		    } else {
+		      // we didn't get the worst case amount, but it might be
+		      //  enough
+		      const void *src = req->xd->src_mem->get_direct_ptr(src_info.base_offset,
+									 bytes_avail);
+		      assert(src != 0);
+		      size_t elems_done = 0;
+		      size_t bytes_left = bytes_avail;
+		      bytes_used = 0;
+		      while((elems_done < num_elems) &&
+			    (bytes_left >= maxser_size)) {
+			size_t todo = std::min(num_elems - elems_done,
+					       bytes_left / maxser_size);
+			size_t amt = req->xd->dst_serdez_op->deserialize(((char *)dst) + (elems_done * field_size),
+									 field_size,
+									 todo,
+									 src);
+			assert(amt <= bytes_left);
+			elems_done += todo;
+			bytes_left -= amt;
+			src = ((const char *)src) + amt;
+			bytes_used += amt;
+		      }
+		      if(elems_done == num_elems) {
+			// we ended up getting all we needed without wrapping
+			if(bytes_used == bytes_avail) {
+			  req->xd->src_iter->confirm_step();
+			} else {
+			  req->xd->src_iter->cancel_step();
+			  bytes_avail = req->xd->src_iter->step(bytes_used,
+								src_info,
+								0,
+								false /*!tentative*/);
+			  assert(bytes_avail == bytes_used);
+			}
+		      } else {
+			// did we get lucky and finish on the wrap boundary?
+			if(bytes_left == 0) {
+			  req->xd->src_iter->confirm_step();
+			} else {
+			  // need a temp buffer to deal with wraparound
+			  if(!wrap_buffer) {
+			    if(maxser_size > ALLOCA_LIMIT) {
+			      wrap_buffer_malloced = true;
+			      wrap_buffer = (char *)malloc(maxser_size);
+			    } else {
+			      wrap_buffer = (char *)alloca(maxser_size);
+			    }
+			  }
+			  // keep a snapshot of the iterator in cse we don't wrap after all
+			  Serialization::DynamicBufferSerializer dbs(64);
+			  dbs << *(req->xd->src_iter);
+			  memcpy(wrap_buffer, src, bytes_left);
+			  // get pointer to data on other side of wrap
+			  req->xd->src_iter->confirm_step();
+			  size_t amt = req->xd->src_iter->step(max_bytes - bytes_avail,
+							       src_info,
+							       0,
+							       true /*tentative*/);
+			  // it's actually ok for this to appear to come up short - due to
+			  //  flow control we know we won't ever actually wrap around
+			  //assert(amt == (max_bytes - bytes_avail));
+			  const void *src = req->xd->src_mem->get_direct_ptr(src_info.base_offset,
+									     amt);
+			  assert(src != 0);
+			  memcpy(wrap_buffer + bytes_left, src, maxser_size - bytes_left);
+			  src = ((const char *)src) + (maxser_size - bytes_left);
+
+			  while((elems_done < num_elems) && (bytes_left > 0)) {
+			    // deserialize one element from our buffer
+			    amt = req->xd->dst_serdez_op->deserialize(((char *)dst) + (elems_done * field_size),
+								      wrap_buffer);
+			    if(amt < bytes_left) {
+			      // slide data, get a few more bytes
+			      memmove(wrap_buffer,
+				      wrap_buffer + amt,
+				      maxser_size - amt);
+			      memcpy(wrap_buffer + maxser_size, src, amt);
+			      bytes_left -= amt;
+			      src = ((const char *)src) + amt;
+			    } else {
+			      // update iterator to say how much wrapped data was actually used
+			      req->xd->src_iter->cancel_step();
+			      if(amt > bytes_left) {
+				size_t amt2 = req->xd->src_iter->step(amt - bytes_left,
+								      src_info,
+								      0,
+								      false /*!tentative*/);
+				assert(amt2 == (amt - bytes_left));
+			      }
+			      bytes_left = 0;
+			    }
+			    elems_done++;
+			    bytes_used += amt;
+			  }
+			  // if we still finished with bytes left, we have
+			  //  to restore the iterator because we
+			  //  can't double-cancel
+			  if(bytes_left > 0) {
+			    assert(elems_done == num_elems);
+			    delete req->xd->src_iter;
+			    Serialization::FixedBufferDeserializer fbd(dbs.get_buffer(), dbs.bytes_used());
+			    req->xd->src_iter = TransferIterator::deserialize_new(fbd);
+			    req->xd->src_iter->cancel_step();
+			    size_t amt2 = req->xd->src_iter->step(bytes_used,
+								  src_info,
+								  0,
+								  false /*!tentative*/);
+			    assert(amt2 == bytes_used);
+			  }
+			}
+
+			// now that we're after the wraparound, any remaining
+			//  elements are fairly straightforward
+			if(elems_done < num_elems) {
+			  size_t max_remain = ((num_elems - elems_done) * maxser_size);
+			  size_t amt = req->xd->src_iter->step(max_remain,
+							       src_info,
+							       0,
+							       true /*tentative*/);
+			  assert(amt == max_remain); // no double-wrap
+			  const void *src = req->xd->src_mem->get_direct_ptr(src_info.base_offset,
+									     amt);
+			  assert(src != 0);
+			  size_t amt2 = req->xd->dst_serdez_op->deserialize(((char *)dst) + (elems_done * field_size),
+									    field_size,
+									    num_elems - elems_done,
+									    src);
+			  bytes_used += amt2;
+			  if(amt2 == max_remain) {
+			    req->xd->src_iter->confirm_step();
+			  } else {
+			    req->xd->src_iter->cancel_step();
+			    size_t amt3 = req->xd->src_iter->step(amt2,
+								  src_info,
+								  0,
+								  false /*!tentative*/);
+			    assert(amt3 == amt2);
+			  }
+			}
+		      }
+		    }
+		    assert(bytes_used <= max_bytes);
+		    if(bytes_used < max_bytes)
+		      rewind_src += (max_bytes - bytes_used);
+		    req->xd->read_bytes_total += bytes_used;
+		  } else {
+		    // normal copy
+		    memcpy(dst, src, req->nbytes);
+		  }
+		}
+		if(req->dim == Request::DIM_1D) break;
+		// serdez cases update src/dst directly
+		// NOTE: this looks backwards, but it's not - a src serdez means it's the
+		//  destination that moves unpredictably
+		if(!req->xd->dst_serdez_op) src += req->src_str;
+		if(!req->xd->src_serdez_op) dst += req->dst_str;
+	      }
+	      if((req->dim == Request::DIM_1D) ||
+		 (req->dim == Request::DIM_2D)) break;
+	      // serdez cases update src/dst directly - copy back to src/dst_p
+	      src_p = (req->xd->dst_serdez_op ? src : src_p + req->src_pstr);
+	      dst_p = (req->xd->src_serdez_op ? dst : dst_p + req->dst_pstr);
+	    }
+	    // clean up our wrap buffer, if we malloc'd it
+	    if(wrap_buffer_malloced)
+	      free(wrap_buffer);
+	  }
+	  if(req->xd->src_serdez_op && !req->xd->dst_serdez_op) {
+	    // we manage write_bytes_total, write_seq_{pos,count}
+	    req->write_seq_count = req->xd->write_bytes_total - req->write_seq_pos;
+	    if(rewind_dst > 0) {
+	      //log_request.print() << "rewind dst: " << rewind_dst;
+	      __sync_fetch_and_sub(&req->xd->write_bytes_cons, rewind_dst);
+	    }
+	  } else
+	    assert(rewind_dst == 0);
+	  if(!req->xd->src_serdez_op && req->xd->dst_serdez_op) {
+	    // we manage read_bytes_total, read_seq_{pos,count}
+	    req->read_seq_count = req->xd->read_bytes_total - req->read_seq_pos;
+	    if(rewind_src > 0) {
+	      //log_request.print() << "rewind src: " << rewind_src;
+	      __sync_fetch_and_sub(&req->xd->read_bytes_cons, rewind_src);
+	    }
+	  } else
+	      assert(rewind_src == 0);
           req->xd->notify_request_read_done(req);
           req->xd->notify_request_write_done(req);
         }
@@ -1916,9 +2847,22 @@ namespace Realm {
       }
 
       GASNetChannel::GASNetChannel(long max_nr, XferDes::XferKind _kind)
+	: Channel(_kind)
       {
-        kind = _kind;
         capacity = max_nr;
+
+	unsigned bw = 0; // TODO
+	unsigned latency = 0;
+	// any combination of SYSTEM/REGDMA/Z_COPY_MEM
+	for(size_t i = 0; i < num_cpu_mem_kinds; i++)
+	  if(_kind == XferDes::XFER_GASNET_READ)
+	    add_path(Memory::GLOBAL_MEM, true,
+		     cpu_mem_kinds[i], false,
+		     bw, latency, false, false);
+	  else
+	    add_path(cpu_mem_kinds[i], false,
+		     Memory::GLOBAL_MEM, true,
+		     bw, latency, false, false);
       }
 
       GASNetChannel::~GASNetChannel()
@@ -1929,6 +2873,7 @@ namespace Realm {
       {
         for (long i = 0; i < nr; i++) {
           GASNetRequest* req = (GASNetRequest*) requests[i];
+	  assert(!req->xd->src_serdez_op && !req->xd->dst_serdez_op); // no serdez support
           switch (kind) {
             case XferDes::XFER_GASNET_READ:
             {
@@ -1963,8 +2908,17 @@ namespace Realm {
       }
 
       RemoteWriteChannel::RemoteWriteChannel(long max_nr)
+	: Channel(XferDes::XFER_REMOTE_WRITE)
       {
         capacity = max_nr;
+
+	unsigned bw = 0; // TODO
+	unsigned latency = 0;
+	// any combination of SYSTEM/REGDMA/Z_COPY_MEM
+	for(size_t i = 0; i < num_cpu_mem_kinds; i++)
+	  add_path(cpu_mem_kinds[i], false,
+		   Memory::REGDMA_MEM, true,
+		   bw, latency, false, false);
       }
 
       RemoteWriteChannel::~RemoteWriteChannel() {}
@@ -1974,14 +2928,15 @@ namespace Realm {
         assert(nr <= capacity);
         for (long i = 0; i < nr; i ++) {
           RemoteWriteRequest* req = (RemoteWriteRequest*) requests[i];
+	  assert(!req->xd->src_serdez_op && !req->xd->dst_serdez_op); // no serdez support
 	  // send a request if there's data or if there's a next XD to update
 	  if((req->nbytes > 0) ||
 	     (req->xd->next_xd_guid != XferDes::XFERDES_NO_GUID)) {
 	    if (req->dim == Request::DIM_1D) {
 	      XferDesRemoteWriteMessage::send_request(
                 req->dst_node, req->dst_base, req->src_base, req->nbytes, req,
-		req->xd->next_xd_guid, req->seq_pos, req->seq_count, 
-		(req->xd->iteration_completed ? req->xd->bytes_total : (size_t)-1));
+		req->xd->next_xd_guid, req->write_seq_pos, req->write_seq_count, 
+		(req->xd->iteration_completed ? req->xd->write_bytes_total : (size_t)-1));
 	    } else {
 	      assert(req->dim == Request::DIM_2D);
 	      // dest MUST be continuous
@@ -1989,8 +2944,8 @@ namespace Realm {
 	      XferDesRemoteWriteMessage::send_request(
                 req->dst_node, req->dst_base, req->src_base, req->nbytes,
                 req->src_str, req->nlines, req,
-		req->xd->next_xd_guid, req->seq_pos, req->seq_count, 
-		(req->xd->iteration_completed ? req->xd->bytes_total : (size_t)-1));
+		req->xd->next_xd_guid, req->write_seq_pos, req->write_seq_count, 
+		(req->xd->iteration_completed ? req->xd->write_bytes_total : (size_t)-1));
 	    }
 	  }
 	  // for an empty transfer, we do the local completion ourselves
@@ -2029,10 +2984,64 @@ namespace Realm {
    
 #ifdef USE_CUDA
       GPUChannel::GPUChannel(Cuda::GPU* _src_gpu, long max_nr, XferDes::XferKind _kind)
+	: Channel(_kind)
       {
         src_gpu = _src_gpu;
-        kind = _kind;
         capacity = max_nr;
+
+	Memory fbm = src_gpu->fbmem->me;
+
+	switch(_kind) {
+	case XferDes::XFER_GPU_TO_FB:
+	  {
+	    unsigned bw = 0; // TODO
+	    unsigned latency = 0;
+	    for(std::set<Memory>::const_iterator it = src_gpu->pinned_sysmems.begin();
+		it != src_gpu->pinned_sysmems.end();
+		++it)
+	      add_path(*it, fbm, bw, latency, false, false);
+
+	    break;
+	  }
+
+	case XferDes::XFER_GPU_FROM_FB:
+	  {
+	    unsigned bw = 0; // TODO
+	    unsigned latency = 0;
+	    for(std::set<Memory>::const_iterator it = src_gpu->pinned_sysmems.begin();
+		it != src_gpu->pinned_sysmems.end();
+		++it)
+	      add_path(fbm, *it, bw, latency, false, false);
+
+	    break;
+	  }
+
+	case XferDes::XFER_GPU_IN_FB:
+	  {
+	    // self-path
+	    unsigned bw = 0; // TODO
+	    unsigned latency = 0;
+	    add_path(fbm, fbm, bw, latency, false, false);
+
+	    break;
+	  }
+
+	case XferDes::XFER_GPU_PEER_FB:
+	  {
+	    // just do paths to peers - they'll do the other side
+	    unsigned bw = 0; // TODO
+	    unsigned latency = 0;
+	    for(std::set<Memory>::const_iterator it = src_gpu->peer_fbs.begin();
+		it != src_gpu->peer_fbs.end();
+		++it)
+	      add_path(fbm, *it, bw, latency, false, false);
+
+	    break;
+	  }
+
+	default:
+	  assert(0);
+	}
       }
 
       GPUChannel::~GPUChannel()
@@ -2043,6 +3052,7 @@ namespace Realm {
       {
         for (long i = 0; i < nr; i++) {
           GPURequest* req = (GPURequest*) requests[i];
+	  assert(!req->xd->src_serdez_op && !req->xd->dst_serdez_op); // no serdez support
 
 	  // empty transfers don't need to bounce off the GPU
 	  if(req->nbytes == 0) {
@@ -2139,9 +3149,22 @@ namespace Realm {
 
 #ifdef USE_HDF
       HDFChannel::HDFChannel(long max_nr, XferDes::XferKind _kind)
+	: Channel(_kind)
       {
-        kind = _kind;
         capacity = max_nr;
+
+	unsigned bw = 0; // TODO
+	unsigned latency = 0;
+	// any combination of SYSTEM/REGDMA/Z_COPY_MEM
+	for(size_t i = 0; i < num_cpu_mem_kinds; i++)
+	  if(_kind == XferDes::XFER_HDF_READ)
+	    add_path(Memory::HDF_MEM, false,
+		     cpu_mem_kinds[i], false,
+		     bw, latency, false, false);
+	  else
+	    add_path(cpu_mem_kinds[i], false,
+		     Memory::HDF_MEM, false,
+		     bw, latency, false, false);
       }
 
       HDFChannel::~HDFChannel() {}
@@ -2151,6 +3174,7 @@ namespace Realm {
         HDFRequest** hdf_reqs = (HDFRequest**) requests;
         for (long i = 0; i < nr; i++) {
           HDFRequest* req = hdf_reqs[i];
+	  assert(!req->xd->src_serdez_op && !req->xd->dst_serdez_op); // no serdez support
           //pthread_rwlock_rdlock(req->rwlock);
           if (kind == XferDes::XFER_HDF_READ)
             CHECK_HDF5( H5Dread(req->dataset_id, req->datatype_id,
@@ -2231,6 +3255,8 @@ namespace Realm {
 	bool mark_started = false;
 	TransferIterator *src_iter;
 	TransferIterator *dst_iter;
+	CustomSerdezID src_serdez_id = 0;
+	CustomSerdezID dst_serdez_id = 0;
 	uint64_t max_req_size = 0;
 	long max_nr = 0;
 	int priority = 0;
@@ -2252,7 +3278,9 @@ namespace Realm {
 		   (fbd >> max_nr) &&
 		   (fbd >> priority) &&
 		   (fbd >> order) &&
-		   (fbd >> kind));
+		   (fbd >> kind) &&
+		   (fbd >> src_serdez_id) &&
+		   (fbd >> dst_serdez_id));
 	assert(ok);
 	src_iter = TransferIterator::deserialize_new(fbd);
 	dst_iter = TransferIterator::deserialize_new(fbd);
@@ -2267,6 +3295,7 @@ namespace Realm {
 			mark_started,
 			args.src_mem, args.dst_mem,
 			src_iter, dst_iter,
+			src_serdez_id, dst_serdez_id,
 			max_req_size, max_nr, priority,
 			order, kind, args.fence, args.inst);
 #endif
@@ -2315,6 +3344,7 @@ namespace Realm {
                                bool mark_started,
 			       Memory _src_mem, Memory _dst_mem,
 			       TransferIterator *_src_iter, TransferIterator *_dst_iter,
+			       CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
                                uint64_t max_req_size, long max_nr, int priority,
                                XferOrder::Type order, XferDes::XferKind kind,
                                XferDesFence* fence,
@@ -2356,6 +3386,8 @@ namespace Realm {
 		   (dbs << priority) &&
 		   (dbs << order) &&
 		   (dbs << kind) &&
+		   (dbs << _src_serdez_id) &&
+		   (dbs << _dst_serdez_id) &&
 		   (dbs << *_src_iter) &&
 		   (dbs << *_dst_iter));
 	assert(ok);
@@ -2467,6 +3499,8 @@ namespace Realm {
       }
 
       ChannelManager::~ChannelManager(void) {
+	// these are deleted by runtime now
+#if 0
         if (memcpy_channel)
           delete memcpy_channel;
         if (gasnet_read_channel)
@@ -2498,7 +3532,61 @@ namespace Realm {
           delete it->second;
         }
 #endif
+#endif
       }
+
+      MemcpyChannel* ChannelManager::create_memcpy_channel(long max_nr)
+      {
+        assert(memcpy_channel == NULL);
+        memcpy_channel = new MemcpyChannel(max_nr);
+        return memcpy_channel;
+      }
+      GASNetChannel* ChannelManager::create_gasnet_read_channel(long max_nr) {
+        assert(gasnet_read_channel == NULL);
+        gasnet_read_channel = new GASNetChannel(max_nr, XferDes::XFER_GASNET_READ);
+        return gasnet_read_channel;
+      }
+      GASNetChannel* ChannelManager::create_gasnet_write_channel(long max_nr) {
+        assert(gasnet_write_channel == NULL);
+        gasnet_write_channel = new GASNetChannel(max_nr, XferDes::XFER_GASNET_WRITE);
+        return gasnet_write_channel;
+      }
+      RemoteWriteChannel* ChannelManager::create_remote_write_channel(long max_nr) {
+        assert(remote_write_channel == NULL);
+        remote_write_channel = new RemoteWriteChannel(max_nr);
+        return remote_write_channel;
+      }
+#ifdef USE_CUDA
+      GPUChannel* ChannelManager::create_gpu_to_fb_channel(long max_nr, Cuda::GPU* src_gpu) {
+        gpu_to_fb_channels[src_gpu] = new GPUChannel(src_gpu, max_nr, XferDes::XFER_GPU_TO_FB);
+        return gpu_to_fb_channels[src_gpu];
+      }
+      GPUChannel* ChannelManager::create_gpu_from_fb_channel(long max_nr, Cuda::GPU* src_gpu) {
+        gpu_from_fb_channels[src_gpu] = new GPUChannel(src_gpu, max_nr, XferDes::XFER_GPU_FROM_FB);
+        return gpu_from_fb_channels[src_gpu];
+      }
+      GPUChannel* ChannelManager::create_gpu_in_fb_channel(long max_nr, Cuda::GPU* src_gpu) {
+        gpu_in_fb_channels[src_gpu] = new GPUChannel(src_gpu, max_nr, XferDes::XFER_GPU_IN_FB);
+        return gpu_in_fb_channels[src_gpu];
+      }
+      GPUChannel* ChannelManager::create_gpu_peer_fb_channel(long max_nr, Cuda::GPU* src_gpu) {
+        gpu_peer_fb_channels[src_gpu] = new GPUChannel(src_gpu, max_nr, XferDes::XFER_GPU_PEER_FB);
+        return gpu_peer_fb_channels[src_gpu];
+      }
+#endif
+#ifdef USE_HDF
+      HDFChannel* ChannelManager::create_hdf_read_channel(long max_nr) {
+        assert(hdf_read_channel == NULL);
+        hdf_read_channel = new HDFChannel(max_nr, XferDes::XFER_HDF_READ);
+        return hdf_read_channel;
+      }
+      HDFChannel* ChannelManager::create_hdf_write_channel(long max_nr) {
+        assert(hdf_write_channel == NULL);
+        hdf_write_channel = new HDFChannel(max_nr, XferDes::XFER_HDF_WRITE);
+        return hdf_write_channel;
+      }
+#endif
+
 #ifdef USE_CUDA
       void register_gpu_in_dma_systems(Cuda::GPU* gpu)
       {
@@ -2544,28 +3632,49 @@ namespace Realm {
 #ifdef USE_CUDA
         // num_threads ++;
 #endif
+	RuntimeImpl *r = get_runtime();
         int idx = 0;
         dma_threads = (DMAThread**) calloc(count, sizeof(DMAThread*));
         // dma thread #1: memcpy
         std::vector<Channel*> channels;
         MemcpyChannel* memcpy_channel = channel_manager->create_memcpy_channel(max_nr);
+	GASNetChannel* gasnet_read_channel = channel_manager->create_gasnet_read_channel(max_nr);
+	GASNetChannel* gasnet_write_channel = channel_manager->create_gasnet_write_channel(max_nr);
         channels.push_back(memcpy_channel);
-        channels.push_back(channel_manager->create_gasnet_read_channel(max_nr));
-        channels.push_back(channel_manager->create_gasnet_write_channel(max_nr));
+        channels.push_back(gasnet_read_channel);
+        channels.push_back(gasnet_write_channel);
+	r->add_dma_channel(memcpy_channel);
+	r->add_dma_channel(gasnet_read_channel);
+	r->add_dma_channel(gasnet_write_channel);
+
         if (count > 1) {
           dma_threads[idx++] = new DMAThread(max_nr, xferDes_queue, channels);
           channels.clear();
           count --;
         }
         // dma thread #2: async xfer
-        channels.push_back(channel_manager->create_remote_write_channel(max_nr));
-        channels.push_back(channel_manager->create_disk_read_channel(max_nr));
-        channels.push_back(channel_manager->create_disk_write_channel(max_nr));
-        channels.push_back(channel_manager->create_file_read_channel(max_nr));
-        channels.push_back(channel_manager->create_file_write_channel(max_nr));
+	RemoteWriteChannel *remote_channel = channel_manager->create_remote_write_channel(max_nr);
+	DiskChannel *disk_read_channel = channel_manager->create_disk_read_channel(max_nr);
+	DiskChannel *disk_write_channel = channel_manager->create_disk_write_channel(max_nr);
+	FileChannel *file_read_channel = channel_manager->create_file_read_channel(max_nr);
+	FileChannel *file_write_channel = channel_manager->create_file_write_channel(max_nr);
+        channels.push_back(remote_channel);
+	channels.push_back(disk_read_channel);
+	channels.push_back(disk_write_channel);
+	channels.push_back(file_read_channel);
+	channels.push_back(file_write_channel);
+        r->add_dma_channel(remote_channel);
+	r->add_dma_channel(disk_read_channel);
+	r->add_dma_channel(disk_write_channel);
+	r->add_dma_channel(file_read_channel);
+	r->add_dma_channel(file_write_channel);
 #ifdef USE_HDF
-        channels.push_back(channel_manager->create_hdf_read_channel(max_nr));
-        channels.push_back(channel_manager->create_hdf_write_channel(max_nr));
+	HDFChannel *hdf_read_channel = channel_manager->create_hdf_read_channel(max_nr);
+	HDFChannel *hdf_write_channel = channel_manager->create_hdf_write_channel(max_nr);
+        channels.push_back(hdf_read_channel);
+        channels.push_back(hdf_write_channel);
+	r->add_dma_channel(hdf_read_channel);
+	r->add_dma_channel(hdf_write_channel);
 #endif
         if (count > 1) {
           dma_threads[idx++] = new DMAThread(max_nr, xferDes_queue, channels);
@@ -2575,12 +3684,21 @@ namespace Realm {
 #ifdef USE_CUDA
         std::vector<Cuda::GPU*>::iterator it;
         for (it = dma_all_gpus.begin(); it != dma_all_gpus.end(); it ++) {
-          channels.push_back(channel_manager->create_gpu_to_fb_channel(max_nr, *it));
-          channels.push_back(channel_manager->create_gpu_from_fb_channel(max_nr, *it));
-          channels.push_back(channel_manager->create_gpu_in_fb_channel(max_nr, *it));
-          channels.push_back(channel_manager->create_gpu_peer_fb_channel(max_nr, *it));
+	  GPUChannel *gpu_to_fb_channel = channel_manager->create_gpu_to_fb_channel(max_nr, *it);
+	  GPUChannel *gpu_from_fb_channel = channel_manager->create_gpu_from_fb_channel(max_nr, *it);
+	  GPUChannel *gpu_in_fb_channel = channel_manager->create_gpu_in_fb_channel(max_nr, *it);
+	  GPUChannel *gpu_peer_fb_channel = channel_manager->create_gpu_peer_fb_channel(max_nr, *it);
+          channels.push_back(gpu_to_fb_channel);
+          channels.push_back(gpu_from_fb_channel);
+          channels.push_back(gpu_in_fb_channel);
+          channels.push_back(gpu_peer_fb_channel);
+          r->add_dma_channel(gpu_to_fb_channel);
+          r->add_dma_channel(gpu_from_fb_channel);
+          r->add_dma_channel(gpu_in_fb_channel);
+          r->add_dma_channel(gpu_peer_fb_channel);
         }
 #endif
+
         dma_threads[idx++] = new DMAThread(max_nr, xferDes_queue, channels);
         num_threads = idx;
         for (int i = 0; i < num_threads; i++) {
@@ -2691,6 +3809,7 @@ namespace Realm {
 			   Memory _src_mem, Memory _dst_mem,
 			   TransferIterator *_src_iter,
 			   TransferIterator *_dst_iter,
+			   CustomSerdezID _src_serdez_id, CustomSerdezID _dst_serdez_id,
                            uint64_t _max_req_size,
                            long max_nr,
                            int _priority,
@@ -2718,6 +3837,7 @@ namespace Realm {
 				   mark_started,
 				   //_src_buf, _dst_buf, _domain, _oas_vec,
 				   _src_mem, _dst_mem, _src_iter, _dst_iter,
+				   _src_serdez_id, _dst_serdez_id,
 				   _max_req_size, max_nr, _priority,
 				   _order, _complete_fence);
             break;
@@ -2730,6 +3850,7 @@ namespace Realm {
 				   mark_started,
 				   //_src_buf, _dst_buf, _domain, _oas_vec,
 				   _src_mem, _dst_mem, _src_iter, _dst_iter,
+				   _src_serdez_id, _dst_serdez_id,
 				   _max_req_size, max_nr, _priority,
 				   _order, _kind, _complete_fence);
             break;
@@ -2741,6 +3862,7 @@ namespace Realm {
 					mark_started,
 					//_src_buf, _dst_buf, _domain, _oas_vec,
 					_src_mem, _dst_mem, _src_iter, _dst_iter,
+					_src_serdez_id, _dst_serdez_id,
 					_max_req_size, max_nr, _priority,
 					_order, _complete_fence);
             break;
@@ -2753,6 +3875,7 @@ namespace Realm {
 				 mark_started,
 				 //_src_buf, _dst_buf, _domain, _oas_vec,
 				 _src_mem, _dst_mem, _src_iter, _dst_iter,
+				 _src_serdez_id, _dst_serdez_id,
 				 _max_req_size, max_nr, _priority,
 				 _order, _kind, _complete_fence);
             break;
@@ -2766,6 +3889,7 @@ namespace Realm {
 				 inst,
 				 // _src_buf, _dst_buf, _domain, _oas_vec,
 				 _src_mem, _dst_mem, _src_iter, _dst_iter,
+				 _src_serdez_id, _dst_serdez_id,
 				 _max_req_size, max_nr, _priority,
 				 _order, _kind, _complete_fence);
             break;
@@ -2774,6 +3898,11 @@ namespace Realm {
           case XferDes::XFER_GPU_TO_FB:
           case XferDes::XFER_GPU_IN_FB:
           case XferDes::XFER_GPU_PEER_FB:
+	    // special case - IN_FB transfers ignore the max_req_size and pick
+	    //   a large enough value to do copies in a single try
+	    // consider changing this if/when a GPU can prioritize work streams
+	    if(_kind == XferDes::XFER_GPU_IN_FB)
+	      _max_req_size = 1ULL << 40; // 1 TB
             xd = new GPUXferDes(_dma_request, _launch_node,
 				_guid, _pre_xd_guid, _next_xd_guid,
 				_next_max_rw_gap,
@@ -2781,6 +3910,7 @@ namespace Realm {
 				mark_started,
 				//_src_buf, _dst_buf, _domain, _oas_vec,
 				_src_mem, _dst_mem, _src_iter, _dst_iter,
+				_src_serdez_id, _dst_serdez_id,
 				_max_req_size, max_nr, _priority,
 				_order, _kind, _complete_fence);
             break;
@@ -2796,6 +3926,7 @@ namespace Realm {
 				inst,
 				//_src_buf, _dst_buf, _domain, _oas_vec,
 				_src_mem, _dst_mem, _src_iter, _dst_iter,
+				_src_serdez_id, _dst_serdez_id,
 				_max_req_size, max_nr, _priority,
 				_order, _kind, _complete_fence);
 	    break;
@@ -2831,6 +3962,7 @@ namespace Realm {
                                            false,
                                            //_src_buf, _dst_buf, _domain, _oas_vec,
 					   _src_mem, _dst_mem, _src_iter, _dst_iter,
+					   _src_serdez_id, _dst_serdez_id,
                                            _max_req_size, max_nr, _priority,
                                            _order, _kind, _complete_fence, inst);
       }

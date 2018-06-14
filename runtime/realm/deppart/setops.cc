@@ -1,4 +1,4 @@
-/* Copyright 2015 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,13 +15,13 @@
 
 // set operations for Realm dependent partitioning
 
-#include "setops.h"
+#include "realm/deppart/setops.h"
 
-#include "deppart_config.h"
-#include "rectlist.h"
-#include "inst_helper.h"
-#include "image.h"
-#include "../logging.h"
+#include "realm/deppart/deppart_config.h"
+#include "realm/deppart/rectlist.h"
+#include "realm/deppart/inst_helper.h"
+#include "realm/deppart/image.h"
+#include "realm/logging.h"
 
 namespace Realm {
 
@@ -106,10 +106,11 @@ namespace Realm {
       assert(0);
     }
 
-    // similar to union, we need N-1 dims to match exactly and one to be like 1-D
+    // we need N-1 dims to match (or be subsets), and exactly one to stick out
+    //  (and only on one side)
     int i = 0;
     out = lhs;
-    while((i < N) && (lhs.lo[i] == rhs.lo[i]) && (lhs.hi[i] == rhs.hi[i]))
+    while((i < N) && (lhs.lo[i] >= rhs.lo[i]) && (lhs.hi[i] <= rhs.hi[i]))
       i++;
     assert(i < N); // containment test above should eliminate i==N case
 
@@ -137,9 +138,9 @@ namespace Realm {
       }
     }
 
-    // remaining dimensions must match
+    // remaining dimensions must match (or be subsets)
     while(++i < N)
-      if((lhs.lo[i] != rhs.lo[i]) || (lhs.hi[i] != rhs.hi[i]))
+      if((lhs.lo[i] < rhs.lo[i]) || (lhs.hi[i] > rhs.hi[i]))
 	return false;
 
     return true;
@@ -194,8 +195,8 @@ namespace Realm {
       }
 
       // 4) dense rhs containing lhs' bounds -> rhs
-      if(r.dense() && l.bounds.contains(r.bounds)) {
-	results[i] = l;
+      if(r.dense() && r.bounds.contains(l.bounds)) {
+	results[i] = r;
 	continue;
       }
 
@@ -409,6 +410,8 @@ namespace Realm {
 	   result.bounds.contains(subspaces[i].bounds))
 	  continue;
 
+	// TODO: subspace match ought to be sufficient here - also handle
+	//  merge-into-rectangle case?
 	// rhs dense and contains lhs - take rhs
 	if(subspaces[i].dense() && subspaces[i].bounds.contains(result.bounds)) {
 	  result = subspaces[i];
@@ -472,6 +475,12 @@ namespace Realm {
 
 	// empty rhs - result is empty
 	if(subspaces[i].empty()) {
+	  result = IndexSpace<N,T>::make_empty();
+	  break;
+	}
+
+	// disjointness of lhs and rhs bounds - result is empty
+	if(!result.bounds.overlaps(subspaces[i].bounds)) {
 	  result = IndexSpace<N,T>::make_empty();
 	  break;
 	}
@@ -1310,10 +1319,11 @@ namespace Realm {
 	  break;
 	}
 
-	// consume lhs rectangles until we get one that overlaps
-	while(it_lhs.rect.hi.x < it_rhs.rect.lo.x) {
+	// an lhs rectangle that is entirely below the first rhs is taken as is
+	if(it_lhs.rect.hi.x < it_rhs.rect.lo.x) {
 	  bitmask.add_rect(it_lhs.rect);
-	  if(!it_lhs.step()) break;
+	  it_lhs.step();
+	  continue;
 	}
 
 	// last case - partial overlap - subtract out rhs rect(s)

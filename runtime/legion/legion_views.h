@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,11 @@
 #ifndef __LEGION_VIEWS_H__
 #define __LEGION_VIEWS_H__
 
-#include "legion_types.h"
-#include "legion_analysis.h"
-#include "legion_utilities.h"
-#include "legion_allocation.h"
-#include "garbage_collection.h"
+#include "legion/legion_types.h"
+#include "legion/legion_analysis.h"
+#include "legion/legion_utilities.h"
+#include "legion/legion_allocation.h"
+#include "legion/garbage_collection.h"
 
 namespace Legion {
   namespace Internal {
@@ -93,7 +93,7 @@ namespace Legion {
       RegionTreeForest *const context;
       RegionTreeNode *const logical_node;
     protected:
-      Reservation view_lock;
+      mutable LocalLock view_lock;
     };
 
     /**
@@ -490,6 +490,9 @@ namespace Legion {
     public:
       virtual void send_view(AddressSpaceID target); 
       void update_gc_events(const std::deque<ApEvent> &gc_events);
+    public:
+      void filter_invalid_fields(FieldMask &to_filter,
+                                 VersionInfo &version_info);
     protected:
       // Update the version numbers
       // These first two methods do two-phase updates for copies
@@ -909,7 +912,7 @@ namespace Legion {
       // Deferred views never have managers
       virtual bool has_manager(void) const { return false; }
       virtual PhysicalManager* get_manager(void) const
-      { return NULL; }
+        { return NULL; }
       virtual bool has_parent(void) const = 0;
       virtual LogicalView* get_parent(void) const = 0;
       virtual LogicalView* get_subview(const LegionColor c) = 0;
@@ -922,8 +925,11 @@ namespace Legion {
       virtual void notify_invalid(ReferenceMutator *mutator) = 0;
     public:
       virtual void send_view(AddressSpaceID target) = 0; 
+      // Should never be called directly
+      virtual InnerContext* get_context(void) const
+        { assert(false); return NULL; }
     public:
-      // Should never be called
+      // Should never be called directly
       virtual void collect_users(const std::set<ApEvent> &term_events)
         { assert(false); }
     public:
@@ -1090,7 +1096,7 @@ namespace Legion {
      */
     class CompositeBase {
     public:
-      CompositeBase(Reservation &base_lock);
+      CompositeBase(LocalLock &base_lock);
       virtual ~CompositeBase(void);
     protected:
       CompositeCopyNode* construct_copy_tree(MaterializedView *dst,
@@ -1119,7 +1125,7 @@ namespace Legion {
     public:
       CompositeNode* find_child_node(RegionTreeNode *child);
     private:
-      Reservation &base_lock;
+      LocalLock &base_lock;
     protected:
       FieldMask dirty_mask, reduction_mask;
       LegionMap<CompositeNode*,FieldMask>::aligned children;
@@ -1187,6 +1193,8 @@ namespace Legion {
       virtual void notify_invalid(ReferenceMutator *mutator);
     public:
       virtual void send_view(AddressSpaceID target); 
+      virtual InnerContext* get_context(void) const
+        { return owner_context; }
     public:
       void prune(ClosedNode *closed_tree, FieldMask &valid_mask,
                  LegionMap<CompositeView*,FieldMask>::aligned &replacements,
@@ -1331,7 +1339,7 @@ namespace Legion {
       CompositeBase *const parent;
       const DistributedID owner_did;
     protected:
-      Reservation node_lock;
+      mutable LocalLock node_lock;
       // No need to hold references in general, but we do have to hold
       // them if we are the root child of a composite view subtree
       LegionMap<VersionState*,FieldMask>::aligned version_states;
@@ -1459,7 +1467,8 @@ namespace Legion {
               AddressSpaceID owner_proc,
               DeferredVersionInfo *version_info,
               RegionTreeNode *node, PredEvent true_guard,
-              PredEvent false_guard, bool register_now);
+              PredEvent false_guard, InnerContext *owner,
+              bool register_now);
       PhiView(const PhiView &rhs);
       virtual ~PhiView(void);
     public:
@@ -1476,6 +1485,8 @@ namespace Legion {
       virtual void notify_invalid(ReferenceMutator *mutator);
     public:
       virtual void send_view(AddressSpaceID target);
+      virtual InnerContext* get_context(void) const
+        { return owner_context; }
     public:
       virtual bool is_upper_bound_node(RegionTreeNode *node) const;
       virtual void get_field_versions(RegionTreeNode *node, bool split_prev, 
@@ -1527,6 +1538,7 @@ namespace Legion {
       const PredEvent true_guard;
       const PredEvent false_guard;
       DeferredVersionInfo *const version_info;
+      InnerContext *const owner_context;
     protected:
       LegionMap<LogicalView*,FieldMask>::aligned true_views;
       LegionMap<LogicalView*,FieldMask>::aligned false_views;
@@ -1537,10 +1549,14 @@ namespace Legion {
                                                     DistributedID did, bool top)
     //--------------------------------------------------------------------------
     {
+#ifdef DEBUG_LEGION
+      assert(DIST_TYPE_LAST_DC < (1U << 7));
+#endif
       if (top)
-        return LEGION_DISTRIBUTED_HELP_ENCODE(did, 0x0ULL | (1ULL << 3));
+        return LEGION_DISTRIBUTED_HELP_ENCODE(did, 
+                MATERIALIZED_VIEW_DC | (1ULL << 7));
       else
-        return LEGION_DISTRIBUTED_HELP_ENCODE(did, 0x0ULL);
+        return LEGION_DISTRIBUTED_HELP_ENCODE(did, MATERIALIZED_VIEW_DC);
     }
 
     //--------------------------------------------------------------------------
@@ -1548,7 +1564,11 @@ namespace Legion {
                                                               DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return LEGION_DISTRIBUTED_HELP_ENCODE(did, 0x1ULL | (1ULL << 3));
+#ifdef DEBUG_LEGION
+      assert(DIST_TYPE_LAST_DC < (1U << 7));
+#endif
+      return LEGION_DISTRIBUTED_HELP_ENCODE(did, 
+                REDUCTION_VIEW_DC | (1ULL << 7));
     }
 
     //--------------------------------------------------------------------------
@@ -1556,7 +1576,11 @@ namespace Legion {
                                                               DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return LEGION_DISTRIBUTED_HELP_ENCODE(did, 0x2ULL | (1ULL << 3));
+#ifdef DEBUG_LEGION
+      assert(DIST_TYPE_LAST_DC < (1U << 7));
+#endif
+      return LEGION_DISTRIBUTED_HELP_ENCODE(did, 
+                  COMPOSITE_VIEW_DC | (1ULL << 7));
     }
 
     //--------------------------------------------------------------------------
@@ -1564,7 +1588,10 @@ namespace Legion {
                                                               DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return LEGION_DISTRIBUTED_HELP_ENCODE(did, 0x3ULL | (1ULL << 3));
+#ifdef DEBUG_LEGION
+      assert(DIST_TYPE_LAST_DC < (1U << 7));
+#endif
+      return LEGION_DISTRIBUTED_HELP_ENCODE(did, FILL_VIEW_DC | (1ULL << 7));
     }
 
     //--------------------------------------------------------------------------
@@ -1572,49 +1599,56 @@ namespace Legion {
                                                               DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return LEGION_DISTRIBUTED_HELP_ENCODE(did, 0x4ULL | (1ULL << 3));
+#ifdef DEBUG_LEGION
+      assert(DIST_TYPE_LAST_DC < (1U << 7));
+#endif
+      return LEGION_DISTRIBUTED_HELP_ENCODE(did, PHI_VIEW_DC | (1ULL << 7));
     }
 
     //--------------------------------------------------------------------------
     /*static*/ inline bool LogicalView::is_materialized_did(DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0x7ULL) == 0x0ULL);
+      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0xFULL) == 
+                                          MATERIALIZED_VIEW_DC);
     }
 
     //--------------------------------------------------------------------------
     /*static*/ inline bool LogicalView::is_reduction_did(DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0x7ULL) == 0x1ULL);
+      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0xFULL) == 
+                                              REDUCTION_VIEW_DC);
     }
 
     //--------------------------------------------------------------------------
     /*static*/ inline bool LogicalView::is_composite_did(DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0x7ULL) == 0x2ULL);
+      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0xFULL) == 
+                                              COMPOSITE_VIEW_DC);
     }
 
     //--------------------------------------------------------------------------
     /*static*/ inline bool LogicalView::is_fill_did(DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0x7ULL) == 0x3ULL);
+      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0xFULL) == 
+                                                    FILL_VIEW_DC);
     }
 
     //--------------------------------------------------------------------------
     /*static*/ inline bool LogicalView::is_phi_did(DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0x7ULL) == 0x4ULL);
+      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0xFULL) == PHI_VIEW_DC);
     }
 
     //--------------------------------------------------------------------------
     /*static*/ inline bool LogicalView::is_top_did(DistributedID did)
     //--------------------------------------------------------------------------
     {
-      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0x8ULL) == 0x8ULL);
+      return (((LEGION_DISTRIBUTED_HELP_DECODE(did) & (1ULL << 7)) >> 7) == 1);
     }
 
     //--------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-/* Copyright 2017 Stanford University
+/* Copyright 2018 Stanford University
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -96,7 +96,7 @@ void top_level_task(const Task *task,
 	   num_loc_procs);
     printf("  %d are available.  Please rerun with '-ll:cpu %d'.\n",
 	   num_subregions, num_subregions);
-    exit(1);
+    assert(0);
   }
 
   // For this example we'll create a single index space tree, but we
