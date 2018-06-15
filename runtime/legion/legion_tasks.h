@@ -542,6 +542,7 @@ namespace Legion {
       virtual void quash_operation(GenerationID gen, std::set<Operation *> &restart_set,
            std::map<Operation *, std::set<RtEvent> > &preconds); 
       virtual void some_task_failed(GenerationID gen, bool upstream);
+      virtual void skeleton_poisoned_completion(); 
       virtual void setup_task_for_remapping(RtEvent &precondition, bool lcked);
       virtual bool trigger_recover(void);
       virtual void setup_profiling_opstatus_monitoring_for_resilient(

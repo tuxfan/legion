@@ -1421,8 +1421,8 @@ namespace Legion {
                                        MapTaskOutput&     output)
     //--------------------------------------------------------------------------
     {
-      std::cout<<"Inside the map_task function for" 
-                      <<task.get_task_name()<<std::endl;
+//      std::cout<<"Inside the map_task function for" 
+ //                     <<task.get_task_name()<<std::endl;
       log_mapper.spew("Default map_task in %s", get_mapper_name());
       Processor::Kind target_kind = task.target_proc.kind();
       // Get the variant that we are going to use to map this task
@@ -1624,8 +1624,10 @@ namespace Legion {
         // want a new instance allocation, with the previous instance being
         // checkpointed 
         // Check to see if any of the valid instances satisfy this requirement
+#if 1
         bool checkpoint_task = !strcmp(task.get_task_name(),"init_field");
         if(!checkpoint_task)
+#endif
         {
           std::vector<PhysicalInstance> valid_instances;
 
@@ -1652,9 +1654,8 @@ namespace Legion {
 
           if (missing_fields[idx].empty())
             continue;
-        } else {
-          // the runtime will make a copy if a previous instance exists
-        }
+        } 
+        // else the runtime will make a copy if a previous instance exists
 
         // Otherwise make normal instances for the given region
         if (!default_create_custom_instances(ctx, task.target_proc,
@@ -1795,7 +1796,8 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       // Always cache task result.
-      //ksmurthy return DEFAULT_CACHE_POLICY_ENABLE;
+      //ksmurthy 
+      //return DEFAULT_CACHE_POLICY_ENABLE;
       //for resilience trying out mapping new instances every time
       return DEFAULT_CACHE_POLICY_DISABLE;
     }

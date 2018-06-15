@@ -61,6 +61,17 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    const char* Operation::get_task_name(void) //ksmurthy
+    //--------------------------------------------------------------------------
+    {
+      SingleTask *x = dynamic_cast<SingleTask *>(this);
+      if(!x)
+        return x->get_task_name();
+      else
+        return "this is not a single task, hence no name"; 
+    }
+
+    //--------------------------------------------------------------------------
     void Operation::activate_operation(void)
     //--------------------------------------------------------------------------
     {
@@ -989,6 +1000,16 @@ namespace Legion {
       if(hardened) {
         resilient_commit_operation();      
       }
+
+      {//HACK FOR NOW TODO the last task will always be committed 
+        Legion::Internal::SingleTask *stsk = 
+              dynamic_cast<Legion::Internal::SingleTask *>(this);
+        if(stsk == NULL) return;
+        if(!strcmp(stsk->get_task_name(), "finalize")) {
+          hardened = true;
+          resilient_commit_operation(); 
+        }
+      }
     }
 
 
@@ -1047,6 +1068,7 @@ namespace Legion {
       // At this point we bumb the generation as we can never roll back
       // after we have committed the operation
       gen++;
+      restartGen = 0;
       // Trigger the commit event
       if (!commit_event.has_triggered())
         Runtime::trigger_event(commit_event);
@@ -1068,15 +1090,35 @@ namespace Legion {
       Legion::Internal::TaskOp *tsk= 
                   dynamic_cast<Legion::Internal::TaskOp *>(this);
       if(tsk == NULL) return;
+      Legion::Internal::SingleTask *stsk= 
+                  dynamic_cast<Legion::Internal::SingleTask *>(this);
+      if(stsk == NULL) return;
       //assert(this->mapped);//to ensure that incoming can be used 
 
       //TODO what does it mean for other TaskOp kinds like Point, Index, Slice
       //revisit with MIKE TODO
       if(tsk->get_task_kind()!=Legion::Internal::TaskOp::INDIVIDUAL_TASK_KIND) 
               return;
-
+#if 0
       std::set<Legion::Internal::PhysicalManager *> regions;
       regions.insert(mgr);//(inst_mgr->region_node.index);
+#else
+      std::set<unsigned> regions;
+      unsigned indx = -1;
+      for(unsigned idx = 0; idx < stsk->get_physical_instances().size(); 
+                                                                    ++idx) {
+            Legion::Internal::PhysicalManager *x =           
+              stsk->get_physical_instances()[idx][0].get_manager();
+            if(x == mgr) {
+              indx = idx;
+              break;
+            }
+      }
+      if(indx != -1) 
+        regions.insert(indx);//(inst_mgr->region_node.index);
+#endif
+
+      if(regions.size() == 0) return;
 
       //my job is to not delete myself, but tell my parents that their region
       //instance outputs are now hardened, and hence, call them to see 
@@ -1087,7 +1129,8 @@ namespace Legion {
         //it->second is a set of region indices
         //check if the instance of region index is the same
         //if so then add it to the  
-	      it->first->notify_regions_verified(regions, incoming[it->first]); 
+        if(it->first != NULL) 
+	        it->first->notify_regions_verified(regions, incoming[it->first]); 
       }
     }
 
@@ -1482,6 +1525,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
 
+#if 0
       //at this time, TODO we are doing it for individual task, single types
       Legion::Internal::TaskOp *tsk = 
             dynamic_cast<Legion::Internal::TaskOp *>(this);
@@ -1525,6 +1569,7 @@ namespace Legion {
       }
       //if (need_trigger)
       //  trigger_commit();
+#endif
     }
 
 

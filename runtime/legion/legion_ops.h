@@ -237,6 +237,7 @@ namespace Legion {
       static const char* get_string_rep(OpKind kind);
     public:
       virtual void activate(void) = 0;
+      virtual const char* get_task_name(void);
       virtual void deactivate(void) = 0; 
       virtual const char* get_logging_name(void) const = 0;
       virtual OpKind get_operation_kind(void) const = 0;

@@ -2584,10 +2584,11 @@ namespace Legion {
         continue_with_mapping = (this->restartGen == restart);
       }
       if(!continue_with_mapping) {
-        std::cout<<"hei ho, " << this->get_task_name() << std::endl;
+        std::cout<<"hei ho, trigger mapp" << this->get_task_name() << std::endl;
         return; 
       } else {
-        std::cout<<"this is the restart gen"<<this->restartGen<<std::endl;
+        std::cout<<"this is the restart gen"<<this->restartGen<< "for function"
+                            << this->get_task_name() << std::endl;
       }
 
       if (is_remote())
@@ -4226,7 +4227,9 @@ namespace Legion {
 #if 1 //MIKE_CHECK
       //I do not need to increment parent pending, we already indicate to parent
       track_parent = false;
+#ifdef DEBUG_LEGION
       executed = false;
+#endif
       completed = false;
       committed = false;
       complete_received = false;
@@ -4237,6 +4240,8 @@ namespace Legion {
       parent_ctx->increment_pending();
 
 #endif
+      //start_condition = Runtime::merge_events(start_condition,
+        //                                      this->mapped_event);
       ApEvent task_launch_event = variant->dispatch_task(launch_processor, this,
                            execution_context, start_condition, true_guard, 
                            task_priority, profiling_requests);
@@ -4261,6 +4266,37 @@ namespace Legion {
 //      runtime->add_to_ready_queue(launch_processor, this, ready);
 
 #endif 
+
+    //------------------------ksmurthy------------------------------------------
+    void SingleTask::skeleton_poisoned_completion() 
+    //--------------------------------------------------------------------------
+    {
+      //DETAILED_PROFILER(runtime, INDIVIDUAL_TRIGGER_COMPLETE_CALL);
+#if 1
+      __sync_add_and_fetch(&outstanding_profiling_requests, -1);
+      //but do not trigger profiling_reported since the re-execution will do
+      //that
+#endif
+      // MIKE CHECK TODO Release any restrictions we might have had
+      //if ((execution_context != NULL) && execution_context->has_restrictions())
+      //  execution_context->release_restrictions();
+      //if (execution_context != NULL)
+      //  execution_context->invalidate_region_tree_contexts();
+
+      //ksmurthy this is where I come to eventually whether taskop or not
+      //below is a skeleton of the Operation::complete_operation();
+      if(track_parent) {
+        //what about parent_ctx->register_child_complete(this); 
+        //get_context()->add_to_post_task_queue(this);
+        char *res = (char *)malloc(5);
+        memcpy(res, "hmmm", 4);
+        res[4]='\0';
+        parent_ctx->register_child_executed(this); 
+        parent_ctx->add_to_post_task_queue(execution_context,
+                     RtEvent::NO_RT_EVENT, res, 5, PhysicalInstance::NO_INST);   
+        runtime->decrement_total_outstanding_tasks(task_id, false);
+      }
+    }
 
 
     //------------------------ksmurthy------------------------------------------
@@ -4288,12 +4324,18 @@ namespace Legion {
         if(this->cached_start_condition_for_poisoning != ApEvent::NO_AP_EVENT) {
           this->cached_start_condition_for_poisoning.cancel_operation(
                   tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
-          //Runtime::poison_event(this->cached_start_condition_for_poisoning);
+          this->completion_event.cancel_operation(tasks_cone_of_restart,
+                                          strlen(tasks_cone_of_restart));
+          this->skeleton_poisoned_completion();
         }
         if(this->mapped_event != RtEvent::NO_RT_EVENT) { 
           if(!this->mapped_event.has_triggered())
             Runtime::trigger_event(this->mapped_event);
         }
+        if(this->completion_event != ApEvent::NO_AP_EVENT) {
+          Runtime::poison_event(this->completion_event);
+        }
+        this->completion_event = Runtime::create_ap_user_event();
         this->mapped_event = Runtime::create_rt_user_event();
         for(std::map<Operation*, GenerationID>::const_iterator 
         it = outgoing.begin(); it != outgoing.end(); it++) {
@@ -4318,11 +4360,15 @@ namespace Legion {
     {
       if(!lcked) {
         AutoLock o_lock(op_lock);
+#ifdef DEBUG_LEGION
         mapped = false;
+#endif
         map_applied_conditions.clear();
         //mapped_preconditions.clear();
       } else {
+#ifdef DEBUG_LEGION
         mapped = false;
+#endif
         map_applied_conditions.clear();
         //mapped_preconditions.clear();
       }
@@ -4336,7 +4382,12 @@ namespace Legion {
     void SingleTask::some_task_failed(GenerationID gen, bool upstream)
     //--------------------------------------------------------------------------
     {
-
+#if 0
+      volatile int dbug = 1;
+      while(dbug) {
+        dbug = 1;
+      }
+#endif
       RtEvent precondition = RtEvent::NO_RT_EVENT;
       std::map<SingleTask *, RtEvent> upstream_set;
       if(!trigger_recover()){
@@ -4362,18 +4413,22 @@ namespace Legion {
         if(this->cached_start_condition_for_poisoning != ApEvent::NO_AP_EVENT) {
           this->cached_start_condition_for_poisoning.cancel_operation(
                     tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
-          //Runtime::poison_event(this->cached_start_condition_for_poisoning);
+          this->completion_event.cancel_operation(
+                    tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
         }
         if(this->mapped_event != RtEvent::NO_RT_EVENT) { 
           if(!this->mapped_event.has_triggered())
             Runtime::trigger_event(this->mapped_event);
         }
+        // We are going to selectively execute parents/ancestors, so no need to 
+        // poison them if(this->completion_event != ApEvent::NO_AP_EVENT) {
+        // Runtime::poison_event(this->completion_event);
+        //}
+        this->completion_event = Runtime::create_ap_user_event();
         this->mapped_event = Runtime::create_rt_user_event(); 
         upstream_set.insert(std::map<SingleTask*,RtEvent>::value_type(
                            this, this->mapped_event));
         this->setup_task_for_remapping(precondition, true);
-      } else {
-        this->restart_task_resilience();
       }
 
       if(!upstream) {
@@ -4405,6 +4460,11 @@ namespace Legion {
           assert(stsk != NULL);
           stsk->setup_task_for_remapping(precondition, false);
         }
+        if(this->completion_event != ApEvent::NO_AP_EVENT) {
+          Runtime::poison_event(this->completion_event);
+        }
+        this->completion_event = Runtime::create_ap_user_event();
+        this->restart_task_resilience();
       }
       return ;
     }
