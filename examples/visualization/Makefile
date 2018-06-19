@@ -34,7 +34,7 @@ GEN_SRC		?= visualization.cc 		# .cc files
 GEN_GPU_SRC	?=		# .cu files
 
 # You can modify these variables, some will be appended to by the runtime makefile
-INC_FLAGS	?=
+INC_FLAGS	?= -I${LG_RT_DIR}/legion -I${LG_RT_DIR}/realm
 CC_FLAGS	?= ${DEFINES} -ftree-vectorize -msse2
 NVCC_FLAGS	?=
 GASNET_FLAGS	?=
