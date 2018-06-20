@@ -6,10 +6,10 @@ endif
 #Flags for directing the runtime makefile what to include
 DEBUG=1                   # Include debugging symbols
 OUTPUT_LEVEL=LEVEL_DEBUG  # Compile time print level
-USE_CUDA=0
-USE_HDF=0
-USE_GASNET=1
-ALT_MAPPERS=0		  # Compile the alternative mappers
+USE_CUDA	?= 0
+USE_HDF		?= 0
+USE_GASNET	?= 0
+ALT_MAPPERS	?= 0		  # Compile the alternative mappers
 
 # Put the binary file name here
 OUTFILE		:= visualization_reductions
@@ -18,7 +18,7 @@ GEN_SRC		:= $(OUTFILE).cc        # .cc files
 #GEN_GPU_SRC	:=		    # .cu files
 
 # You can modify these variables, some will be appended to by the runtime makefile
-INC_FLAGS	:=
+INC_FLAGS	?= -I${LG_RT_DIR}/legion -I${LG_RT_DIR}/realm
 CC_FLAGS	:=
 NVCC_FLAGS	:=
 GASNET_FLAGS	:=
