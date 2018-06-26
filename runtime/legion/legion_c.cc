@@ -4724,6 +4724,81 @@ private:
   legion_projection_functor_logical_partition_t partition_functor;
 };
 
+class StructuredFunctorWrapper : public StructuredProjectionFunctor {
+public:
+  StructuredFunctorWrapper(
+                 unsigned dep,
+                 legion_structured_projection_functor_logical_region_t region_fn,
+                 legion_structured_projection_functor_logical_partition_t partition_fn)
+    : StructuredProjectionFunctor()
+    , depth(dep)
+    , region_functor(region_fn)
+    , partition_functor(partition_fn)
+  {
+  }
+
+  StructuredFunctorWrapper(Runtime *rt,
+                 unsigned dep,
+                 legion_structured_projection_functor_logical_region_t region_fn,
+                 legion_structured_projection_functor_logical_partition_t partition_fn)
+    : StructuredProjectionFunctor(rt)
+    , depth(dep)
+    , region_functor(region_fn)
+    , partition_functor(partition_fn)
+  {
+  }
+
+  virtual StructuredProjection project_structured(Context ctx)
+  {
+    assert(0);
+  }
+
+  virtual AffineStructuredProjection affine_project_structured(Context ctx)
+  {
+    legion_affine_structured_projection_t result = partition_functor();  
+    return *(CObjectWrapper::unwrap(result));
+  }
+
+  unsigned get_depth(void) const { return depth; }
+
+private:
+  const unsigned depth;
+  legion_structured_projection_functor_logical_region_t region_functor;
+  legion_structured_projection_functor_logical_partition_t partition_functor;
+};
+
+legion_affine_structured_projection_step_t
+legion_create_affine_projection_step(
+  legion_domain_transform_t transform_)
+{
+  DomainTransform transform = CObjectWrapper::unwrap(transform_);
+  AffineStructuredProjectionStep *step =
+      new AffineStructuredProjectionStep(transform);
+  return CObjectWrapper::wrap(step);
+}
+
+legion_affine_structured_projection_step_t
+legion_create_affine_projection_step_with_offset(
+  legion_domain_transform_t transform_,
+  legion_domain_point_t offset_)
+{
+  DomainTransform transform = CObjectWrapper::unwrap(transform_);
+  DomainPoint offset = CObjectWrapper::unwrap(offset_);
+  AffineStructuredProjectionStep *step =
+      new AffineStructuredProjectionStep(transform, offset);
+  return CObjectWrapper::wrap(step);
+}
+
+void
+legion_affine_structured_projection_add_step(
+  legion_affine_structured_projection_t functor_,
+  legion_affine_structured_projection_step_t step_)
+{
+  AffineStructuredProjection *functor = CObjectWrapper::unwrap(functor_);
+  AffineStructuredProjectionStep *step = CObjectWrapper::unwrap(step_);
+  functor->steps.push_back(*step);
+}
+
 legion_projection_id_t
 legion_runtime_generate_library_projection_ids(
     legion_runtime_t runtime_,
@@ -4744,6 +4819,18 @@ legion_runtime_preregister_projection_functor(
 {
   FunctorWrapper *functor =
     new FunctorWrapper(depth, region_functor, partition_functor);
+  Runtime::preregister_projection_functor(id, functor);
+}
+
+void
+legion_runtime_preregister_structured_projection_functor(
+  legion_projection_id_t id,
+  unsigned depth,
+  legion_structured_projection_functor_logical_region_t region_functor,
+  legion_structured_projection_functor_logical_partition_t partition_functor)
+{
+  StructuredFunctorWrapper *functor =
+    new StructuredFunctorWrapper(depth, region_functor, partition_functor);
   Runtime::preregister_projection_functor(id, functor);
 }
 

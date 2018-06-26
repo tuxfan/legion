@@ -5257,7 +5257,7 @@ namespace Legion {
       // to value on the nth equation
       StructuredOrderingFunctor *ord_func =
         runtime->find_ordering_functor(oid);
-      std::map<std::vector<int>, std::vector<PointTask*>> lhs_values_map;
+      std::map<std::vector<int>, std::vector<PointTask*> > lhs_values_map;
       //for (unsigned cidx = 0; cidx < affine_constraints.size(); cidx++)
       //{
         //printf("%s = %s\n",

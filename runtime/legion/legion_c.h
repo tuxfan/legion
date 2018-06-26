@@ -76,6 +76,8 @@ extern "C" {
   NEW_OPAQUE_TYPE(legion_inline_t);
   NEW_OPAQUE_TYPE(legion_mappable_t);
   NEW_OPAQUE_TYPE(legion_region_requirement_t);
+  NEW_OPAQUE_TYPE(legion_affine_structured_projection_t);
+  NEW_OPAQUE_TYPE(legion_affine_structured_projection_step_t);
   NEW_OPAQUE_TYPE(legion_machine_t);
   NEW_OPAQUE_TYPE(legion_mapper_t);
   NEW_OPAQUE_TYPE(legion_default_mapper_t);
@@ -381,6 +383,34 @@ extern "C" {
       unsigned /* index */,
       legion_logical_partition_t /* upper_bound */,
       legion_domain_point_t /* point */);
+
+  /**
+   * Interface for a Legion C projection functor (Logical Region
+   * upper bound).
+   */
+  typedef
+    legion_affine_structured_projection_t (*legion_structured_projection_functor_logical_region_t)(void);
+
+  /**
+   * Interface for a Legion C projection functor (Logical Partition
+   * upper bound).
+   */
+  typedef
+    legion_affine_structured_projection_t (*legion_structured_projection_functor_logical_partition_t)(void);
+
+  legion_affine_structured_projection_step_t
+  legion_create_affine_projection_step(
+      legion_domain_transform_t transform_);
+
+  legion_affine_structured_projection_step_t
+  legion_create_affine_projection_step_with_offset(
+      legion_domain_transform_t transform_,
+      legion_domain_point_t offset_);
+
+  void
+  legion_affine_structured_projection_add_step(
+      legion_affine_structured_projection_t functor_,
+      legion_affine_structured_projection_step_t step_);
 
   // -----------------------------------------------------------------------
   // Pointer Operations
@@ -3678,6 +3708,16 @@ extern "C" {
     unsigned depth,
     legion_projection_functor_logical_region_t region_functor,
     legion_projection_functor_logical_partition_t partition_functor);
+
+  /**
+   * @see Legion::Runtime::preregister_projection_functor()
+   */
+  void
+  legion_runtime_preregister_structured_projection_functor(
+    legion_projection_id_t id,
+    unsigned depth,
+    legion_structured_projection_functor_logical_region_t region_functor,
+    legion_structured_projection_functor_logical_partition_t partition_functor);
 
   /**
    * @see Legion::Runtime::register_projection_functor()

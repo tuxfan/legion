@@ -1824,6 +1824,7 @@ function codegen.expr_field_access(cx, node)
 end
 
 function codegen.expr_index_access(cx, node)
+  node:printpretty(true)
   local value_type = std.as_read(node.value.expr_type)
   local index_type = std.as_read(node.index.expr_type)
   local expr_type = std.as_read(node.expr_type)
@@ -2364,12 +2365,15 @@ local function make_partition_projection_functor(cx, expr, loop_index, color_spa
   -- We assume that there's only one variable, and that it's the loop index.
 
   assert(expr:is(ast.typed.expr.IndexAccess))
+  local use_original_code = false
 
   local index = strip_casts(expr.index)
 
-  if index:is(ast.typed.expr.ID) then
-    assert(index.value == loop_index)
-    return 0 -- Identity projection functor.
+  if true or use_original_code then
+    if index:is(ast.typed.expr.ID) then
+      assert(index.value == loop_index)
+      return 0 -- Identity projection functor.
+    end
   end
 
   local point = terralib.newsymbol(c.legion_domain_point_t, "point")
@@ -2397,20 +2401,109 @@ local function make_partition_projection_functor(cx, expr, loop_index, color_spa
 
   -- Generate a projection functor that evaluates `expr`.
   local value = codegen.expr(cx, index):read(cx)
-  local terra partition_functor(runtime : c.legion_runtime_t,
-                                mappable : c.legion_mappable_t,
-                                index : uint,
-                                parent : c.legion_logical_partition_t,
-                                [point])
-    [symbol_setup];
-    [value.actions];
-    var index : index_type = [value.value];
-    var subregion = c.legion_logical_partition_get_logical_subregion_by_color_domain_point(
-      runtime, parent, index)
-    return subregion
-  end
+  if use_original_code then
+    local terra partition_functor(runtime : c.legion_runtime_t,
+                                  mappable : c.legion_mappable_t,
+                                  index : uint,
+                                  parent : c.legion_logical_partition_t,
+                                  [point])
+      [symbol_setup];
+      [value.actions];
+      var index : index_type = [value.value];
+      var subregion = c.legion_logical_partition_get_logical_subregion_by_color_domain_point(
+        runtime, parent, index)
+      return subregion
+    end
+    partition_functor:printpretty(false)
+    return std.register_projection_functor(0, nil, partition_functor)
+  else
+    local offset_values = {0, 0, 0}
+    if index:is(ast.typed.expr.Binary) then
+      local offset_multiplier
+      if (index.op == "-") then
+        offset_multiplier = -1
+      elseif (index.op == "+") then
+        offset_multiplier = 1
+      else
+        assert("Unsupported operation during indexing")
+      end
+      assert(index.lhs:is(ast.typed.expr.ID))
+      assert(index.rhs:is(ast.typed.expr.Ctor))
+      for fieldCount = 1, #index.rhs.fields do
+        offset_values[fieldCount] = offset_multiplier * index.rhs.fields[fieldCount].value.value
+        print(offset_values[fieldCount])
+      end
+    else
+      assert(index:is(ast.typed.expr.ID))
+      print("not binary op")
+    end
 
-  return std.register_projection_functor(0, nil, partition_functor)
+    local terra partition_functor_1d()
+      var transform_1x1 : c.legion_transform_1x1_t
+      transform_1x1.trans[0][0] = 1
+      var domain_transform : c.legion_domain_transform_t = c.legion_domain_transform_from_1x1(transform_1x1)
+      var offset : c.legion_point_1d_t
+      offset.x[0] = [offset_values[1]]
+      var offset_point = c.legion_domain_point_from_point_1d(offset)
+      var proj_step = c.legion_create_affine_projection_step_with_offset(domain_transform, offset_point)
+      var proj_func : c.legion_affine_structured_projection_t
+      c.legion_affine_structured_projection_add_step(proj_func, proj_step)
+      return proj_func
+    end
+    local terra partition_functor_2d()
+      var transform_2x2 : c.legion_transform_2x2_t
+      transform_2x2.trans[0][0] = 1
+      transform_2x2.trans[0][1] = 0
+      transform_2x2.trans[1][0] = 0
+      transform_2x2.trans[1][1] = 1
+      var domain_transform : c.legion_domain_transform_t = c.legion_domain_transform_from_2x2(transform_2x2)
+      var offset : c.legion_point_2d_t
+      offset.x[0] = [offset_values[1]]
+      offset.x[1] = [offset_values[2]]
+      var offset_point = c.legion_domain_point_from_point_2d(offset)
+      var proj_step = c.legion_create_affine_projection_step_with_offset(domain_transform, offset_point)
+      var proj_func : c.legion_affine_structured_projection_t
+      c.legion_affine_structured_projection_add_step(proj_func, proj_step)
+      return proj_func
+    end
+    local terra partition_functor_3d()
+      var transform_3x3 : c.legion_transform_3x3_t
+      transform_3x3.trans[0][0] = 1
+      transform_3x3.trans[0][1] = 0
+      transform_3x3.trans[0][2] = 0
+      transform_3x3.trans[1][0] = 0
+      transform_3x3.trans[1][1] = 1
+      transform_3x3.trans[1][2] = 0
+      transform_3x3.trans[2][0] = 0
+      transform_3x3.trans[2][1] = 0
+      transform_3x3.trans[2][2] = 1
+      var domain_transform : c.legion_domain_transform_t = c.legion_domain_transform_from_3x3(transform_3x3)
+      var offset : c.legion_point_3d_t
+      offset.x[0] = [offset_values[1]]
+      offset.x[1] = [offset_values[2]]
+      offset.x[2] = [offset_values[3]]
+      var offset_point = c.legion_domain_point_from_point_3d(offset)
+      var proj_step = c.legion_create_affine_projection_step_with_offset(domain_transform, offset_point)
+      var proj_func : c.legion_affine_structured_projection_t
+      c.legion_affine_structured_projection_add_step(proj_func, proj_step)
+      return proj_func
+    end
+
+    local partition_functor
+    if (index.expr_type == int1d) then
+      partition_functor = partition_functor_1d
+    elseif (index.expr_type == int2d) then
+      partition_functor = partition_functor_2d
+    elseif (index.expr_type == int3d) then
+      partition_functor = partition_functor_3d
+    else
+      print("The index expression evaluates to an unexpected type.")
+      index:printpretty(true)
+      assert(false)
+    end
+    partition_functor:printpretty(false)
+    return std.register_structured_projection_functor(0, nil, partition_functor)
+  end
 end
 
 local function expr_call_setup_region_arg(

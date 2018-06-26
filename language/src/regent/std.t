@@ -28,6 +28,8 @@ local report = require("common/report")
 
 local std = {}
 
+local max_dim = 4 -- Maximum dimension of an index space supported in Regent
+
 std.config, std.args = base.config, base.args
 
 local c = base.c
@@ -2038,7 +2040,7 @@ function std.index_type(base_type, displayname)
     else
       values = terralib.newlist({index})
     end
-    for _ = #values + 1, 3 do
+    for _ = #values + 1, max_dim do
       values:insert(0)
     end
 
@@ -3249,6 +3251,7 @@ end
 -- #################
 
 local projection_functors = terralib.newlist()
+local structured_projection_functors = terralib.newlist()
 
 do
   local next_id = 1
@@ -3257,6 +3260,14 @@ do
     next_id = next_id + 1
 
     projection_functors:insert(terralib.newlist({id, depth, region_functor, partition_functor}))
+
+    return id
+  end
+  function std.register_structured_projection_functor(depth, region_functor, partition_functor)
+    local id = next_id
+    next_id = next_id + 1
+
+    structured_projection_functors:insert(terralib.newlist({id, depth, region_functor, partition_functor}))
 
     return id
   end
@@ -3269,12 +3280,10 @@ function std.register_variant(variant)
   variants:insert(variant)
 end
 
-local max_dim = 3 -- Maximum dimension of an index space supported in Regent
-
 local function make_ordering_constraint(layout, dim)
   -- This code would need to be taught about higher dimensions if the
   -- maximum dimension were ever increased.
-  assert(max_dim == 3)
+  assert(max_dim == 4)
   assert(dim >= 1 and dim <= max_dim)
 
   local result = terralib.newlist()
@@ -3431,6 +3440,30 @@ function std.setup(main_task, extra_setup_thunk, task_wrappers, registration_nam
       end
     end)
 
+  local structured_projection_functor_registrations = structured_projection_functors:map(
+    function(args)
+      local id, depth, region_functor, partition_functor = unpack(args)
+      -- Hack: Work around Terra not wanting to escape nil.
+      if region_functor and partition_functor then
+        return quote
+          c.legion_runtime_preregister_structured_projection_functor(
+            id, depth, region_functor, partition_functor)
+        end
+      elseif region_functor then
+        return quote
+          c.legion_runtime_preregister_structured_projection_functor(
+            id, depth, region_functor, nil)
+        end
+      elseif partition_functor then
+        return quote
+          c.legion_runtime_preregister_structured_projection_functor(
+            id, depth, nil, partition_functor)
+        end
+      else
+        assert(false)
+      end
+    end)
+
   local task_registrations = variants:map(
     function(variant)
       local task = variant.task
@@ -3566,6 +3599,7 @@ function std.setup(main_task, extra_setup_thunk, task_wrappers, registration_nam
     [reduction_registrations];
     [layout_registrations];
     [projection_functor_registrations];
+    [structured_projection_functor_registrations];
     [task_registrations];
     [cuda_setup];
     [extra_setup];
