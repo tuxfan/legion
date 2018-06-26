@@ -713,6 +713,12 @@ namespace Legion {
     void Operation::complete_execution(RtEvent wait_on /*= Event::NO_EVENT*/)
     //--------------------------------------------------------------------------
     {
+    }
+
+    //--------------------------------------------------------------------------
+    void Operation::complete_execution(RtEvent wait_on /*= Event::NO_EVENT*/)
+    //--------------------------------------------------------------------------
+    {
       if (wait_on.exists() && !wait_on.has_triggered())
       {
         // We have to defer the execution of this operation

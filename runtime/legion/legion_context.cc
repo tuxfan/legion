@@ -8670,6 +8670,49 @@ namespace Legion {
       return NULL;
     }
 
+    //------ksmurthy------------------------------------------------------------
+    void LeafContext::end_task_failed(const void *res, size_t res_size, 
+                          bool owned, PhysicalInstance deferred_result_instance)
+    //--------------------------------------------------------------------------
+    {
+      // Unmap any physical regions that we mapped
+      for (std::vector<PhysicalRegion>::const_iterator it = 
+            physical_regions.begin(); it != physical_regions.end(); it++)
+      {
+        if (it->is_mapped())
+          it->impl->unmap_region();
+      }
+      if (!pending_done.has_triggered())
+        owner_task->complete_execution_poisoned(pending_done);
+      else
+        owner_task->complete_execution_poisoned();
+      Runtime *runtime_ptr = runtime;
+      TaskContext *parent_ctx = owner_task->get_context();
+      if (deferred_result_instance.exists())
+      {
+        RtEvent result_ready(Processor::get_current_finish_event());
+        parent_ctx->add_to_post_task_queue(this, result_ready,
+                      res, res_size, deferred_result_instance);
+      }
+      else if (!owned)
+      {
+        void *result_copy = malloc(res_size);
+        memcpy(result_copy, res, res_size);
+        parent_ctx->add_to_post_task_queue(this, RtEvent::NO_RT_EVENT,
+                  result_copy, res_size, PhysicalInstance::NO_INST);
+      }
+      else
+        parent_ctx->add_to_post_task_queue(this, RtEvent::NO_RT_EVENT,
+                          res, res_size, PhysicalInstance::NO_INST);
+#ifdef DEBUG_LEGION
+      runtime_ptr->decrement_total_outstanding_tasks(owner_task_id, 
+                                                     false/*meta*/);
+#else
+      runtime_ptr->decrement_total_outstanding_tasks();
+#endif
+    }
+
+
     //--------------------------------------------------------------------------
     void LeafContext::end_task(const void *res, size_t res_size, bool owned,
                                PhysicalInstance deferred_result_instance)

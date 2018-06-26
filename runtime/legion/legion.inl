@@ -1,4 +1,4 @@
-/* Copyright 2018 Stanford University, NVIDIA Corporation
+  }/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -7605,6 +7605,26 @@ namespace Legion {
       // Send an empty return value back
       ctx->end_task(NULL, 0, false);
     }
+
+    //ksmurthy------------------------------------------------------------------
+    template<
+      void (*TASK_PTR)(const Task*, const std::vector<PhysicalRegion>&,
+                       Context, Runtime*)>
+    void LegionTaskWrapper::legion_task_wrapper_failed_end(const void *args, 
+                                                size_t arglen, 
+                                                const void *userdata,
+                                                size_t userlen,
+                                                Processor p)
+    //--------------------------------------------------------------------------
+    {
+      // Read the context out of the buffer
+#ifdef DEBUG_LEGION
+      assert(arglen == sizeof(InternalContext));
+#endif
+      InternalContext ctx = *((const InternalContext*)args);
+      ctx->end_task_failed();//make sure to poison the complete_event inside
+    }
+
 
     //--------------------------------------------------------------------------
     template<typename T, typename UDT,
