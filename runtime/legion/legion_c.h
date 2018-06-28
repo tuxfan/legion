@@ -407,6 +407,9 @@ extern "C" {
       legion_domain_transform_t transform_,
       legion_domain_point_t offset_);
 
+  legion_affine_structured_projection_t
+  legion_create_affine_projection(void);
+
   void
   legion_affine_structured_projection_add_step(
       legion_affine_structured_projection_t functor_,

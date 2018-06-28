@@ -1824,7 +1824,6 @@ function codegen.expr_field_access(cx, node)
 end
 
 function codegen.expr_index_access(cx, node)
-  node:printpretty(true)
   local value_type = std.as_read(node.value.expr_type)
   local index_type = std.as_read(node.index.expr_type)
   local expr_type = std.as_read(node.expr_type)
@@ -2369,7 +2368,7 @@ local function make_partition_projection_functor(cx, expr, loop_index, color_spa
 
   local index = strip_casts(expr.index)
 
-  if true or use_original_code then
+  if use_original_code then
     if index:is(ast.typed.expr.ID) then
       assert(index.value == loop_index)
       return 0 -- Identity projection functor.
@@ -2431,7 +2430,6 @@ local function make_partition_projection_functor(cx, expr, loop_index, color_spa
       assert(index.rhs:is(ast.typed.expr.Ctor))
       for fieldCount = 1, #index.rhs.fields do
         offset_values[fieldCount] = offset_multiplier * index.rhs.fields[fieldCount].value.value
-        print(offset_values[fieldCount])
       end
     else
       assert(index:is(ast.typed.expr.ID))
@@ -2446,7 +2444,7 @@ local function make_partition_projection_functor(cx, expr, loop_index, color_spa
       offset.x[0] = [offset_values[1]]
       var offset_point = c.legion_domain_point_from_point_1d(offset)
       var proj_step = c.legion_create_affine_projection_step_with_offset(domain_transform, offset_point)
-      var proj_func : c.legion_affine_structured_projection_t
+      var proj_func = c.legion_create_affine_projection()
       c.legion_affine_structured_projection_add_step(proj_func, proj_step)
       return proj_func
     end
@@ -2462,7 +2460,7 @@ local function make_partition_projection_functor(cx, expr, loop_index, color_spa
       offset.x[1] = [offset_values[2]]
       var offset_point = c.legion_domain_point_from_point_2d(offset)
       var proj_step = c.legion_create_affine_projection_step_with_offset(domain_transform, offset_point)
-      var proj_func : c.legion_affine_structured_projection_t
+      var proj_func = c.legion_create_affine_projection()
       c.legion_affine_structured_projection_add_step(proj_func, proj_step)
       return proj_func
     end
@@ -2484,17 +2482,21 @@ local function make_partition_projection_functor(cx, expr, loop_index, color_spa
       offset.x[2] = [offset_values[3]]
       var offset_point = c.legion_domain_point_from_point_3d(offset)
       var proj_step = c.legion_create_affine_projection_step_with_offset(domain_transform, offset_point)
-      var proj_func : c.legion_affine_structured_projection_t
+      var proj_func = c.legion_create_affine_projection()
       c.legion_affine_structured_projection_add_step(proj_func, proj_step)
       return proj_func
     end
 
     local partition_functor
-    if (index.expr_type == int1d) then
+    local index_type = index.expr_type
+    if std.is_bounded_type(index_type) then
+      index_type = index_type.index_type
+    end
+    if (index_type == int1d) then
       partition_functor = partition_functor_1d
-    elseif (index.expr_type == int2d) then
+    elseif (index_type == int2d) then
       partition_functor = partition_functor_2d
-    elseif (index.expr_type == int3d) then
+    elseif (index_type == int3d) then
       partition_functor = partition_functor_3d
     else
       print("The index expression evaluates to an unexpected type.")

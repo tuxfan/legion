@@ -4789,6 +4789,14 @@ legion_create_affine_projection_step_with_offset(
   return CObjectWrapper::wrap(step);
 }
 
+legion_affine_structured_projection_t
+legion_create_affine_projection()
+{
+  AffineStructuredProjection *proj =
+      new AffineStructuredProjection();
+  return CObjectWrapper::wrap(proj);
+}
+
 void
 legion_affine_structured_projection_add_step(
   legion_affine_structured_projection_t functor_,
