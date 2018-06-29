@@ -710,9 +710,25 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
-    void Operation::complete_execution(RtEvent wait_on /*= Event::NO_EVENT*/)
+    void Operation::complete_execution_poisoned(RtEvent wait_on/*=NO_EVENT*/)
     //--------------------------------------------------------------------------
     {
+      //should this just call quash ?
+      //why are we event completing the execution if it failed, coz
+      //we are gong to have a new completeion event anyway
+      Runtime::poison_event(completion_event);
+      if (track_parent)
+        parent_ctx->register_child_executed(this);
+#ifdef DEBUG_LEGION
+      {
+        AutoLock o_lock(op_lock);
+        assert(!executed);
+        executed = true;
+      }
+#endif
+      //do have to call complete_operation()
+      //but that is only committing this operation, which should not be done
+      //MIKE CHECK 
     }
 
     //--------------------------------------------------------------------------

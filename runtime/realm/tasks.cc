@@ -172,7 +172,6 @@ namespace Realm {
       	  mark_terminated(e.error_code, e.details);
       	}
         catch (const std::exception& e) { //ksmurthy we need a generic handler
-          get_runtime()->get_processor_impl(p)->end_failed_task(func_id, args);
           ProfilingMeasurements::OperationStatus b;
           b.result = ProfilingMeasurements::OperationStatus::TERMINATED_EARLY;
           b.error_code = 42;

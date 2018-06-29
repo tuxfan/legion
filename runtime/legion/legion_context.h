@@ -349,6 +349,8 @@ namespace Legion {
     public:
       virtual const std::vector<PhysicalRegion>& begin_task(
                                                    Legion::Runtime *&runtime);
+      virtual void end_task_failed(const void *res, size_t res_size, bool owned,
+                    PhysicalInstance inst = PhysicalInstance::NO_INST) = 0;
       virtual void end_task(const void *res, size_t res_size, bool owned,
                     PhysicalInstance inst = PhysicalInstance::NO_INST) = 0;
       virtual void post_end_task(const void *res, 
@@ -956,6 +958,8 @@ namespace Legion {
     public:
       virtual const std::vector<PhysicalRegion>& begin_task(
                                                     Legion::Runtime *&runtime);
+      virtual void end_task_failed(const void *res, size_t res_size, bool owned,
+                    PhysicalInstance inst = PhysicalInstance::NO_INST);
       virtual void end_task(const void *res, size_t res_size, bool owned,
                             PhysicalInstance inst = PhysicalInstance::NO_INST);
       virtual void post_end_task(const void *res, size_t res_size, bool owned);
@@ -1492,6 +1496,9 @@ namespace Legion {
       virtual void add_to_dependence_queue(Operation *op);
       virtual void add_to_post_task_queue(TaskContext *ctx, RtEvent wait_on,
           const void *result, size_t size, PhysicalInstance instance);
+
+
+
       virtual void register_child_executed(Operation *op);
       virtual void register_child_complete(Operation *op);
       virtual void register_child_commit(Operation *op); 
@@ -1542,6 +1549,8 @@ namespace Legion {
       virtual InstanceView* create_instance_top_view(PhysicalManager *manager,
                              AddressSpaceID source, RtEvent *ready = NULL);
     public:
+      virtual void end_task_failed(const void *res, size_t res_size, bool owned,
+                    PhysicalInstance inst = PhysicalInstance::NO_INST);
       virtual void end_task(const void *res, size_t res_size, bool owned,
                             PhysicalInstance inst = PhysicalInstance::NO_INST);
       virtual void post_end_task(const void *res, size_t res_size, bool owned);
@@ -1854,6 +1863,8 @@ namespace Legion {
     public:
       virtual const std::vector<PhysicalRegion>& begin_task(
                                                     Legion::Runtime *&runtime);
+      virtual void end_task_failed(const void *res, size_t res_size, bool owned,
+                    PhysicalInstance inst = PhysicalInstance::NO_INST);
       virtual void end_task(const void *res, size_t res_size, bool owned,
                             PhysicalInstance inst = PhysicalInstance::NO_INST);
       virtual void post_end_task(const void *res, size_t res_size, bool owned);

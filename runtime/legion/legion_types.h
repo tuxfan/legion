@@ -1321,6 +1321,11 @@ namespace Legion {
       virtual Task* get_task(void) = 0;
       virtual const std::vector<PhysicalRegion>& begin_task(
                                       Legion::Runtime *&rt) = 0;
+
+      //ksmurthy
+      virtual void end_task_failed(const void *result, size_t res_size, bool wd,
+               Realm::RegionInstance inst = Realm::RegionInstance::NO_INST) = 0;
+
       virtual void end_task(const void *result, 
                             size_t result_size, bool owned, 
           Realm::RegionInstance inst = Realm::RegionInstance::NO_INST) = 0;

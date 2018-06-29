@@ -411,6 +411,9 @@ namespace Legion {
       void complete_mapping(RtEvent wait_on = RtEvent::NO_RT_EVENT); 
       // Indicate when this operation has finished executing
       void complete_execution(RtEvent wait_on = RtEvent::NO_RT_EVENT);
+      //ksmurthy the failed version, though quash is also same TODO
+      void complete_execution_poisoned(
+                              RtEvent wait_on = RtEvent::NO_RT_EVENT);
       // Indicate when we have resolved the speculation for
       // this operation
       void resolve_speculation(RtEvent wait_on = RtEvent::NO_RT_EVENT);

@@ -1,4 +1,4 @@
-  }/* Copyright 2018 Stanford University, NVIDIA Corporation
+/* Copyright 2018 Stanford University, NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -7600,12 +7600,26 @@ namespace Legion {
       Runtime *runtime;
       const std::vector<PhysicalRegion> &regions = ctx->begin_task(runtime); 
 
-      (*TASK_PTR)(ctx->get_task(), regions, ctx->as_context(), runtime);
+      bool failed = false;
+      try {
+        (*TASK_PTR)(ctx->get_task(), regions, ctx->as_context(), runtime);
+        // Send an empty return value back
+        ctx->end_task(NULL, 0, false);
+      }
+      catch(const std::exception& e) {
+        ctx->end_task_failed(NULL, 0, false);
+        failed = true;
+      }
+      catch(...) {
+        //TODO ksmurthy
+      }
 
-      // Send an empty return value back
-      ctx->end_task(NULL, 0, false);
+      if(failed)
+        throw new std::exception();
     }
 
+
+/*
     //ksmurthy------------------------------------------------------------------
     template<
       void (*TASK_PTR)(const Task*, const std::vector<PhysicalRegion>&,
@@ -7624,7 +7638,7 @@ namespace Legion {
       InternalContext ctx = *((const InternalContext*)args);
       ctx->end_task_failed();//make sure to poison the complete_event inside
     }
-
+*/
 
     //--------------------------------------------------------------------------
     template<typename T, typename UDT,

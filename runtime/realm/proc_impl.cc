@@ -949,19 +949,6 @@ namespace Realm {
 		me);
   }
 
-  //ksmurthy
-  void LocalTaskProcessor::end_failed_task(Processor::TaskFuncID func_id,
-          const ByteArrayRef& task_args)
-  {
-    std::map<Processor::TaskFuncID, TaskTableEntry>::const_iterator it = task_table.find(func_id);
-    const TaskTableEntry& tte = it->second;
-    log_taskreg.debug() << "task " << func_id << " executing on " << me << ": " << ((void *)(tte.fnptr));
-    (tte.fnptr)(task_args.base(), task_args.size(),
-		tte.user_data.base(), tte.user_data.size(),
-		me);
-  }
-
-
   // starts worker threads and performs any per-processor initialization
   void LocalTaskProcessor::start_threads(void)
   {

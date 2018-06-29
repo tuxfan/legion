@@ -6180,6 +6180,14 @@ namespace Legion {
       return TaskContext::begin_task(rt);
     }
 
+    //------ksmurthy------------------------------------------------------------
+    void InnerContext::end_task_failed(const void *res, size_t res_size, 
+                          bool owned, PhysicalInstance deferred_result_instance)
+    //--------------------------------------------------------------------------
+    {
+      assert(false);
+    }
+
     //--------------------------------------------------------------------------
     void InnerContext::end_task(const void *res, size_t res_size, bool owned,
                                 PhysicalInstance deferred_result_instance)
@@ -8686,6 +8694,10 @@ namespace Legion {
         owner_task->complete_execution_poisoned(pending_done);
       else
         owner_task->complete_execution_poisoned();
+#ifdef DEBUG_LEGION
+      assert(owner_task != NULL);
+      const TaskID owner_task_id = owner_task->task_id;
+#endif
       Runtime *runtime_ptr = runtime;
       TaskContext *parent_ctx = owner_task->get_context();
       if (deferred_result_instance.exists())
@@ -9859,6 +9871,14 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       return enclosing->begin_task(rt);
+    }
+
+    //------ksmurthy------------------------------------------------------------
+    void InlineContext::end_task_failed(const void *res, size_t res_size, 
+                          bool owned, PhysicalInstance deferred_result_instance)
+    //--------------------------------------------------------------------------
+    {
+      assert(false);
     }
 
     //--------------------------------------------------------------------------
