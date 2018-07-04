@@ -4461,7 +4461,10 @@ namespace Legion {
           stsk->setup_task_for_remapping(precondition, false);
         }
         if(this->completion_event != ApEvent::NO_AP_EVENT) {
-          Runtime::poison_event(this->completion_event);
+          bool poisoned = false;
+          if(!this->completion_event.has_triggered_faultaware(poisoned)) {
+            Runtime::poison_event(this->completion_event);
+          }
         }
         this->completion_event = Runtime::create_ap_user_event();
         this->restart_task_resilience();
