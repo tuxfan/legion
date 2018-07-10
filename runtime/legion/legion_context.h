@@ -349,6 +349,8 @@ namespace Legion {
     public:
       virtual const std::vector<PhysicalRegion>& begin_task(
                                                    Legion::Runtime *&runtime);
+      virtual bool continue_with_execution(const void *res, size_t res_size, 
+                     bool owned, PhysicalInstance deferred_result_instance) = 0;
       virtual void end_task_failed(const void *res, size_t res_size, bool owned,
                     PhysicalInstance inst = PhysicalInstance::NO_INST) = 0;
       virtual void end_task(const void *res, size_t res_size, bool owned,
@@ -958,6 +960,8 @@ namespace Legion {
     public:
       virtual const std::vector<PhysicalRegion>& begin_task(
                                                     Legion::Runtime *&runtime);
+      virtual bool continue_with_execution(const void *res, size_t res_size, 
+                     bool owned, PhysicalInstance deferred_result_instance);
       virtual void end_task_failed(const void *res, size_t res_size, bool owned,
                     PhysicalInstance inst = PhysicalInstance::NO_INST);
       virtual void end_task(const void *res, size_t res_size, bool owned,
@@ -1549,6 +1553,8 @@ namespace Legion {
       virtual InstanceView* create_instance_top_view(PhysicalManager *manager,
                              AddressSpaceID source, RtEvent *ready = NULL);
     public:
+      virtual bool continue_with_execution(const void *res, size_t res_size, 
+                        bool owned, PhysicalInstance deferred_result_instance);
       virtual void end_task_failed(const void *res, size_t res_size, bool owned,
                     PhysicalInstance inst = PhysicalInstance::NO_INST);
       virtual void end_task(const void *res, size_t res_size, bool owned,
@@ -1863,6 +1869,8 @@ namespace Legion {
     public:
       virtual const std::vector<PhysicalRegion>& begin_task(
                                                     Legion::Runtime *&runtime);
+      virtual bool continue_with_execution(const void *res, size_t res_size, 
+                        bool owned, PhysicalInstance deferred_result_instance);
       virtual void end_task_failed(const void *res, size_t res_size, bool owned,
                     PhysicalInstance inst = PhysicalInstance::NO_INST);
       virtual void end_task(const void *res, size_t res_size, bool owned,

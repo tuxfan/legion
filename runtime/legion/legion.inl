@@ -7602,9 +7602,13 @@ namespace Legion {
 
       bool failed = false;
       try {
-        (*TASK_PTR)(ctx->get_task(), regions, ctx->as_context(), runtime);
-        // Send an empty return value back
-        ctx->end_task(NULL, 0, false);
+        if(ctx->continue_with_execution(NULL, 0, false)) {
+          (*TASK_PTR)(ctx->get_task(), regions, ctx->as_context(), runtime);
+          // Send an empty return value back
+          ctx->end_task(NULL, 0, false);
+        } else {
+          //do nothing;
+        }
       }
       catch(const std::exception& e) {
         ctx->end_task_failed(NULL, 0, false);

@@ -6181,6 +6181,14 @@ namespace Legion {
     }
 
     //------ksmurthy------------------------------------------------------------
+    bool InnerContext::continue_with_execution(const void *res, size_t res_size, 
+                          bool owned, PhysicalInstance deferred_result_instance)
+    //--------------------------------------------------------------------------
+    {
+      return true;
+    }
+
+    //------ksmurthy------------------------------------------------------------
     void InnerContext::end_task_failed(const void *res, size_t res_size, 
                           bool owned, PhysicalInstance deferred_result_instance)
     //--------------------------------------------------------------------------
@@ -8679,6 +8687,14 @@ namespace Legion {
     }
 
     //------ksmurthy------------------------------------------------------------
+    bool LeafContext::continue_with_execution(const void *res, size_t res_size, 
+                          bool owned, PhysicalInstance deferred_result_instance)
+    //--------------------------------------------------------------------------
+    {
+      return owner_task->continue_with_execution();
+    }
+
+    //------ksmurthy------------------------------------------------------------
     void LeafContext::end_task_failed(const void *res, size_t res_size, 
                           bool owned, PhysicalInstance deferred_result_instance)
     //--------------------------------------------------------------------------
@@ -8700,6 +8716,8 @@ namespace Legion {
 #endif
       Runtime *runtime_ptr = runtime;
       TaskContext *parent_ctx = owner_task->get_context();
+
+#if 0 //we are rethinking adding a failed task to a post_end queue
       if (deferred_result_instance.exists())
       {
         RtEvent result_ready(Processor::get_current_finish_event());
@@ -8716,6 +8734,8 @@ namespace Legion {
       else
         parent_ctx->add_to_post_task_queue(this, RtEvent::NO_RT_EVENT,
                           res, res_size, PhysicalInstance::NO_INST);
+#endif
+
 #ifdef DEBUG_LEGION
       runtime_ptr->decrement_total_outstanding_tasks(owner_task_id, 
                                                      false/*meta*/);
@@ -9871,6 +9891,14 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       return enclosing->begin_task(rt);
+    }
+
+    //------ksmurthy------------------------------------------------------------
+    bool InlineContext::continue_with_execution(const void *res, size_t res_size, 
+                          bool owned, PhysicalInstance deferred_result_instance)
+    //--------------------------------------------------------------------------
+    {
+      assert(false);
     }
 
     //------ksmurthy------------------------------------------------------------

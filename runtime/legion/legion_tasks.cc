@@ -4225,7 +4225,6 @@ namespace Legion {
         }
       }
 #if 1 //MIKE_CHECK
-      //I do not need to increment parent pending, we already indicate to parent
       track_parent = false;
 #ifdef DEBUG_LEGION
       executed = false;
@@ -4326,7 +4325,7 @@ namespace Legion {
                   tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
           this->completion_event.cancel_operation(tasks_cone_of_restart,
                                           strlen(tasks_cone_of_restart));
-          this->skeleton_poisoned_completion();
+          //this->skeleton_poisoned_completion();
         }
         if(this->mapped_event != RtEvent::NO_RT_EVENT) { 
           if(!this->mapped_event.has_triggered())
@@ -4569,25 +4568,27 @@ namespace Legion {
 
       //ksmurthy: let us examine the response to check for TerminatedEarly via
       //OperationStatus
-      bool check_for_response = response.has_measurement<
+      bool opstatus_present = response.has_measurement<
                             Realm::ProfilingMeasurements::OperationStatus>();
-      if(check_for_response) {
+      if(opstatus_present) {
        Realm::ProfilingMeasurements::OperationStatus *
                   opstatus = response.get_measurement<
                               Realm::ProfilingMeasurements::OperationStatus>(); 
-       check_for_response = (opstatus!=NULL) && (opstatus->result == 
+       opstatus_present = (opstatus!=NULL) && (opstatus->result == 
              Realm::ProfilingMeasurements::OperationStatus::TERMINATED_EARLY);
       }
 
       profiling_response_analyzed_for_resilience = true;
 
-      if(check_for_response) {
+      if(opstatus_present) {
         some_task_failed(this->gen, false);
         int remain = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
         if (remain == 0)
           Runtime::trigger_event(profiling_reported);
         task_profiling_requests.clear();
-        return; //EARLY BACKOUT FOR FAILED TASKS
+        return; 
+        //early backout for failed tasks, the code following this will anyway be
+        //executed on successful termination of the operation
       } else { 
 #if 0
         if(is_leaf()) {

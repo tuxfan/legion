@@ -1325,6 +1325,9 @@ namespace Legion {
       //ksmurthy
       virtual void end_task_failed(const void *result, size_t res_size, bool wd,
                Realm::RegionInstance inst = Realm::RegionInstance::NO_INST) = 0;
+      virtual bool continue_with_execution(const void *result, size_t res_size, 
+               bool wd, Realm::RegionInstance inst = 
+                                            Realm::RegionInstance::NO_INST) = 0;
 
       virtual void end_task(const void *result, 
                             size_t result_size, bool owned, 

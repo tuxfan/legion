@@ -414,6 +414,10 @@ namespace Legion {
       //ksmurthy the failed version, though quash is also same TODO
       void complete_execution_poisoned(
                               RtEvent wait_on = RtEvent::NO_RT_EVENT);
+      //ksmurthy the last ditch effort to catch the execution of 
+      //of a child whose ancestor has been poisoned
+      bool continue_with_execution();
+
       // Indicate when we have resolved the speculation for
       // this operation
       void resolve_speculation(RtEvent wait_on = RtEvent::NO_RT_EVENT);
