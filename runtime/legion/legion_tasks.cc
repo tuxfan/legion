@@ -2373,7 +2373,7 @@ namespace Legion {
       : TaskOp(rt)
     //--------------------------------------------------------------------------
     {
-    cached_start_condition_for_poisoning = ApEvent::NO_AP_EVENT;
+      cached_start_condition_for_poisoning = ApUserEvent::NO_AP_USER_EVENT;
     }
     
     //--------------------------------------------------------------------------
@@ -2399,7 +2399,7 @@ namespace Legion {
       inner_cached = false;
       has_virtual_instances_result = false;
       has_virtual_instances_cached = false;
-    cached_start_condition_for_poisoning = ApEvent::NO_AP_EVENT;
+      cached_start_condition_for_poisoning = ApUserEvent::NO_AP_USER_EVENT;
     }
 
     //--------------------------------------------------------------------------
@@ -2420,7 +2420,7 @@ namespace Legion {
 #ifdef DEBUG_LEGION
       premapped_instances.clear();
 #endif
-    cached_start_condition_for_poisoning = ApEvent::NO_AP_EVENT;
+      cached_start_condition_for_poisoning = ApUserEvent::NO_AP_USER_EVENT;
     }
 
     //--------------------------------------------------------------------------
@@ -4015,7 +4015,11 @@ namespace Legion {
         }
       }
       //ksmurthy
-      cached_start_condition_for_poisoning = start_condition;
+      Realm::UserEvent *extract_start_for_poison = 
+                          static_cast<Realm::UserEvent *>
+                            (static_cast<Realm::Event*>(&start_condition));
+      cached_start_condition_for_poisoning = 
+                      ApUserEvent(*extract_start_for_poison);
       ApEvent task_launch_event = variant->dispatch_task(launch_processor, this,
                                  execution_context, start_condition, true_guard,
                                  task_priority, profiling_requests);
@@ -4320,16 +4324,22 @@ namespace Legion {
         const char *tasks_cone_of_restart = "cancelled since its a cone-task";
         AutoLock o_lock(op_lock);
         restartGen++;
-        if(this->cached_start_condition_for_poisoning != ApEvent::NO_AP_EVENT) {
-          this->cached_start_condition_for_poisoning.cancel_operation(
-                  tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
-          this->completion_event.cancel_operation(tasks_cone_of_restart,
-                                          strlen(tasks_cone_of_restart));
+        if(this->cached_start_condition_for_poisoning != 
+                              ApUserEvent::NO_AP_USER_EVENT) {
+          Runtime::poison_event(this->cached_start_condition_for_poisoning);
+          //this->cached_start_condition_for_poisoning.cancel_operation(
+          //        tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
+          //this->completion_event.cancel_operation(tasks_cone_of_restart,
+          //                                strlen(tasks_cone_of_restart));
           //this->skeleton_poisoned_completion();
         }
-        if(this->mapped_event != RtEvent::NO_RT_EVENT) { 
-          if(!this->mapped_event.has_triggered())
-            Runtime::trigger_event(this->mapped_event);
+        if(this->mapped_event != RtEvent::NO_RT_EVENT) {
+          if(!this->mapped_event.has_triggered()) {
+            Runtime::poison_event(this->mapped_event); 
+          } else {
+            //we have to catch it later TODO are we sure where
+          }
+          //  Runtime::trigger_event(this->mapped_event);
         }
         if(this->completion_event != ApEvent::NO_AP_EVENT) {
           Runtime::poison_event(this->completion_event);
@@ -4409,15 +4419,22 @@ namespace Legion {
         const char *tasks_cone_of_restart = "cancelled since its a cone-task";
         AutoLock o_lock(op_lock);
         restartGen++;
-        if(this->cached_start_condition_for_poisoning != ApEvent::NO_AP_EVENT) {
-          this->cached_start_condition_for_poisoning.cancel_operation(
-                    tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
-          this->completion_event.cancel_operation(
-                    tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
+        if(this->cached_start_condition_for_poisoning != 
+                              ApUserEvent::NO_AP_USER_EVENT) {
+          Runtime::poison_event(this->cached_start_condition_for_poisoning);
+          //this->cached_start_condition_for_poisoning.cancel_operation(
+          //          tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
+          //this->completion_event.cancel_operation(
+          //          tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
         }
         if(this->mapped_event != RtEvent::NO_RT_EVENT) { 
-          if(!this->mapped_event.has_triggered())
-            Runtime::trigger_event(this->mapped_event);
+          if(!this->mapped_event.has_triggered()) {
+            Runtime::poison_event(this->mapped_event); 
+          } else {
+            //we have to catch it elsewhere TODO are we sure where
+          }
+          //if(!this->mapped_event.has_triggered())
+          //  Runtime::trigger_event(this->mapped_event);
         }
         // We are going to selectively execute parents/ancestors, so no need to 
         // poison them if(this->completion_event != ApEvent::NO_AP_EVENT) {

@@ -549,8 +549,8 @@ namespace Legion {
                         Realm::ProfilingRequestSet &);
       virtual void restart_task_resilience();
     protected:
-		ApEvent cached_start_condition_for_poisoning;
-//ksmurthy
+		  ApUserEvent cached_start_condition_for_poisoning;
+      //ksmurthy
     protected:
       // Boolean for each region saying if it is virtual mapped
       std::vector<bool> virtual_mapped;
