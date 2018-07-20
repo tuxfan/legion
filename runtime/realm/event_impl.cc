@@ -123,6 +123,15 @@ namespace Realm {
     return e->has_triggered(ID(id).event.generation, poisoned);
   }
 
+
+  //ksmurthy
+  bool Event::has_generation_been_poisoned() 
+  {
+    if(!id) return false; //NO_EVENT is never poisoned
+	  GenEventImpl *impl = get_runtime()->get_genevent_impl(*this);
+    return impl->is_generation_poisoned(ID(id).event.generation); 
+  }
+
   // creates an event that won't trigger until all input events have
   /*static*/ Event Event::merge_events(const std::set<Event>& wait_for)
   {
@@ -1530,6 +1539,11 @@ namespace Realm {
 
     void GenEventImpl::trigger(gen_t gen_triggered, int trigger_node, bool poisoned)
     {
+
+//ksmurthy
+if(poisoned)
+   std::cout << "beginning to poison generation" << gen_triggered << std::endl;
+
       Event e = make_event(gen_triggered);
       log_event.debug() << "event triggered: event=" << e << " by node " << trigger_node
 			<< " (poisoned=" << poisoned << ")";
@@ -1671,6 +1685,8 @@ namespace Realm {
 	    it++) {
 	  bool nuke = (*it)->event_triggered(e, poisoned);
           if(nuke) {
+            std::cout<<"deleting something since its trigger event was poisoned"
+<< std::endl;
             //printf("deleting: "); (*it)->print_info(); fflush(stdout);
             delete (*it);
           }

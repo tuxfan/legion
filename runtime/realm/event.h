@@ -56,6 +56,8 @@ namespace Realm {
       void wait_faultaware(bool& poisoned) const;
       void external_wait_faultaware(bool& poisoned) const;
 
+      bool has_generation_been_poisoned();//ksmurthy
+
       // attempts to cancel the operation associated with this event
       // "reason_data" will be provided to any profilers of the operation
       void cancel_operation(const void *reason_data, size_t reason_size) const;

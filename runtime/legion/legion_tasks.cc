@@ -4023,6 +4023,11 @@ namespace Legion {
       ApEvent task_launch_event = variant->dispatch_task(launch_processor, this,
                                  execution_context, start_condition, true_guard,
                                  task_priority, profiling_requests);
+#ifdef DEBUG_LEGION
+      launched = true;//ksmurthy, NOT HAPPY ABOUT THIS, TODO
+      if(task_launch_event.has_generation_been_poisoned())
+       std::cout<<"hei, we are in launch_task with a poisoned start"<<std::endl; 
+#endif
       // Finish the chaining optimization if we're doing it
       if (perform_chaining_optimization)
         Runtime::trigger_event(chain_complete_event, task_launch_event);
@@ -4248,6 +4253,9 @@ namespace Legion {
       ApEvent task_launch_event = variant->dispatch_task(launch_processor, this,
                            execution_context, start_condition, true_guard, 
                            task_priority, profiling_requests);
+#ifdef DEBUG_LEGION
+      launched = true;//ksmurthy, NOT HAPPY ABOUT THIS, TODO
+#endif
       assert(task_launch_event != ApEvent::NO_AP_EVENT);
       if (!atomic_locks.empty()) {
         for (std::map<Reservation,bool>::const_iterator it =atomic_locks.begin(); 
@@ -4326,6 +4334,8 @@ namespace Legion {
         restartGen++;
         if(this->cached_start_condition_for_poisoning != 
                               ApUserEvent::NO_AP_USER_EVENT) {
+          if(!
+          cached_start_condition_for_poisoning.has_generation_been_poisoned())
           Runtime::poison_event(this->cached_start_condition_for_poisoning);
           //this->cached_start_condition_for_poisoning.cancel_operation(
           //        tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
@@ -4342,8 +4352,10 @@ namespace Legion {
           //  Runtime::trigger_event(this->mapped_event);
         }
         if(this->completion_event != ApEvent::NO_AP_EVENT) {
-          Runtime::poison_event(this->completion_event);
+          if(!this->completion_event.has_generation_been_poisoned())
+            Runtime::poison_event(this->completion_event);
         }
+        this->mapped = false;
         this->completion_event = Runtime::create_ap_user_event();
         this->mapped_event = Runtime::create_rt_user_event();
         for(std::map<Operation*, GenerationID>::const_iterator 
@@ -4421,7 +4433,9 @@ namespace Legion {
         restartGen++;
         if(this->cached_start_condition_for_poisoning != 
                               ApUserEvent::NO_AP_USER_EVENT) {
-          Runtime::poison_event(this->cached_start_condition_for_poisoning);
+          if(!
+          cached_start_condition_for_poisoning.has_generation_been_poisoned())
+            Runtime::poison_event(this->cached_start_condition_for_poisoning);
           //this->cached_start_condition_for_poisoning.cancel_operation(
           //          tasks_cone_of_restart, strlen(tasks_cone_of_restart)); 
           //this->completion_event.cancel_operation(
@@ -4478,8 +4492,10 @@ namespace Legion {
         }
         if(this->completion_event != ApEvent::NO_AP_EVENT) {
           bool poisoned = false;
-          if(!this->completion_event.has_triggered_faultaware(poisoned)) {
-            Runtime::poison_event(this->completion_event);
+          if(!this->completion_event.has_generation_been_poisoned()) {
+            if(!this->completion_event.has_triggered_faultaware(poisoned)) {
+              Runtime::poison_event(this->completion_event);
+            }
           }
         }
         this->completion_event = Runtime::create_ap_user_event();
@@ -4598,7 +4614,20 @@ namespace Legion {
       profiling_response_analyzed_for_resilience = true;
 
       if(opstatus_present) {
+        if(!this->completion_event.has_generation_been_poisoned()) {
+          //runtime->issue_runtime_meta_task( , 
+            //  LG_THROUGHPUT_WORK_PRIORITY, RtEvent::NO_RT_EVENT);
+          //;
+          //RtEvent wait_on = Runtime::merge_events(wait_for);
+          //wait_on.wait();
+          completion_event.wait();
+          assert(completion_event.has_generation_been_poisoned());
+          //put ourselves back;
+          return;
+        }
+#if 1
         some_task_failed(this->gen, false);
+#endif
         int remain = __sync_add_and_fetch(&outstanding_profiling_requests, -1);
         if (remain == 0)
           Runtime::trigger_event(profiling_reported);

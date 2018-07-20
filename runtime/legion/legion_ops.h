@@ -599,6 +599,8 @@ namespace Legion {
       bool executed;
       // Whether speculation for this operation has been resolved
       bool resolved;
+      // ksmurthy: task has been launched
+      bool launched;
 #endif
       // Whether this operation has completed, cannot commit until
       // both completed is set, and outstanding mapping references

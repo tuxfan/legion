@@ -84,6 +84,7 @@ namespace Legion {
       mapped = false;
       executed = false;
       resolved = false;
+      launched = false;
 #endif
       profiling_response_analyzed_for_resilience = false;
       completed = false;
@@ -741,6 +742,9 @@ namespace Legion {
         AutoLock o_lock(op_lock);
         Runtime::poison_event(completion_event);
       }
+//      SingleTask *stsk = dynamic_cast<SingleTask *>(this);
+//      if(stsk != NULL)
+//        stsk->some_task_failed(this->gen, false);
 //      if (track_parent)
 //        parent_ctx->register_child_executed(this);
 //#ifdef DEBUG_LEGION
