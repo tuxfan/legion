@@ -28,6 +28,13 @@
 
 #define PRINT_REG(reg) (reg).index_space.id,(reg).field_space.id, (reg).tree_id
 
+#ifdef DEBUG_LEGION
+//#include <chrono>
+//#include <thread>
+#include <unistd.h>
+#endif
+
+
 namespace Legion {
   namespace Internal {
 
@@ -3772,6 +3779,10 @@ namespace Legion {
                    "in launch for" << this->get_task_name() << std::endl;
       }
 
+      if(!strcmp(this->get_task_name(), "check"))
+          usleep(1000000);
+//        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
 #ifdef DEBUG_LEGION
       assert(regions.size() == physical_instances.size());
       assert(regions.size() == no_access_regions.size());
@@ -3807,6 +3818,10 @@ namespace Legion {
         {
           if (!virtual_mapped[idx] && !no_access_regions[idx])
             physical_instances[idx].update_wait_on_events(wait_on_events);
+        }
+        if(!strcmp(this->get_logging_name(), "check")) {
+          std::cout<<" at launch, check was waiting on "<<
+                   wait_on_events.size() << "phy instances" <<std::endl;
         }
       }
       // Now add get all the other preconditions for the launch
@@ -4409,6 +4424,8 @@ namespace Legion {
         dbug = 1;
       }
 #endif
+      return;
+
       RtEvent precondition = RtEvent::NO_RT_EVENT;
       std::map<SingleTask *, RtEvent> upstream_set;
       if(!trigger_recover()){
@@ -4499,6 +4516,22 @@ namespace Legion {
           }
         }
         this->completion_event = Runtime::create_ap_user_event();
+
+
+#if 1
+      // Unmap any physical regions so that we/someone above us can remap
+
+      TaskContext *ctx = dynamic_cast<TaskContext *>(get_context());
+      assert(ctx != NULL);
+      for (std::vector<PhysicalRegion>::const_iterator it = 
+           ctx->physical_regions.begin(); it!=ctx->physical_regions.end();it++)
+      {
+        if (it->is_mapped())
+          it->impl->unmap_region();
+      }
+#endif
+
+
         this->restart_task_resilience();
       }
       return ;
@@ -4623,7 +4656,7 @@ namespace Legion {
           completion_event.wait();
           assert(completion_event.has_generation_been_poisoned());
           //put ourselves back;
-          return;
+          //return;
         }
 #if 1
         some_task_failed(this->gen, false);

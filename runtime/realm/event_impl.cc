@@ -1455,6 +1455,8 @@ namespace Realm {
 	// it is safe to call is_generation_poisoned after just a memory barrier - no lock
 	__sync_synchronize();
 	poisoned = is_generation_poisoned(needed_gen);
+  const char *outpt = (poisoned==true)?"true":"false";
+  std::cout<<"the generation "<<needed_gen<<" is "<< outpt << std::endl;
 	return true;
       }
 
@@ -1581,6 +1583,7 @@ if(poisoned)
 	    if(!poisoned_generations)
 	      poisoned_generations = new gen_t[POISONED_GENERATION_LIMIT];
 	    assert(num_poisoned_generations < POISONED_GENERATION_LIMIT);
+      std::cout<<"DECIDED TO POISON " << gen_triggered << std::endl;
 	    poisoned_generations[num_poisoned_generations++] = gen_triggered;
 	  }
 

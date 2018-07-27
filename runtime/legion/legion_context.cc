@@ -8699,17 +8699,29 @@ namespace Legion {
                           bool owned, PhysicalInstance deferred_result_instance)
     //--------------------------------------------------------------------------
     {
-      // Unmap any physical regions that we mapped
-      for (std::vector<PhysicalRegion>::const_iterator it = 
-            physical_regions.begin(); it != physical_regions.end(); it++)
-      {
-        if (it->is_mapped())
-          it->impl->unmap_region();
-      }
       if (!pending_done.has_triggered())
         owner_task->complete_execution_poisoned(pending_done);
       else
         owner_task->complete_execution_poisoned();
+
+#if 0 //ksmurthy to support the TODO written below, we are going to unmap these
+      //physical regions inside some_task_Failed legion_tasks.cc where
+      //the actual recovery from a failure takes place
+
+      // Unmap any physical regions that we mapped
+      for (std::vector<PhysicalRegion>::const_iterator it = 
+            physical_regions.begin(); it != physical_regions.end(); it++)
+      {
+#if 1
+        //TODO: ksmurthy, should we not be poisoning the termination_event 
+        //present inside the it->impl
+        if (it->is_mapped())
+          it->impl->unmap_region();
+#endif        
+      }
+#endif
+
+
 #ifdef DEBUG_LEGION
       assert(owner_task != NULL);
       const TaskID owner_task_id = owner_task->task_id;
