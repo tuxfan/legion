@@ -1283,7 +1283,7 @@ namespace Realm {
 	EventUpdateMessage::send_request(args.node,
 					 triggered,
 					 impl->num_poisoned_generations,
-					 impl->poisoned_generations);
+					 static_cast<const EventImpl::gen_t *>(impl->poisoned_generations)); //ksmurthy
       }
     } 
 
@@ -1443,45 +1443,51 @@ namespace Realm {
     bool GenEventImpl::has_triggered(gen_t needed_gen, bool& poisoned)
     {
 #ifdef EVENT_TRACING
-      {
-        EventTraceItem &item = Tracer<EventTraceItem>::trace_item();
-        item.event_id = me.id;
-        item.event_gen = needed_gen;
-        item.action = EventTraceItem::ACT_QUERY;
-      }
+            {
+                    EventTraceItem &item = Tracer<EventTraceItem>::trace_item();
+                    item.event_id = me.id;
+                    item.event_gen = needed_gen;
+                    item.action = EventTraceItem::ACT_QUERY;
+            }
 #endif
-      // lock-free check
-      if(needed_gen <= generation) {
-	// it is safe to call is_generation_poisoned after just a memory barrier - no lock
-	__sync_synchronize();
-	poisoned = is_generation_poisoned(needed_gen);
-  const char *outpt = (poisoned==true)?"true":"false";
-  std::cout<<"the generation "<<needed_gen<<" is "<< outpt << std::endl;
-	return true;
-      }
+            // lock-free check
+            //ksmurthy
+            { 
+                    AutoHSLLock a(mutex);
+                    if(needed_gen <= generation) {
+                            // it is safe to call is_generation_poisoned after just a memory barrier - no lock
+                            __sync_synchronize();
+                            poisoned = is_generation_poisoned(needed_gen);
+                            const char *outpt = (poisoned==true)?"posioned":"not poisoned";
+                            std::cout<<"the generation "<<needed_gen<<" is "<< outpt << 
+                                    " while the poisoned generation count is " << num_poisoned_generations 
+                                    << std::endl;
+                            return true;
+                    }
+            }
 
-      // if the above check fails, we have to see if we have performed any local triggers -
-      // if not, we can internally-consistently say that the event hasn't triggered from our
-      // perspective yet
-      if(!has_local_triggers) {
-	poisoned = false;
-	return false;
-      }
+            // if the above check fails, we have to see if we have performed any local triggers -
+            // if not, we can internally-consistently say that the event hasn't triggered from our
+            // perspective yet
+            if(!has_local_triggers) {
+                    poisoned = false;
+                    return false;
+            }
 
-      // both easy cases failed, so take the lock that lets us see which local triggers exist
-      // this prevents us from ever answering "no" on the current node if the trigger occurred here
-      bool locally_triggered = false;
-      poisoned = false;
-      {
-	AutoHSLLock a(mutex);
+            // both easy cases failed, so take the lock that lets us see which local triggers exist
+            // this prevents us from ever answering "no" on the current node if the trigger occurred here
+            bool locally_triggered = false;
+            poisoned = false;
+            {
+                    AutoHSLLock a(mutex);
 
-	std::map<gen_t, bool>::const_iterator it = local_triggers.find(needed_gen);
-	if(it != local_triggers.end()) {
-	  locally_triggered = true;
-	  poisoned = it->second;
-	}
-      }
-      return locally_triggered;
+                    std::map<gen_t, bool>::const_iterator it = local_triggers.find(needed_gen);
+                    if(it != local_triggers.end()) {
+                            locally_triggered = true;
+                            poisoned = it->second;
+                    }
+            }
+            return locally_triggered;
     }
 
     class PthreadCondWaiter : public EventWaiter {
@@ -1542,159 +1548,159 @@ namespace Realm {
     void GenEventImpl::trigger(gen_t gen_triggered, int trigger_node, bool poisoned)
     {
 
-//ksmurthy
-if(poisoned)
-   std::cout << "beginning to poison generation" << gen_triggered << std::endl;
+            //ksmurthy
+            if(poisoned)
+                    std::cout << "beginning to poison generation" << gen_triggered << std::endl;
 
-      Event e = make_event(gen_triggered);
-      log_event.debug() << "event triggered: event=" << e << " by node " << trigger_node
-			<< " (poisoned=" << poisoned << ")";
+            Event e = make_event(gen_triggered);
+            log_event.debug() << "event triggered: event=" << e << " by node " << trigger_node
+                    << " (poisoned=" << poisoned << ")";
 
 #ifdef EVENT_TRACING
-      {
-        EventTraceItem &item = Tracer<EventTraceItem>::trace_item();
-        item.event_id = me.id;
-        item.event_gen = gen_triggered;
-        item.action = EventTraceItem::ACT_TRIGGER;
-      }
+            {
+                    EventTraceItem &item = Tracer<EventTraceItem>::trace_item();
+                    item.event_id = me.id;
+                    item.event_gen = gen_triggered;
+                    item.action = EventTraceItem::ACT_TRIGGER;
+            }
 #endif
 
-      std::vector<EventWaiter *> to_wake;
+            std::vector<EventWaiter *> to_wake;
 
-      if(my_node_id == owner) {
-	// we own this event
+            if(my_node_id == owner) {
+                    // we own this event
 
-	NodeSet to_update;
-	bool free_event = false;
+                    NodeSet to_update;
+                    bool free_event = false;
 
-	{
-	  AutoHSLLock a(mutex);
+                    {
+                            AutoHSLLock a(mutex);
 
-	  // must always be the next generation
-	  assert(gen_triggered == (generation + 1));
+                            // must always be the next generation
+                            assert(gen_triggered == (generation + 1));
 
-	  to_wake.swap(current_local_waiters);
-	  assert(future_local_waiters.empty()); // no future waiters here
+                            to_wake.swap(current_local_waiters);
+                            assert(future_local_waiters.empty()); // no future waiters here
 
-	  to_update.swap(remote_waiters);
+                            to_update.swap(remote_waiters);
 
-	  // update poisoned generation list
-	  if(poisoned) {
-	    if(!poisoned_generations)
-	      poisoned_generations = new gen_t[POISONED_GENERATION_LIMIT];
-	    assert(num_poisoned_generations < POISONED_GENERATION_LIMIT);
-      std::cout<<"DECIDED TO POISON " << gen_triggered << std::endl;
-	    poisoned_generations[num_poisoned_generations++] = gen_triggered;
-	  }
+                            // update poisoned generation list
+                            if(poisoned) {
+                                    if(!poisoned_generations)
+                                            poisoned_generations = new gen_t[POISONED_GENERATION_LIMIT];
+                                    assert(num_poisoned_generations < POISONED_GENERATION_LIMIT);
+                                    std::cout<<"DECIDED TO POISON " << gen_triggered << std::endl;
+                                    poisoned_generations[num_poisoned_generations++] = gen_triggered;
+                            }
 
-	  // update generation last, with a synchronization to make sure poisoned generation
-	  // list is valid to any observer of this update
-	  __sync_synchronize();
-	  generation = gen_triggered;
+                            // update generation last, with a synchronization to make sure poisoned generation
+                            // list is valid to any observer of this update
+                            __sync_synchronize();
+                            generation = gen_triggered;
 
-	  // we'll free the event unless it's maxed out on poisoned generations
-	  //  or generation count
-	  free_event = ((num_poisoned_generations < POISONED_GENERATION_LIMIT) &&
-			(generation < ((1U << ID::EVENT_GENERATION_WIDTH) - 1)));
-	}
+                            // we'll free the event unless it's maxed out on poisoned generations
+                            //  or generation count
+                            free_event = ((num_poisoned_generations < POISONED_GENERATION_LIMIT) &&
+                                            (generation < ((1U << ID::EVENT_GENERATION_WIDTH) - 1)));
+                    }
 
-	// any remote nodes to notify?
-	if(!to_update.empty())
-	  EventUpdateMessage::broadcast_request(to_update, 
-						make_event(gen_triggered),
-						num_poisoned_generations,
-						poisoned_generations);
+                    // any remote nodes to notify?
+                    if(!to_update.empty())
+                            EventUpdateMessage::broadcast_request(to_update, 
+                                            make_event(gen_triggered),
+                                            num_poisoned_generations,
+                                            poisoned_generations);
 
-	// free event?
-	if(free_event)
-	  get_runtime()->local_event_free_list->free_entry(this);
-      } else {
-	// we're triggering somebody else's event, so the first thing to do is tell them
-	assert(trigger_node == (int)my_node_id);
-	// once we send this message, it's possible we get an update from the owner before
-	//  we take the lock a few lines below here (assuming somebody on this node had 
-	//  already subscribed), so check here that we're triggering a new generation
-	// (the alternative is to not send the message until after we update local state, but
-	// that adds latency for everybody else)
-	assert(gen_triggered > generation);
-	EventTriggerMessage::send_request(owner, make_event(gen_triggered), poisoned);
+                    // free event?
+                    if(free_event)
+                            get_runtime()->local_event_free_list->free_entry(this);
+            } else {
+                    // we're triggering somebody else's event, so the first thing to do is tell them
+                    assert(trigger_node == (int)my_node_id);
+                    // once we send this message, it's possible we get an update from the owner before
+                    //  we take the lock a few lines below here (assuming somebody on this node had 
+                    //  already subscribed), so check here that we're triggering a new generation
+                    // (the alternative is to not send the message until after we update local state, but
+                    // that adds latency for everybody else)
+                    assert(gen_triggered > generation);
+                    EventTriggerMessage::send_request(owner, make_event(gen_triggered), poisoned);
 
-	// we might need to subscribe to intermediate generations
-	bool subscribe_needed = false;
-	gen_t previous_subscribe_gen = 0;
+                    // we might need to subscribe to intermediate generations
+                    bool subscribe_needed = false;
+                    gen_t previous_subscribe_gen = 0;
 
-	// now update our version of the data structure
-	{
-	  AutoHSLLock a(mutex);
+                    // now update our version of the data structure
+                    {
+                            AutoHSLLock a(mutex);
 
-	  // is this the "next" version?
-	  if(gen_triggered == (generation + 1)) {
-	    // yes, so we have complete information and can update the state directly
-	    to_wake.swap(current_local_waiters);
-	    // any future waiters?
-	    if(!future_local_waiters.empty()) {
-	      std::map<gen_t, std::vector<EventWaiter *> >::iterator it = future_local_waiters.begin();
-	      log_event.debug() << "future waiters non-empty: first=" << it->first << " (= " << (gen_triggered + 1) << "?)";
-	      if(it->first == (gen_triggered + 1)) {
-		current_local_waiters.swap(it->second);
-		future_local_waiters.erase(it);
-	      }
-	    }
-	    // if this event was poisoned, record it in the local triggers since we only
-	    //  update the official poison list on owner update messages
-	    if(poisoned) {
-	      local_triggers[gen_triggered] = true;
-	      has_local_triggers = true;
-              subscribe_needed = true; // make sure we get that update
-	    }
+                            // is this the "next" version?
+                            if(gen_triggered == (generation + 1)) {
+                                    // yes, so we have complete information and can update the state directly
+                                    to_wake.swap(current_local_waiters);
+                                    // any future waiters?
+                                    if(!future_local_waiters.empty()) {
+                                            std::map<gen_t, std::vector<EventWaiter *> >::iterator it = future_local_waiters.begin();
+                                            log_event.debug() << "future waiters non-empty: first=" << it->first << " (= " << (gen_triggered + 1) << "?)";
+                                            if(it->first == (gen_triggered + 1)) {
+                                                    current_local_waiters.swap(it->second);
+                                                    future_local_waiters.erase(it);
+                                            }
+                                    }
+                                    // if this event was poisoned, record it in the local triggers since we only
+                                    //  update the official poison list on owner update messages
+                                    if(poisoned) {
+                                            local_triggers[gen_triggered] = true;
+                                            has_local_triggers = true;
+                                            subscribe_needed = true; // make sure we get that update
+                                    }
 
-	    // update generation last, with a synchronization to make sure poisoned generation
-	    // list is valid to any observer of this update
-	    __sync_synchronize();
-	    generation = gen_triggered;
-	  } else 
-	    if(gen_triggered > (generation + 1)) {
-	      // we can't update the main state because there are generations that we know
-	      //  have triggered, but we do not know if they are poisoned, so look in the
-	      //  future waiter list to see who we can wake, and update the local trigger
-	      //  list
+                                    // update generation last, with a synchronization to make sure poisoned generation
+                                    // list is valid to any observer of this update
+                                    __sync_synchronize();
+                                    generation = gen_triggered;
+                            } else 
+                                    if(gen_triggered > (generation + 1)) {
+                                            // we can't update the main state because there are generations that we know
+                                            //  have triggered, but we do not know if they are poisoned, so look in the
+                                            //  future waiter list to see who we can wake, and update the local trigger
+                                            //  list
 
-	      std::map<gen_t, std::vector<EventWaiter *> >::iterator it = future_local_waiters.find(gen_triggered);
-	      if(it != future_local_waiters.end()) {
-		to_wake.swap(it->second);
-		future_local_waiters.erase(it);
-	      }
+                                            std::map<gen_t, std::vector<EventWaiter *> >::iterator it = future_local_waiters.find(gen_triggered);
+                                            if(it != future_local_waiters.end()) {
+                                                    to_wake.swap(it->second);
+                                                    future_local_waiters.erase(it);
+                                            }
 
-	      local_triggers[gen_triggered] = poisoned;
-	      has_local_triggers = true;
+                                            local_triggers[gen_triggered] = poisoned;
+                                            has_local_triggers = true;
 
-	      subscribe_needed = true;
-	      previous_subscribe_gen = gen_subscribed;
-	      gen_subscribed = gen_triggered;
-	    }
-	}
+                                            subscribe_needed = true;
+                                            previous_subscribe_gen = gen_subscribed;
+                                            gen_subscribed = gen_triggered;
+                                    }
+                    }
 
-	if(subscribe_needed)
-	  EventSubscribeMessage::send_request(owner,
-					      make_event(gen_triggered),
-					      previous_subscribe_gen);
-      }
+                    if(subscribe_needed)
+                            EventSubscribeMessage::send_request(owner,
+                                            make_event(gen_triggered),
+                                            previous_subscribe_gen);
+            }
 
-      // finally, trigger any local waiters
-      if(!to_wake.empty()) {
-	Event e = make_event(gen_triggered);
-	for(std::vector<EventWaiter *>::iterator it = to_wake.begin();
-	    it != to_wake.end();
-	    it++) {
-	  bool nuke = (*it)->event_triggered(e, poisoned);
-          if(nuke) {
-            std::cout<<"deleting something since its trigger event was poisoned"
-<< std::endl;
-            //printf("deleting: "); (*it)->print_info(); fflush(stdout);
-            delete (*it);
-          }
-        }
-      }
+            // finally, trigger any local waiters
+            if(!to_wake.empty()) {
+                    Event e = make_event(gen_triggered);
+                    for(std::vector<EventWaiter *>::iterator it = to_wake.begin();
+                                    it != to_wake.end();
+                                    it++) {
+                            bool nuke = (*it)->event_triggered(e, poisoned);
+                            if(nuke) {
+                                    //std::cout<<"deleting something since its trigger event was poisoned"
+                                    //        << std::endl;
+                                    //printf("deleting: "); (*it)->print_info(); fflush(stdout);
+                                    delete (*it);
+                            }
+                    }
+            }
     }
 
     /*static*/ BarrierImpl *BarrierImpl::create_barrier(unsigned expected_arrivals,

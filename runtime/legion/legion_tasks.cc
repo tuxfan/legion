@@ -3781,6 +3781,8 @@ namespace Legion {
 
       if(!strcmp(this->get_task_name(), "check"))
           usleep(1000000);
+      volatile int hello = 1000000;
+      while(hello--);
 //        std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
 #ifdef DEBUG_LEGION
@@ -4035,6 +4037,33 @@ namespace Legion {
                             (static_cast<Realm::Event*>(&start_condition));
       cached_start_condition_for_poisoning = 
                       ApUserEvent(*extract_start_for_poison);
+
+
+      if(start_condition.has_any_generation_been_poisoned()) {
+        bool to_be_poisoned = cross_check_my_physical_instance_registrations();
+        if(to_be_poisoned) {
+          if(start_condition !=
+          start_condition.poison();
+        }
+      }
+
+
+bool SingleTask::cross_check_my_physical_instance_registrations() {
+
+  //this function is a distilled version of
+  //RegionTreeForest::physical_register_users 
+  //MaterializedView::find_user_precondition
+  //MaterializedView::find_local_user_preconditions
+  //MaterializedView::find_current_preconditions
+
+
+
+}
+
+
+
+
+
       ApEvent task_launch_event = variant->dispatch_task(launch_processor, this,
                                  execution_context, start_condition, true_guard,
                                  task_priority, profiling_requests);

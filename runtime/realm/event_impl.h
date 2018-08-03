@@ -151,7 +151,7 @@ namespace Realm {
 
       // we'll set an upper bound on how many times any given event can be poisoned - this keeps
       // update messages from growing without bound
-      static const int POISONED_GENERATION_LIMIT = 16;
+      static const int POISONED_GENERATION_LIMIT = 96;
 
       // note - we don't bother sorting the list below - the overhead of a binary search
       //  dominates for short lists
