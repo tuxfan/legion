@@ -258,6 +258,7 @@ endif()
 #------------------------------------------------------------------------------#
 option(Legion_USE_HDF5 "Enable support for HDF5" OFF)
 if(Legion_USE_HDF5)
+  set(HDF5_PREFER_PARALLEL OFF)
   find_package(HDF5 REQUIRED COMPONENTS C)
 
   # define variable for realm_defines.h
